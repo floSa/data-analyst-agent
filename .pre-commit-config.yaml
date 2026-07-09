@@ -7,6 +7,8 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
+        # dataset vendorisé assumé (694 Ko) ; la limite reste 500 Ko ailleurs
+        exclude: ^sources/california_housing\.csv\.gz$
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
