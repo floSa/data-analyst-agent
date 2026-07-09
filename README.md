@@ -6,9 +6,33 @@ Agent conversationnel sur données, **on-premise**. À partir d'une source décl
 2. **Analyser** — calculer KPI, statistiques (χ², ANOVA…) et visualisations en exécutant du code dans un bac à sable durci (réseau coupé) ;
 3. **Prédire** — appeler un modèle de ML sur des features validées (Pydantic), en redemandant ce qui manque avant tout predict.
 
-Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM mutualisé (Qwen3-Coder via Ollama), orchestration explicite et traçable.
+Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM mutualisé (Qwen3-Coder via Ollama), orchestration explicite et traçable, licences 100 % permissives (MIT/Apache/BSD).
 
-Cahier des charges complet : [docs/CADRAGE.md](docs/CADRAGE.md). Consignes de contribution (humain ou agent) : [CLAUDE.md](CLAUDE.md).
+## Architecture en un coup d'œil
+
+```mermaid
+flowchart LR
+    U(["Utilisateur"]) --> API["API FastAPI<br/>+ page de chat"]
+    API --> O["Orchestrateur LangGraph<br/>plan → route → capacité → synthèse"]
+    O -.-> L["LLM mutualisé<br/>Qwen3-Coder / Ollama"]
+    O --> R["① Récupération<br/>text-to-SQL à tools"]
+    O --> A["② Analyse<br/>code stats/viz"]
+    O --> I["③ Inférence gardée<br/>validation → predict"]
+    R --> D[("Postgres ·<br/>CSV/Excel via DuckDB")]
+    A --> S["Sandbox Docker<br/>réseau coupé"]
+    I --> M[("Modèles ML<br/>registry joblib")]
+```
+
+Le fonctionnement détaillé (schéma fonctionnel du graphe, séquences, durcissement de la sandbox, explication service par service) est dans **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+## Documentation
+
+| Document | Contenu |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | schémas architectural et fonctionnel, description de chaque service, sécurité, configuration, stratégie de tests |
+| [docs/CADRAGE.md](docs/CADRAGE.md) | cahier des charges : contraintes, décisions, stack, roadmap, exigences de tests |
+| [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
+| [CLAUDE.md](CLAUDE.md) | consignes de contribution (humain ou agent) : licences, tests, conventions git |
 
 ## Démarrage
 
@@ -26,7 +50,7 @@ L'image de la sandbox se construit une fois : `docker build -t data-analyst-agen
 
 ## Configuration
 
-Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), URL Ollama (`DAA_OLLAMA_BASE_URL`), quotas sandbox, chemins du catalogue et du registre — voir `src/data_analyst_agent/config.py`. Les sources de données se déclarent dans `sources/catalogue.yaml`.
+Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), URL Ollama (`DAA_OLLAMA_BASE_URL`), quotas sandbox, chemins du catalogue et du registre — tableau complet dans [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md). Les sources de données se déclarent dans `sources/catalogue.yaml`.
 
 ## Observabilité
 
@@ -46,9 +70,9 @@ Les tests marqués `live` (LLM local requis) sont exclus par défaut : `uv run p
 
 ```
 src/data_analyst_agent/   # package (orchestrator, agents, sandbox, api)
-docs/CADRAGE.md           # cahier des charges (architecture, roadmap, tests)
-models/                   # artefacts ML jouets (Titanic, Iris, California Housing)
-sources/                  # catalogue des sources + fichiers de test
-notebooks/                # entraînement des modèles jouets
-tests/                    # unit / integration / e2e (3 scénarios golden)
+docs/                     # ARCHITECTURE, CADRAGE, spike-vanna
+models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
+sources/                  # catalogue des sources + datasets vendorisés
+notebooks/                # entraînement des modèles jouets (jupytext .md + .ipynb)
+tests/                    # unit / integration / e2e golden / helpers
 ```
