@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
     # --- Agent Analyse (docs/CADRAGE.md §7-②) ---
     analysis_max_attempts: int = 3
+    # Nb max de lignes matérialisées par table quand on analyse une source SQL.
+    analysis_table_max_rows: int = 10000
+
+    # --- Inférence (docs/CADRAGE.md §7-③) ---
+    models_registry_path: Path = Path("models/registry.yaml")
 
     # --- Sandbox d'exécution (docs/CADRAGE.md §6) ---
     # Commande docker ; surchargez p. ex. avec '["wsl", "docker"]' depuis Windows.
