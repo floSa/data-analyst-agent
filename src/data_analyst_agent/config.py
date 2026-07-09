@@ -10,6 +10,14 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="DAA_", env_file=".env", extra="ignore")
 
+    # --- LLM mutualisé (docs/CADRAGE.md §5) ---
+    # Un seul modèle langage pour tout le système. Qwen3-Coder n'existe qu'en
+    # 30B-A3B (MoE, ~19 Go en Q4) : tient entièrement sur la L4 24 Go de prod,
+    # tourne en répartition GPU+RAM sur la machine de dev.
+    ollama_base_url: str = "http://localhost:11434/v1"
+    llm_model: str = "qwen3-coder:30b"
+    llm_temperature: float = 0.0
+
     # --- Sandbox d'exécution (docs/CADRAGE.md §6) ---
     # Commande docker ; surchargez p. ex. avec '["wsl", "docker"]' depuis Windows.
     sandbox_docker_cmd: list[str] = ["docker"]

@@ -73,8 +73,10 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 
 - **Un seul modèle** pour tout ce qui est langage : router, générer le SQL, générer le code de stats/viz, rédiger la réponse.
 - **Qwen3-Coder** (Apache-2.0), servi par **Ollama**.
-  - Dev (4060 Ti) : **Qwen3-Coder-14B** Q4_K_M (~12 Go). Fallback 7B.
-  - Prod (L4 24 Go) : **Qwen3-Coder-32B** Q4 (~20 Go).
+  - *Réalité registry (constatée 2026-07)* : la famille n'existe qu'en **30B-A3B** (MoE, 3B actifs, ~19 Go en Q4_K_M) et 480B. Pas de 14B/32B dense.
+  - Dev (4060 Ti 16 Go) : `qwen3-coder:30b` en répartition GPU+RAM (64 Go) — MoE 3B actifs, débit acceptable.
+  - Prod (L4 24 Go) : `qwen3-coder:30b` Q4 tient entièrement en VRAM.
+  - Modèle configurable via `DAA_LLM_MODEL` (fallback possible : `qwen2.5-coder:14b`, dense, ~9 Go).
 - À ne pas confondre avec les **modèles ML métier** (Titanic/Iris/California) : artefacts scikit-learn séparés, appelés par ③, sans LLM dans le calcul.
 - Qwen3-Coder-Next (80B MoE) écarté : ne tient ni sur la 4060 Ti ni sur la L4.
 
