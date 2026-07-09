@@ -1,0 +1,32 @@
+# Registre des modèles ML métier (CADRAGE §7-③).
+# model_path est relatif à ce fichier ; les artefacts sont produits par notebooks/.
+models:
+  - dataset: titanic
+    task: classification
+    model_path: titanic.joblib
+    target: survived
+    labels:
+      "0": n'a pas survécu
+      "1": a survécu
+    description: >-
+      Survie d'un passager du Titanic — pipeline sklearn (imputation +
+      standardisation + one-hot) et régression logistique.
+
+  - dataset: iris
+    task: classification
+    model_path: iris.joblib
+    target: species
+    labels:
+      "0": setosa
+      "1": versicolor
+      "2": virginica
+    description: Espèce d'iris à partir des mesures de sépales/pétales.
+
+  - dataset: california_housing
+    task: regression
+    model_path: california_housing.joblib
+    target: MedHouseVal
+    unit: centaines de milliers de dollars
+    description: >-
+      Prix médian des logements d'un îlot californien (recensement 1990) —
+      HistGradientBoostingRegressor.
