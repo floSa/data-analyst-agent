@@ -68,3 +68,10 @@ markers = [
     "e2e: scénarios golden de bout en bout",
     "live: nécessite le LLM local (Ollama), exclu par défaut et en CI",
 ]
+filterwarnings = [
+    # libs tierces, rien à corriger chez nous :
+    # pydantic-graph appelle asyncio.get_event_loop() (déprécié py3.12)
+    "ignore:There is no current event loop:DeprecationWarning",
+    # joblib assigne .shape au chargement des pickles (déprécié NumPy 2.5)
+    "ignore:Setting the shape on a NumPy array:DeprecationWarning",
+]
