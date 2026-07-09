@@ -8,6 +8,7 @@ tomber le graphe (CADRAGE §4).
 from __future__ import annotations
 
 import json
+import logging
 import operator
 import tempfile
 import time
@@ -35,6 +36,8 @@ from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
 from data_analyst_agent.orchestrator.plan import Plan, build_planner
 from data_analyst_agent.sandbox.client import MimeOutput
+
+logger = logging.getLogger("data_analyst_agent.orchestrator")
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 Tu rédiges la réponse finale pour l'utilisateur, en français, à partir du
@@ -159,14 +162,20 @@ class Orchestrator:
 
         def wrapper(state: OrchestratorState) -> dict:
             start = time.monotonic()
+            logger.info("nœud %s : démarrage", name)
             try:
-                return fn(state)
+                update = fn(state)
             except Exception as exc:
                 duration = int((time.monotonic() - start) * 1000)
+                logger.exception("nœud %s : échec après %d ms", name, duration)
                 return {
                     "error": f"{type(exc).__name__}: {exc}",
                     "trace": [TraceStep(node=name, detail=f"échec : {exc}", duration_ms=duration)],
                 }
+            duration = int((time.monotonic() - start) * 1000)
+            details = "; ".join(step.detail for step in update.get("trace", []))
+            logger.info("nœud %s : terminé en %d ms (%s)", name, duration, details)
+            return update
 
         return wrapper
 

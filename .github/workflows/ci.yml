@@ -22,11 +22,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build de l'image sandbox (cache GitHub Actions)
+        uses: docker/build-push-action@v6
+        with:
+          context: src/data_analyst_agent/sandbox/image
+          tags: data-analyst-agent-sandbox:0.1
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
           enable-cache: true
       - run: uv sync --locked
-      # Les marqueurs "live" (LLM local) sont exclus via addopts ;
-      # la couverture < 85 % fait échouer le job (--cov-fail-under).
+      # Suite complète : unit + intégration (Docker, testcontainers) + e2e golden.
+      # Les tests "live" (LLM local) sont exclus via addopts ;
+      # une couverture < 85 % fait échouer le job (--cov-fail-under).
       - run: uv run pytest

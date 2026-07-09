@@ -306,3 +306,19 @@ def test_route():
     assert Orchestrator._route({"error": "boom"}) == "error"
     assert Orchestrator._route({}) == "error"
     assert Orchestrator._route({"plan": Plan(capability="analyze")}) == "analyze"
+
+
+def test_logs_structures_par_noeud(registry: Registry, caplog):
+    import logging
+
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [plan_response(Plan(capability="predict", dataset="titanic", features=TITANIC_OK))],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)
+    with caplog.at_level(logging.INFO, logger="data_analyst_agent.orchestrator"):
+        orchestrator.ask("Prédis la survie")
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("nœud plan : terminé" in m for m in messages)
+    assert any("nœud inference : terminé" in m for m in messages)
+    assert any("nœud synthesize : terminé" in m for m in messages)
