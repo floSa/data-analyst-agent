@@ -19,6 +19,9 @@ coverage.xml
 # Ruff
 .ruff_cache/
 
+# Secrets / config locale
+.env
+
 # IDE / OS
 .idea/
 .vscode/

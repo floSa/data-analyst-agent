@@ -4,10 +4,13 @@ version = "0.1.0"
 description = "Agent conversationnel sur données (on-premise) : requêtes SQL, auto-stats et visualisations en sandbox, inférence ML gardée"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.14.2",
+]
 
 [build-system]
-requires = ["uv_build>=0.10.0,<0.11.0"]
+requires = ["uv_build>=0.10.0,<0.13"]
 build-backend = "uv_build"
 
 [dependency-groups]
@@ -36,6 +39,11 @@ select = [
     "PT",  # style pytest
     "RUF", # règles spécifiques ruff
 ]
+
+[tool.coverage.run]
+# bridge.py s'exécute DANS le conteneur sandbox : couvert par les tests
+# d'intégration à travers le protocole, invisible pour coverage côté hôte.
+omit = ["*/sandbox/image/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
