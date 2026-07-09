@@ -1,0 +1,16 @@
+# Socle scientifique pré-installé dans la sandbox (docs/CADRAGE.md §6).
+# Licences permissives uniquement (BSD/MIT/Apache) — pas de pingouin (GPL-3).
+pandas
+numpy
+scipy
+statsmodels
+prince
+scikit-learn
+matplotlib
+plotly
+duckdb
+openpyxl
+
+# Kernel Jupyter piloté par bridge.py
+ipykernel
+jupyter_client
