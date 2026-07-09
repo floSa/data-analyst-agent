@@ -1,6 +1,7 @@
 """Configuration de l'application (pydantic-settings, préfixe d'environnement DAA_)."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -17,6 +18,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434/v1"
     llm_model: str = "qwen3-coder:30b"
     llm_temperature: float = 0.0
+
+    # --- Agent Récupération (docs/CADRAGE.md §7-①) ---
+    catalog_path: Path = Path("sources/catalogue.yaml")
+    retrieval_max_rows: int = 200
+    # Borne d'allers-retours LLM (tools compris) : coupe les boucles infinies.
+    retrieval_request_limit: int = 10
 
     # --- Agent Analyse (docs/CADRAGE.md §7-②) ---
     analysis_max_attempts: int = 3

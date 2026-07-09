@@ -5,9 +5,15 @@ description = "Agent conversationnel sur données (on-premise) : requêtes SQL, 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "duckdb>=1.5.4",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.3",
+    "pg8000>=1.31.5",
     "pydantic>=2.13.4",
     "pydantic-ai-slim[openai]>=2.7.0",
     "pydantic-settings>=2.14.2",
+    "pyyaml>=6.0.3",
+    "sqlalchemy>=2.0.51",
 ]
 
 [build-system]
@@ -20,6 +26,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.20",
+    "testcontainers[postgres]>=4.14.2",
 ]
 
 [tool.ruff]
@@ -48,6 +55,7 @@ omit = ["*/sandbox/image/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "-m 'not live' --strict-markers --cov=data_analyst_agent --cov-report=term-missing --cov-fail-under=85"
 markers = [
     "integration: tests d'intégration (Docker, testcontainers, sandbox réelle)",

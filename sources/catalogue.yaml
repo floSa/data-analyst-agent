@@ -1,0 +1,13 @@
+# Catalogue déclaratif des sources de données (CADRAGE §7-①).
+# - postgres : DSN SQLAlchemy (driver pg8000) ; ${VARIABLES} d'environnement autorisées.
+# - file     : chemin CSV/Excel, relatif à ce fichier.
+sources:
+  - type: file
+    name: titanic
+    description: Passagers du Titanic (CSV local) — survie, classe, sexe, âge, tarif.
+    path: titanic.csv
+
+  - type: postgres
+    name: titanic_pg
+    description: Base Postgres Titanic multi-tables (passengers + classes jointes).
+    dsn: postgresql+pg8000://${DAA_PG_USER}:${DAA_PG_PASSWORD}@${DAA_PG_HOST}:${DAA_PG_PORT}/titanic
