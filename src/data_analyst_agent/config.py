@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     llm_model: str = "qwen3-coder:30b"
     llm_temperature: float = 0.0
 
+    # --- Agent Analyse (docs/CADRAGE.md §7-②) ---
+    analysis_max_attempts: int = 3
+
     # --- Sandbox d'exécution (docs/CADRAGE.md §6) ---
     # Commande docker ; surchargez p. ex. avec '["wsl", "docker"]' depuis Windows.
     sandbox_docker_cmd: list[str] = ["docker"]
