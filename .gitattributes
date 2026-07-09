@@ -1,0 +1,8 @@
+# Normalise les fins de ligne : LF dans le repo et au checkout (dev Windows, CI Linux)
+* text=auto eol=lf
+
+# Binaires
+*.png binary
+*.pkl binary
+*.joblib binary
+*.xlsx binary

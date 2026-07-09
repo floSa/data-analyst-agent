@@ -17,3 +17,31 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.20",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle — erreurs
+    "W",   # pycodestyle — warnings
+    "F",   # pyflakes
+    "I",   # isort — tri des imports
+    "UP",  # pyupgrade — syntaxe moderne
+    "B",   # bugbear — pièges courants
+    "SIM", # simplifications
+    "C4",  # compréhensions
+    "PT",  # style pytest
+    "RUF", # règles spécifiques ruff
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live' --strict-markers --cov=data_analyst_agent --cov-report=term-missing --cov-fail-under=85"
+markers = [
+    "integration: tests d'intégration (Docker, testcontainers, sandbox réelle)",
+    "e2e: scénarios golden de bout en bout",
+    "live: nécessite le LLM local (Ollama), exclu par défaut et en CI",
+]
