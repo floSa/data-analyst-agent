@@ -181,6 +181,24 @@ class Orchestrator:
 
     # -- nœuds ----------------------------------------------------------------
 
+    def _resolve_source(self, plan: Plan):
+        """La source du plan si elle existe ; sinon repli sans ambiguïté.
+
+        Le LLM omet parfois la source quand la demande semble se suffire
+        (constaté en live) : si le catalogue n'en contient qu'une, on la prend ;
+        sinon on échoue avec la liste des choix — jamais de devinette.
+        """
+        if plan.source:
+            return self.catalog.get(plan.source)
+        if len(self.catalog.sources) == 1:
+            only = self.catalog.sources[0]
+            plan.source = only.name  # trace et réponse cohérentes
+            return only
+        names = ", ".join(s.name for s in self.catalog.sources) or "(catalogue vide)"
+        raise KeyError(
+            f"aucune source choisie et le catalogue en contient plusieurs — précise parmi : {names}"
+        )
+
     def _datasets_description(self) -> str:
         lines = []
         for dataset in self.registry.datasets:
@@ -204,7 +222,7 @@ class Orchestrator:
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
-        adapter = open_source(self.catalog.get(plan.source or ""))
+        adapter = open_source(self._resolve_source(plan))
         outcome = run_retrieval(
             state["question"], adapter=adapter, model=self.model, settings=self.settings
         )
@@ -219,7 +237,7 @@ class Orchestrator:
     def _analysis_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
-        source = self.catalog.get(plan.source or "")
+        source = self._resolve_source(plan)
         with tempfile.TemporaryDirectory(prefix="daa-analysis-") as tmp:
             if isinstance(source, FileSource):
                 data_files = {source.path: source.path.name}
@@ -266,13 +284,28 @@ class Orchestrator:
             "trace": [self._step("inference", f"statut {outcome.status}", start)],
         }
 
+    @staticmethod
+    def _expected_columns_hint(dataset: str) -> str:
+        """Indique à l'agent SQL les noms de colonnes attendus par le schéma de features.
+
+        Indispensable quand la feature ne porte pas le nom de la colonne en base
+        (ex. `pclass` obtenu via une jointure sur `classes.level`) : le LLM doit
+        aliaser sa requête sur les noms du schéma.
+        """
+        fields = ", ".join(get_schema(dataset).model_fields)
+        return (
+            "\nRenvoie UNE seule ligne, avec des colonnes nommées exactement : "
+            f"{fields} (utilise des alias SQL si nécessaire)."
+        )
+
     def _fetch_predict_node(self, state: OrchestratorState) -> dict:
         """Chaînage ① -> ③ : récupère une ligne, la mappe sur les features, prédit."""
         start = time.monotonic()
         plan = state["plan"]
-        adapter = open_source(self.catalog.get(plan.source or ""))
+        adapter = open_source(self._resolve_source(plan))
+        data_question = plan.data_question or state["question"]
         retrieval = run_retrieval(
-            plan.data_question or state["question"],
+            data_question + self._expected_columns_hint(plan.dataset or ""),
             adapter=adapter,
             model=self.model,
             settings=self.settings,
@@ -283,7 +316,14 @@ class Orchestrator:
                 "error": "aucune ligne récupérée pour alimenter la prédiction",
                 "trace": [self._step("fetch_predict", "récupération vide", start)],
             }
-        row = dict(zip(retrieval.result.columns, retrieval.result.rows[0], strict=True))
+        # mapping insensible à la casse : les sources (CSV, Excel) gardent
+        # souvent des en-têtes capitalisés ("Pclass", "Sex"...)
+        row = {
+            str(column).lower(): value
+            for column, value in zip(
+                retrieval.result.columns, retrieval.result.rows[0], strict=True
+            )
+        }
         schema_fields = set(get_schema(plan.dataset or "").model_fields)
         features = {k: v for k, v in row.items() if k in schema_fields}
         features.update(plan.features)  # ce que l'utilisateur a donné explicitement prime

@@ -268,6 +268,10 @@ tests/
 
 - **Mono-tour** : la relance de features fonctionne, mais la réponse de
   l'utilisateur repart d'un message complet (pas de mémoire conversationnelle).
+- **Prédiction chaînée mono-ligne** : `fetch_then_predict` prédit pour UNE ligne
+  récupérée (« le passager 42 ») — validé en live. La prédiction en lot
+  (« toutes les femmes du Titanic ») n'existe pas encore : il faudrait itérer le
+  predict sur chaque ligne récupérée et agréger (comptes, taux, table de détail).
 - **Registry maison** → migration MLflow prévue (même interface).
 - **Mémoire RAG de paires question→SQL validées** (idée retenue du
   [spike Vanna](spike-vanna.md)) pour améliorer les questions récurrentes.

@@ -215,6 +215,88 @@ def test_chainage_fetch_then_predict(passager_csv: Path, registry: Registry):
     assert nodes == ["plan", "fetch_predict", "synthesize"]
 
 
+def test_chainage_colonnes_capitalisees(tmp_path: Path, registry: Registry):
+    """Les en-têtes capitalisés (CSV/Excel réels) sont mappés malgré la casse."""
+    csv = tmp_path / "Passagers.csv"
+    csv.write_text(
+        "PassengerId,Sex,Pclass,Age,SibSp,Parch,Fare,Embarked\n1,female,1,28,0,0,80.0,S\n",
+        encoding="utf-8",
+    )
+    llm = (
+        ScriptedLLM()
+        .script(
+            PLANNER,
+            [
+                plan_response(
+                    Plan(
+                        capability="fetch_then_predict",
+                        source="passagers",
+                        dataset="titanic",
+                        data_question="La ligne du passager 1",
+                    )
+                )
+            ],
+        )
+        .script(
+            RETRIEVAL,
+            [
+                tool_call(
+                    "run_sql",
+                    {"query": "SELECT * FROM passagers WHERE PassengerId = 1"},
+                ),
+                text("Ligne récupérée."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="passagers", path=csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Prédis la survie du passager 1")
+    assert answer.error is None
+    assert "a survécu" in answer.answer
+
+
+def test_chainage_indice_de_colonnes_dans_le_prompt(passager_csv: Path, registry: Registry):
+    """L'agent SQL reçoit la liste exacte des features attendues (alias forcés)."""
+    llm = (
+        ScriptedLLM()
+        .script(
+            PLANNER,
+            [
+                plan_response(
+                    Plan(
+                        capability="fetch_then_predict",
+                        source="passagers",
+                        dataset="titanic",
+                        data_question="La ligne du passager 1",
+                    )
+                )
+            ],
+        )
+        .script(
+            RETRIEVAL,
+            [
+                tool_call(
+                    "run_sql",
+                    {
+                        "query": (
+                            "SELECT sex, pclass, age, sibsp, parch, fare, embarked"
+                            " FROM passagers WHERE passenger_id = 1"
+                        )
+                    },
+                ),
+                text("Ligne récupérée."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="passagers", path=passager_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    orchestrator.ask("Prédis la survie du passager 1")
+    retrieval_prompt = llm.prompts_for(RETRIEVAL)[0]
+    assert "nommées exactement" in retrieval_prompt
+    for field in ("sex", "pclass", "age", "sibsp", "parch", "fare", "embarked"):
+        assert field in retrieval_prompt
+
+
 def test_fetch_then_predict_sans_ligne(passager_csv: Path, registry: Registry):
     llm = (
         ScriptedLLM()
@@ -251,6 +333,44 @@ def test_fetch_then_predict_sans_ligne(passager_csv: Path, registry: Registry):
 
 
 # --- chemins d'erreur -----------------------------------------------------------
+
+
+def test_source_omise_catalogue_a_une_source(mini_csv: Path, registry: Registry):
+    """Le LLM omet parfois la source : repli sur l'unique source du catalogue."""
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source=None))])
+        .script(
+            RETRIEVAL,
+            [
+                tool_call("run_sql", {"query": "SELECT count(*) AS n FROM mini"}),
+                text("4 lignes."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Combien de lignes ?")
+    assert answer.error is None
+    assert answer.plan.source == "mini"  # repli tracé dans le plan
+
+
+def test_source_omise_catalogue_multi_sources(
+    mini_csv: Path, passager_csv: Path, registry: Registry
+):
+    """Plusieurs sources et aucun choix : erreur claire qui liste les options."""
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", source=None))])
+    catalog = Catalog(
+        sources=[
+            FileSource(name="mini", path=mini_csv),
+            FileSource(name="passagers", path=passager_csv),
+        ]
+    )
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Combien de lignes ?")
+    assert answer.error is not None
+    assert "mini" in answer.error
+    assert "passagers" in answer.error
 
 
 def test_source_inconnue_reponse_propre(registry: Registry):

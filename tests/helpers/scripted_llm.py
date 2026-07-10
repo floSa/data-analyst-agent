@@ -40,27 +40,39 @@ def plan_response(plan: Plan) -> ModelResponse:
 
 
 class ScriptedLLM:
-    """File de réponses par agent (marqueur du prompt système)."""
+    """File de réponses par agent (marqueur du prompt système).
+
+    ``prompts_for(marker)`` rejoue ce que chaque agent a reçu (utile pour
+    vérifier le contenu des prompts construits par l'orchestrateur).
+    """
 
     def __init__(self) -> None:
         self._queues: dict[str, list[ModelResponse]] = {}
+        self.captured: list[tuple[str, str]] = []  # (marqueur, dernier contenu utilisateur)
 
     def script(self, marker: str, responses: list[ModelResponse]) -> ScriptedLLM:
         self._queues.setdefault(marker, []).extend(responses)
         return self
 
+    def prompts_for(self, marker: str) -> list[str]:
+        return [content for m, content in self.captured if m == marker]
+
     def model(self) -> FunctionModel:
         def responder(messages, info):
             system = ""
+            last_user = ""
             for message in messages:
                 if isinstance(message, ModelRequest):
                     for part in message.parts:
                         if isinstance(part, SystemPromptPart):
                             system = part.content
+                        elif hasattr(part, "content") and isinstance(part.content, str):
+                            last_user = part.content
             for marker, queue in self._queues.items():
                 if marker in system:
                     if not queue:
                         raise AssertionError(f"script épuisé pour l'agent {marker!r}")
+                    self.captured.append((marker, last_user))
                     return queue.pop(0)
             raise AssertionError(f"aucun script pour le prompt système : {system[:120]!r}")
 
