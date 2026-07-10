@@ -297,6 +297,58 @@ def test_chainage_indice_de_colonnes_dans_le_prompt(passager_csv: Path, registry
         assert field in retrieval_prompt
 
 
+def test_chainage_en_lot_avec_lignes_invalides(tmp_path: Path, registry: Registry):
+    """N lignes récupérées -> prédiction en lot, invalides écartées, détail joint."""
+    csv = tmp_path / "groupe.csv"
+    csv.write_text(
+        "passenger_id,sex,pclass,age,sibsp,parch,fare,embarked\n"
+        "1,female,1,28,0,0,80.0,S\n"
+        "2,female,2,-5,0,0,20.0,S\n"  # age hors bornes -> écartée
+        "3,female,3,40,1,0,8.0,Q\n",
+        encoding="utf-8",
+    )
+    llm = (
+        ScriptedLLM()
+        .script(
+            PLANNER,
+            [
+                plan_response(
+                    Plan(
+                        capability="fetch_then_predict",
+                        source="groupe",
+                        dataset="titanic",
+                        data_question="Toutes les femmes",
+                    )
+                )
+            ],
+        )
+        .script(
+            RETRIEVAL,
+            [
+                tool_call("run_sql", {"query": "SELECT * FROM groupe WHERE sex = 'female'"}),
+                text("3 lignes récupérées."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="groupe", path=csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Prédis la survie de toutes les femmes")
+
+    assert answer.error is None
+    assert "sur 2 lignes" in answer.answer
+    assert "écartée" in answer.answer
+    assert "a survécu : 2 (100%)" in answer.answer
+    # table de détail : les colonnes récupérées + prediction + confiance
+    detail = json.loads(answer.artifacts[0].data)
+    assert detail["columns"][-2:] == ["prediction", "confiance"]
+    assert len(detail["rows"]) == 3
+    assert detail["rows"][0][-2] == "a survécu"
+    assert detail["rows"][1][-2].startswith("écartée")
+    assert detail["rows"][1][-1] is None
+    trace_step = next(s for s in answer.trace if s.node == "fetch_predict")
+    assert "2/3" in trace_step.detail
+
+
 def test_fetch_then_predict_sans_ligne(passager_csv: Path, registry: Registry):
     llm = (
         ScriptedLLM()

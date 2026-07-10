@@ -70,6 +70,13 @@ def test_normalize_value():
     assert normalize_value(b"blob") == "b'blob'"
 
 
+def test_normalize_value_nan_et_inf_deviennent_null():
+    # NaN/inf casseraient le JSON strict côté client (JSON.parse)
+    assert normalize_value(float("nan")) is None
+    assert normalize_value(float("inf")) is None
+    assert normalize_value(float("-inf")) is None
+
+
 def test_build_result_tronque():
     rows = [[i] for i in range(10)]
     result = build_result(["n"], rows, max_rows=3)

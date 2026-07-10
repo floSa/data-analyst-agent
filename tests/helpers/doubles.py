@@ -24,17 +24,17 @@ class ScriptedSandbox:
 
 
 class FakeClassifier:
-    """Classifieur binaire déterministe : prédit toujours 1 à 88 %."""
+    """Classifieur binaire déterministe : prédit toujours 1 à 88 % (N lignes)."""
 
     classes_ = np.array([0, 1])
 
     def predict(self, features):
-        return np.array([1])
+        return np.ones(len(features), dtype=int)
 
     def predict_proba(self, features):
-        return np.array([[0.12, 0.88]])
+        return np.tile([0.12, 0.88], (len(features), 1))
 
 
 class FakeRegressor:
     def predict(self, features):
-        return np.array([4.1391])
+        return np.full(len(features), 4.1391)

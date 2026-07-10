@@ -135,10 +135,15 @@ paresseusement au premier appel : le serveur démarre sans Ollama ni Docker.
   attendues ; le LLM n'a le droit de choisir que dans ces listes.
 - `graph.py` — le `StateGraph` LangGraph : state typé (`TypedDict` avec accumulation
   des artefacts et de la trace), nœuds gardés, routage code, chaînage
-  `fetch_then_predict` (une ligne SQL → intersection avec les champs du schéma de
-  features → validation → predict ; ce que l'utilisateur a fourni explicitement
-  prime sur la ligne lue). Chaque nœud produit un `TraceStep{node, detail,
-  duration_ms}` et journalise (logger `data_analyst_agent.orchestrator`).
+  `fetch_then_predict` (lignes SQL → intersection avec les champs du schéma de
+  features, insensible à la casse → validation → predict ; ce que l'utilisateur a
+  fourni explicitement prime sur la ligne lue). **Une ligne récupérée → prédiction
+  unitaire ; plusieurs lignes (« toutes les femmes ») → prédiction en lot** :
+  chaque ligne validée, les valides prédites en un seul appel modèle vectorisé,
+  les invalides écartées et comptées, réponse agrégée (répartition des classes ou
+  moyenne) + table de détail ligne à ligne en artefact. Chaque nœud produit un
+  `TraceStep{node, detail, duration_ms}` et journalise (logger
+  `data_analyst_agent.orchestrator`).
 
 ### 4.3 `llm.py` + `config.py` — LLM mutualisé et réglages
 
@@ -268,10 +273,9 @@ tests/
 
 - **Mono-tour** : la relance de features fonctionne, mais la réponse de
   l'utilisateur repart d'un message complet (pas de mémoire conversationnelle).
-- **Prédiction chaînée mono-ligne** : `fetch_then_predict` prédit pour UNE ligne
-  récupérée (« le passager 42 ») — validé en live. La prédiction en lot
-  (« toutes les femmes du Titanic ») n'existe pas encore : il faudrait itérer le
-  predict sur chaque ligne récupérée et agréger (comptes, taux, table de détail).
+- **Lot borné par `retrieval_max_rows`** : une prédiction en lot porte sur au plus
+  `DAA_RETRIEVAL_MAX_ROWS` lignes (200 par défaut) ; au-delà, le résultat est
+  tronqué et la réponse le signale.
 - **Registry maison** → migration MLflow prévue (même interface).
 - **Mémoire RAG de paires question→SQL validées** (idée retenue du
   [spike Vanna](spike-vanna.md)) pour améliorer les questions récurrentes.

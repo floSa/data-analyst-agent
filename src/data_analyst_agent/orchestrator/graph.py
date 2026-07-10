@@ -21,7 +21,12 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from data_analyst_agent.agents.analysis.agent import AnalysisResult, SandboxLike, run_analysis
-from data_analyst_agent.agents.inference.predict import InferenceOutcome, run_inference
+from data_analyst_agent.agents.inference.predict import (
+    BatchInferenceOutcome,
+    InferenceOutcome,
+    run_batch_inference,
+    run_inference,
+)
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.inference.schemas import SCHEMAS, get_schema
 from data_analyst_agent.agents.retrieval.agent import RetrievalResult, run_retrieval
@@ -60,6 +65,7 @@ class OrchestratorState(TypedDict, total=False):
     retrieval: RetrievalResult | None
     analysis: AnalysisResult | None
     inference: InferenceOutcome | None
+    batch: BatchInferenceOutcome | None
     answer: str
     error: str | None
     artifacts: Annotated[list[MimeOutput], operator.add]
@@ -294,8 +300,9 @@ class Orchestrator:
         """
         fields = ", ".join(get_schema(dataset).model_fields)
         return (
-            "\nRenvoie UNE seule ligne, avec des colonnes nommées exactement : "
-            f"{fields} (utilise des alias SQL si nécessaire)."
+            "\nRenvoie la ou les lignes demandées (une par individu), avec des colonnes "
+            f"nommées exactement : {fields} (utilise des alias SQL si nécessaire). "
+            "Ajoute si disponible une colonne d'identification (id, nom)."
         )
 
     def _fetch_predict_node(self, state: OrchestratorState) -> dict:
@@ -318,22 +325,59 @@ class Orchestrator:
             }
         # mapping insensible à la casse : les sources (CSV, Excel) gardent
         # souvent des en-têtes capitalisés ("Pclass", "Sex"...)
-        row = {
-            str(column).lower(): value
-            for column, value in zip(
-                retrieval.result.columns, retrieval.result.rows[0], strict=True
-            )
-        }
         schema_fields = set(get_schema(plan.dataset or "").model_fields)
-        features = {k: v for k, v in row.items() if k in schema_fields}
-        features.update(plan.features)  # ce que l'utilisateur a donné explicitement prime
-        inference = run_inference(plan.dataset or "", features, registry=self.registry)
-        detail = f"ligne -> {sorted(features)} -> statut {inference.status}"
+        raw_rows = [
+            {
+                str(column).lower(): value
+                for column, value in zip(retrieval.result.columns, row, strict=True)
+            }
+            for row in retrieval.result.rows
+        ]
+        payloads = [
+            # ce que l'utilisateur a donné explicitement prime sur la ligne lue
+            {**{k: v for k, v in raw.items() if k in schema_fields}, **plan.features}
+            for raw in raw_rows
+        ]
+
+        if len(payloads) == 1:
+            inference = run_inference(plan.dataset or "", payloads[0], registry=self.registry)
+            detail = f"ligne -> {sorted(payloads[0])} -> statut {inference.status}"
+            return {
+                "retrieval": retrieval,
+                "inference": inference,
+                "trace": [self._step("fetch_predict", detail, start)],
+            }
+
+        # plusieurs lignes : prédiction en lot (vectorisée) + table de détail
+        batch = run_batch_inference(plan.dataset or "", payloads, registry=self.registry)
+        detail_table = self._batch_detail_artifact(retrieval.result, batch)
+        detail = f"lot : {batch.valid_count}/{batch.total} lignes prédites"
         return {
             "retrieval": retrieval,
-            "inference": inference,
+            "batch": batch,
+            "artifacts": [detail_table],
             "trace": [self._step("fetch_predict", detail, start)],
         }
+
+    @staticmethod
+    def _batch_detail_artifact(result: QueryResult, batch: BatchInferenceOutcome) -> MimeOutput:
+        """Table de détail du lot : les colonnes récupérées + prédiction par ligne."""
+        columns = [*result.columns, "prediction", "confiance"]
+        rows = []
+        for source_row, row_result in zip(result.rows, batch.rows, strict=True):
+            if row_result.prediction is not None:
+                prediction = row_result.prediction
+                label = prediction.label or str(prediction.value)
+                confidence = (
+                    max(prediction.probabilities.values()) if prediction.probabilities else None
+                )
+            else:
+                fields = ", ".join(issue.field for issue in row_result.issues[:3])
+                label = f"écartée ({fields})"
+                confidence = None
+            rows.append([*source_row, label, confidence])
+        payload = {"columns": columns, "rows": rows, "truncated": result.truncated}
+        return MimeOutput(mime="application/json", data=json.dumps(payload, ensure_ascii=False))
 
     def _synthesize_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
@@ -348,6 +392,11 @@ class Orchestrator:
         elif inference is not None and inference.prediction is not None:
             answer = self._format_prediction(inference)
             mode = "modèle (déterministe)"
+        elif state.get("batch") is not None:
+            retrieval = state.get("retrieval")
+            truncated = bool(retrieval and retrieval.result and retrieval.result.truncated)
+            answer = self._format_batch(state["batch"], truncated=truncated)
+            mode = "lot (déterministe)"
         elif state.get("retrieval") is not None and state.get("plan").capability == "query":
             answer = state["retrieval"].summary
             mode = "résumé de la récupération"
@@ -390,6 +439,35 @@ class Orchestrator:
             return " ".join(parts)
         unit = f" {prediction.unit}" if prediction.unit else ""
         return f"Prédiction ({prediction.dataset}) : {prediction.value}{unit}."
+
+    @staticmethod
+    def _format_batch(batch: BatchInferenceOutcome, truncated: bool) -> str:
+        if batch.valid_count == 0:
+            first = batch.rows[0].issues[0].message if batch.rows and batch.rows[0].issues else ""
+            return (
+                f"Aucune des {batch.total} lignes récupérées n'a passé la validation"
+                f"{f' ({first})' if first else ''} — pas de prédiction."
+            )
+        parts = [f"Prédiction ({batch.dataset}) sur {batch.valid_count} lignes"]
+        if batch.invalid_count:
+            parts.append(f"({batch.invalid_count} ligne(s) écartée(s) à la validation)")
+        if batch.task == "classification":
+            distribution = ", ".join(
+                f"{label} : {count} ({count / batch.valid_count:.0%})"
+                for label, count in batch.label_counts().items()
+            )
+            parts.append(f"— {distribution}.")
+        else:
+            values = batch.values()
+            mean = sum(values) / len(values)
+            unit = f" {batch.unit}" if batch.unit else ""
+            parts.append(
+                f"— moyenne {mean:.4g}{unit} (min {min(values):.4g}, max {max(values):.4g})."
+            )
+        parts.append("Détail ligne à ligne joint.")
+        if truncated:
+            parts.append("(Résultat tronqué par la limite de lignes.)")
+        return " ".join(parts)
 
     @staticmethod
     def _step(node: str, detail: str, start: float) -> TraceStep:

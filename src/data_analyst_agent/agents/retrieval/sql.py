@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import math
 import re
 from typing import Any, Protocol
 
@@ -98,6 +99,8 @@ class QueryResult(BaseModel):
 
 def normalize_value(value: Any) -> Any:
     """Rend une valeur SQL sérialisable (JSON/pydantic) sans surprise."""
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None  # NaN/inf casseraient le JSON strict côté client
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, decimal.Decimal):

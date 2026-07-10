@@ -216,6 +216,64 @@ def test_golden_3_prediction_passagere(catalog, registry, settings):
     assert "statut ok" in inference_step.detail
 
 
+def test_chainage_en_lot_toutes_les_femmes(catalog, registry, settings):
+    """« Prédis pour toutes les femmes » : lot réel sur Postgres + vrai modèle.
+
+    Les 314 femmes sont récupérées (jointure aliasée sur classes.level) ; les
+    lignes à âge/embarked manquants sont écartées par la validation, les autres
+    prédites en un appel vectorisé.
+    """
+    batch_settings = Settings(_env_file=None, retrieval_max_rows=400)
+    llm = (
+        ScriptedLLM()
+        .script(
+            PLANNER,
+            [
+                plan_response(
+                    Plan(
+                        capability="fetch_then_predict",
+                        source="titanic_pg",
+                        dataset="titanic",
+                        data_question="Toutes les femmes de la base",
+                    )
+                )
+            ],
+        )
+        .script(
+            RETRIEVAL,
+            [
+                tool_call(
+                    "run_sql",
+                    {
+                        "query": (
+                            "SELECT p.name, p.sex, c.level AS pclass, p.age, p.sibsp,"
+                            " p.parch, p.fare, p.embarked"
+                            " FROM passengers p JOIN classes c ON c.class_id = p.class_id"
+                            " WHERE p.sex = 'female'"
+                        )
+                    },
+                ),
+                text("314 lignes récupérées."),
+            ],
+        )
+    )
+    orchestrator = make_orchestrator(llm, catalog, registry, batch_settings)
+    answer = orchestrator.ask("Prédis avec le modèle si les femmes du Titanic ont survécu.")
+
+    assert answer.error is None
+    detail = json.loads(answer.artifacts[0].data)
+    assert len(detail["rows"]) == 314  # toutes les femmes, prédites ou écartées
+    assert detail["columns"][-2:] == ["prediction", "confiance"]
+    # le modèle jouet doit prédire la survie pour la grande majorité des femmes
+    predicted = [row[-2] for row in detail["rows"]]
+    survivantes = predicted.count("a survécu")
+    ecartees = sum(1 for p in predicted if p.startswith("écartée"))
+    assert survivantes > 200
+    assert survivantes + ecartees + predicted.count("n'a pas survécu") == 314
+    assert "Prédiction (titanic) sur" in answer.answer
+    assert "a survécu" in answer.answer
+
+
 def test_golden_3bis_features_incompletes_redemande(catalog, registry, settings):
     llm = ScriptedLLM().script(
         PLANNER,

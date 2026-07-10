@@ -6,7 +6,7 @@ import joblib
 import numpy as np
 import pytest
 
-from data_analyst_agent.agents.inference.predict import run_inference
+from data_analyst_agent.agents.inference.predict import run_batch_inference, run_inference
 from data_analyst_agent.agents.inference.registry import ModelEntry, Registry
 
 REGISTRY_YAML = """
@@ -44,15 +44,15 @@ class FakeClassifier:
     classes_ = np.array([0, 1])
 
     def predict(self, features):
-        return np.array([1])
+        return np.ones(len(features), dtype=int)
 
     def predict_proba(self, features):
-        return np.array([[0.12, 0.88]])
+        return np.tile([0.12, 0.88], (len(features), 1))
 
 
 class FakeRegressor:
     def predict(self, features):
-        return np.array([4.1391])
+        return np.full(len(features), 4.1391)
 
 
 @pytest.fixture
@@ -136,3 +136,51 @@ def test_features_hors_bornes_pas_de_predict(tmp_path: Path):
     outcome = run_inference("titanic", {**TITANIC_OK, "age": 180}, registry=registry)
     assert outcome.status == "invalid"
     assert outcome.issues[0].problem == "hors_bornes"
+
+
+# --- run_batch_inference --------------------------------------------------------
+
+
+def test_lot_mixte_valides_et_invalides(registry: Registry):
+    payloads = [
+        TITANIC_OK,
+        {**TITANIC_OK, "age": -5},  # hors bornes -> écartée
+        {**TITANIC_OK, "age": 40.0},
+    ]
+    outcome = run_batch_inference("titanic", payloads, registry=registry)
+    assert outcome.total == 3
+    assert outcome.valid_count == 2
+    assert outcome.invalid_count == 1
+    assert outcome.rows[1].prediction is None
+    assert outcome.rows[1].issues[0].problem == "hors_bornes"
+    assert outcome.rows[0].prediction.label == "a survécu"
+    assert outcome.label_counts() == {"a survécu": 2}
+
+
+def test_lot_entierement_invalide_ne_charge_pas_le_modele(tmp_path: Path):
+    # registre SANS artefact : si le predict était tenté, model() exploserait
+    (tmp_path / "registry.yaml").write_text(REGISTRY_YAML, encoding="utf-8")
+    registry = Registry.load(tmp_path / "registry.yaml")
+    outcome = run_batch_inference(
+        "titanic", [{"sex": "female"}, {"sex": "male"}], registry=registry
+    )
+    assert outcome.valid_count == 0
+    assert all(row.issues for row in outcome.rows)
+
+
+def test_lot_regression_valeurs_et_unite(registry: Registry):
+    payload = {
+        "med_inc": 8.3252,
+        "house_age": 41.0,
+        "ave_rooms": 6.98,
+        "ave_bedrms": 1.02,
+        "population": 322.0,
+        "ave_occup": 2.55,
+        "latitude": 37.88,
+        "longitude": -122.23,
+    }
+    outcome = run_batch_inference("california_housing", [payload, payload], registry=registry)
+    assert outcome.valid_count == 2
+    assert outcome.values() == [pytest.approx(4.1391)] * 2
+    assert outcome.unit == "centaines de milliers de dollars"
+    assert outcome.label_counts() == {"4.1391": 2}  # pas de libellés en régression

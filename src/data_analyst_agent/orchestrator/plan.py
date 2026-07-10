@@ -22,11 +22,14 @@ Classe la demande de l'utilisateur dans UNE capacité :
 - "analyze" : VISUALISATION demandée (bar chart, histogramme, courbe...) ou
   analyse statistique multi-étapes (test du khi-deux, ANOVA, ACP...) — du code
   sera exécuté en sandbox.
-- "predict" : prédiction ML dont les features sont données DANS le message —
-  extrais-les telles quelles dans `features` (noms exacts du schéma).
-- "fetch_then_predict" : prédiction ML dont les features doivent d'abord être
-  lues dans une source (ex. « prédis pour le passager 42 ») — formule dans
-  `data_question` la requête en langage naturel qui ramènera LA ligne voulue.
+- "predict" : prédiction ML pour UN cas dont les VALEURS des features sont
+  données dans le message (ex. « sexe=female, classe=1, âge=28, tarif=80... »)
+  — extrais-les telles quelles dans `features` (noms exacts du schéma).
+- "fetch_then_predict" : prédiction ML pour un ou des individus DÉSIGNÉS PAR
+  RÉFÉRENCE À UNE SOURCE — un identifiant (« le passager 42 »), un filtre ou
+  un groupe (« toutes les femmes », « les passagers de 3e classe ») : leurs
+  features doivent d'abord être lues dans la source. Formule dans
+  `data_question` ce qu'il faut récupérer (la ou les lignes).
 
 Sources de données disponibles :
 {sources}
@@ -38,6 +41,9 @@ Contraintes :
 - Pour query/analyze/fetch_then_predict : choisis `source` parmi les sources
   listées (champ `name`).
 - Pour predict/fetch_then_predict : choisis `dataset` parmi les modèles listés.
+- Une prédiction qui désigne un sous-ensemble de la source (« tous les... »,
+  « toutes les femmes », un id) est TOUJOURS fetch_then_predict, jamais predict :
+  un attribut de filtre (ex. le sexe) n'est pas un jeu de features complet.
 - N'invente ni source ni dataset ni feature.
 """
 
