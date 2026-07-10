@@ -48,14 +48,18 @@ class ScriptedLLM:
 
     def __init__(self) -> None:
         self._queues: dict[str, list[ModelResponse]] = {}
-        self.captured: list[tuple[str, str]] = []  # (marqueur, dernier contenu utilisateur)
+        # (marqueur, prompt système, dernier contenu utilisateur)
+        self.captured: list[tuple[str, str, str]] = []
 
     def script(self, marker: str, responses: list[ModelResponse]) -> ScriptedLLM:
         self._queues.setdefault(marker, []).extend(responses)
         return self
 
     def prompts_for(self, marker: str) -> list[str]:
-        return [content for m, content in self.captured if m == marker]
+        return [user for m, _system, user in self.captured if m == marker]
+
+    def systems_for(self, marker: str) -> list[str]:
+        return [system for m, system, _user in self.captured if m == marker]
 
     def model(self) -> FunctionModel:
         def responder(messages, info):
@@ -72,7 +76,7 @@ class ScriptedLLM:
                 if marker in system:
                     if not queue:
                         raise AssertionError(f"script épuisé pour l'agent {marker!r}")
-                    self.captured.append((marker, last_user))
+                    self.captured.append((marker, system, last_user))
                     return queue.pop(0)
             raise AssertionError(f"aucun script pour le prompt système : {system[:120]!r}")
 

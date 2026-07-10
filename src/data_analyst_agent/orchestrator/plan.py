@@ -41,10 +41,16 @@ Contraintes :
 - Pour query/analyze/fetch_then_predict : choisis `source` parmi les sources
   listées (champ `name`).
 - Pour predict/fetch_then_predict : choisis `dataset` parmi les modèles listés.
-- Une prédiction qui désigne un sous-ensemble de la source (« tous les... »,
-  « toutes les femmes », un id) est TOUJOURS fetch_then_predict, jamais predict :
+- Une prédiction qui désigne des individus STOCKÉS dans une source listée
+  (« le passager 42 », « toutes les femmes DE LA BASE ») est fetch_then_predict :
   un attribut de filtre (ex. le sexe) n'est pas un jeu de features complet.
-- N'invente ni source ni dataset ni feature.
+- MAIS un cas hypothétique (« une femme de 1re classe », « un passager de
+  30 ans »), sans référence à une ligne existante, est predict : extrais les
+  features effectivement données (même incomplètes — le système redemandera
+  le reste). Idem si aucune source listée ne s'y prête.
+- N'invente ni source ni dataset ni feature : n'extrais que ce que le message
+  dit réellement. Les indices grammaticaux explicites comptent : « une
+  passagère », « elle » -> sex=female ; « un homme » -> sex=male.
 """
 
 
@@ -59,11 +65,19 @@ class Plan(BaseModel):
     reason: str = ""
 
 
-def build_planner(sources_description: str, datasets_description: str) -> Agent[None, Plan]:
-    """Agent planificateur avec sortie structurée Plan."""
-    return Agent(
-        output_type=Plan,
-        system_prompt=PLANNER_SYSTEM_PROMPT.format(
-            sources=sources_description, datasets=datasets_description
-        ),
+def build_planner(
+    sources_description: str,
+    datasets_description: str,
+    pending_context: str | None = None,
+) -> Agent[None, Plan]:
+    """Agent planificateur avec sortie structurée Plan.
+
+    ``pending_context`` (multi-tours) : décrit une prédiction en attente de
+    features — le message courant est probablement un complément d'information.
+    """
+    system_prompt = PLANNER_SYSTEM_PROMPT.format(
+        sources=sources_description, datasets=datasets_description
     )
+    if pending_context:
+        system_prompt = f"{system_prompt}\n{pending_context}"
+    return Agent(output_type=Plan, system_prompt=system_prompt)

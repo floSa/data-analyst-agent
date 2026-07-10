@@ -58,6 +58,18 @@ class TraceStep(BaseModel):
     duration_ms: int = 0
 
 
+class PendingInference(BaseModel):
+    """Prédiction en attente de features (multi-tours).
+
+    Renvoyée quand la validation échoue ; le tour suivant la repasse à
+    ``ask(pending=...)`` pour que le complément de l'utilisateur soit fusionné
+    avec ce qui était déjà connu.
+    """
+
+    dataset: str
+    features: dict = Field(default_factory=dict)
+
+
 class OrchestratorState(TypedDict, total=False):
     question: str
     source_name: str | None
@@ -66,6 +78,8 @@ class OrchestratorState(TypedDict, total=False):
     analysis: AnalysisResult | None
     inference: InferenceOutcome | None
     batch: BatchInferenceOutcome | None
+    pending_in: PendingInference | None
+    pending_out: PendingInference | None
     answer: str
     error: str | None
     artifacts: Annotated[list[MimeOutput], operator.add]
@@ -80,6 +94,9 @@ class ChatAnswer(BaseModel):
     plan: Plan | None = None
     error: str | None = None
     trace: list[TraceStep] = Field(default_factory=list)
+    # multi-tours : à repasser tel quel au prochain ask() de la conversation
+    pending: PendingInference | None = None
+    conversation_id: str | None = None  # renseigné par l'API
 
 
 def _table_artifact(result: QueryResult) -> MimeOutput:
@@ -114,9 +131,20 @@ class Orchestrator:
 
     # -- API ----------------------------------------------------------------
 
-    def ask(self, question: str, source: str | None = None) -> ChatAnswer:
+    def ask(
+        self,
+        question: str,
+        source: str | None = None,
+        pending: PendingInference | None = None,
+    ) -> ChatAnswer:
         state: OrchestratorState = self.graph.invoke(
-            {"question": question, "source_name": source, "artifacts": [], "trace": []}
+            {
+                "question": question,
+                "source_name": source,
+                "pending_in": pending,
+                "artifacts": [],
+                "trace": [],
+            }
         )
         return ChatAnswer(
             answer=state.get("answer", ""),
@@ -124,6 +152,7 @@ class Orchestrator:
             plan=state.get("plan"),
             error=state.get("error"),
             trace=state.get("trace", []),
+            pending=state.get("pending_out"),
         )
 
     # -- construction du graphe ----------------------------------------------
@@ -213,12 +242,50 @@ class Orchestrator:
             lines.append(f"- {dataset} ({entry.task}) : features attendues : {fields}")
         return "\n".join(lines) or "(aucun modèle)"
 
+    @staticmethod
+    def _pending_context(pending: PendingInference | None) -> str | None:
+        """Décrit au planificateur la prédiction en attente (multi-tours)."""
+        if pending is None:
+            return None
+        known = ", ".join(f"{k}={v!r}" for k, v in pending.features.items()) or "(aucune)"
+        try:
+            missing = ", ".join(
+                field
+                for field in get_schema(pending.dataset).model_fields
+                if field not in pending.features
+            )
+        except KeyError:
+            missing = "?"
+        return (
+            f"CONTEXTE DE CONVERSATION : une prédiction '{pending.dataset}' attend des "
+            f"informations. Features déjà connues : {known}. Il manque : {missing}.\n"
+            "Si le message apporte tout ou partie de ces informations, choisis "
+            f"'predict' avec dataset='{pending.dataset}' et mets dans `features` les "
+            "NOUVELLES valeurs extraites du message (noms exacts du schéma) — les "
+            "valeurs déjà connues seront fusionnées automatiquement. Si le message "
+            "change complètement de sujet, ignore ce contexte."
+        )
+
     def _plan_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
-        planner = build_planner(self.catalog.describe(), self._datasets_description())
+        pending = state.get("pending_in")
+        planner = build_planner(
+            self.catalog.describe(),
+            self._datasets_description(),
+            pending_context=self._pending_context(pending),
+        )
         plan = planner.run_sync(state["question"], model=self.model).output
         if state.get("source_name"):
             plan.source = state["source_name"]
+        if plan.capability == "fetch_then_predict" and not self.catalog.sources:
+            # aucune source à interroger : on dégrade en predict, la validation
+            # relancera l'utilisateur sur ce qui manque (jamais de crash)
+            plan.capability = "predict"
+        if pending is not None and plan.capability == "predict":
+            # fusion multi-tours : l'acquis d'abord, le nouveau message prime
+            plan.dataset = plan.dataset or pending.dataset
+            if plan.dataset == pending.dataset:
+                plan.features = {**pending.features, **plan.features}
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         return {
             "plan": plan,
@@ -285,10 +352,16 @@ class Orchestrator:
         start = time.monotonic()
         plan = state["plan"]
         outcome = run_inference(plan.dataset or "", plan.features, registry=self.registry)
-        return {
+        update: dict = {
             "inference": outcome,
             "trace": [self._step("inference", f"statut {outcome.status}", start)],
         }
+        if outcome.status == "invalid":
+            # multi-tours : on retient l'acquis pour fusionner le prochain message
+            update["pending_out"] = PendingInference(
+                dataset=plan.dataset or "", features=plan.features
+            )
+        return update
 
     @staticmethod
     def _expected_columns_hint(dataset: str) -> str:
@@ -342,11 +415,16 @@ class Orchestrator:
         if len(payloads) == 1:
             inference = run_inference(plan.dataset or "", payloads[0], registry=self.registry)
             detail = f"ligne -> {sorted(payloads[0])} -> statut {inference.status}"
-            return {
+            update: dict = {
                 "retrieval": retrieval,
                 "inference": inference,
                 "trace": [self._step("fetch_predict", detail, start)],
             }
+            if inference.status == "invalid":
+                update["pending_out"] = PendingInference(
+                    dataset=plan.dataset or "", features=payloads[0]
+                )
+            return update
 
         # plusieurs lignes : prédiction en lot (vectorisée) + table de détail
         batch = run_batch_inference(plan.dataset or "", payloads, registry=self.registry)

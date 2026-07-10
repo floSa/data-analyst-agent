@@ -9,6 +9,7 @@ Lancement : uv run uvicorn data_analyst_agent.api.app:app
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 
 from fastapi import FastAPI
@@ -18,10 +19,14 @@ from pydantic import BaseModel
 import data_analyst_agent
 from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator
 
+# borne simple du magasin de conversations (V1 on-prem, 10-20 utilisateurs)
+MAX_CONVERSATIONS = 1000
+
 
 class ChatRequest(BaseModel):
     message: str
     source: str | None = None  # force une source du catalogue (sinon le planificateur choisit)
+    conversation_id: str | None = None  # multi-tours : renvoyer l'id reçu dans la réponse
 
 
 def create_app(orchestrator_factory: Callable[[], Orchestrator] | None = None) -> FastAPI:
@@ -32,6 +37,8 @@ def create_app(orchestrator_factory: Callable[[], Orchestrator] | None = None) -
     )
     app.state.orchestrator = None
     app.state.orchestrator_factory = orchestrator_factory or Orchestrator
+    # multi-tours : conversation_id -> prédiction en attente de features (ou None)
+    app.state.conversations = {}
 
     def get_orchestrator() -> Orchestrator:
         if app.state.orchestrator is None:
@@ -44,7 +51,14 @@ def create_app(orchestrator_factory: Callable[[], Orchestrator] | None = None) -
 
     @app.post("/chat", response_model=ChatAnswer)
     def chat(request: ChatRequest) -> ChatAnswer:
-        return get_orchestrator().ask(request.message, source=request.source)
+        conversation_id = request.conversation_id or uuid.uuid4().hex
+        pending = app.state.conversations.get(conversation_id)
+        answer = get_orchestrator().ask(request.message, source=request.source, pending=pending)
+        if len(app.state.conversations) >= MAX_CONVERSATIONS:
+            app.state.conversations.clear()  # purge grossière, suffisante en V1
+        app.state.conversations[conversation_id] = answer.pending
+        answer.conversation_id = conversation_id
+        return answer
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -91,6 +105,7 @@ const journal = document.getElementById("journal");
 const formulaire = document.getElementById("formulaire");
 const champ = document.getElementById("message");
 const bouton = document.getElementById("envoyer");
+let conversationId = null;  // multi-tours : entretenu par le serveur
 
 function bulle(classe) {
   const div = document.createElement("div");
@@ -127,9 +142,10 @@ formulaire.addEventListener("submit", async (event) => {
     const reponse = await fetch("/chat", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({message: texte}),
+      body: JSON.stringify({message: texte, conversation_id: conversationId}),
     });
     const corps = await reponse.json();
+    conversationId = corps.conversation_id || conversationId;
     attente.textContent = corps.answer || "(pas de réponse)";
     if (corps.error) {
       const p = document.createElement("p");

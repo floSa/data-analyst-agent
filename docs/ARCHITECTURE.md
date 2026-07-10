@@ -127,6 +127,15 @@ corrige sa requête — borné par `retrieval_request_limit` pour couper toute b
 JSON, aucun CDN — compatible réseau coupé). L'orchestrateur est construit
 paresseusement au premier appel : le serveur démarre sans Ollama ni Docker.
 
+**Multi-tours** : chaque réponse porte un `conversation_id` (généré si absent de la
+requête) ; le serveur y associe l'éventuelle *prédiction en attente de features*
+(`pending`). Quand l'utilisateur répond à une relance (« elle a 28 ans, billet à
+80 livres... »), le planificateur reçoit le contexte (dataset, features déjà
+connues, features manquantes), extrait les nouvelles valeurs, et l'orchestrateur
+fusionne — le nouveau message prime sur l'acquis, ce qui permet aussi de corriger
+une valeur refusée. Une digression solde le contexte. Magasin en mémoire borné
+(V1 : 10-20 utilisateurs).
+
 ### 4.2 `orchestrator/` — plan et graphe
 
 - `plan.py` — le modèle `Plan` (capability, source, dataset, features,
@@ -271,8 +280,11 @@ tests/
 
 ## 8. Limites connues et pistes V2
 
-- **Mono-tour** : la relance de features fonctionne, mais la réponse de
-  l'utilisateur repart d'un message complet (pas de mémoire conversationnelle).
+- **Mémoire conversationnelle limitée au slot-filling** : le multi-tours couvre
+  la complétion de features d'une prédiction (fusion, correction, digression) ;
+  il ne couvre pas encore les références anaphoriques générales (« et pour les
+  hommes ? » après une requête SQL). Magasin de conversations en mémoire process
+  (redémarrage = oubli) — suffisant en V1, à externaliser si multi-instances.
 - **Lot borné par `retrieval_max_rows`** : une prédiction en lot porte sur au plus
   `DAA_RETRIEVAL_MAX_ROWS` lignes (200 par défaut) ; au-delà, le résultat est
   tronqué et la réponse le signale.

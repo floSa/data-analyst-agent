@@ -117,6 +117,117 @@ def test_flux_predict_incomplet_redemande(registry: Registry):
     assert answer.artifacts == []
 
 
+# --- multi-tours (slot-filling conversationnel) ----------------------------------
+
+
+def test_relance_puis_complement_multi_tours(registry: Registry):
+    """Tour 1 : features partielles -> relance + pending. Tour 2 : complément -> prédiction."""
+    llm1 = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(
+                Plan(
+                    capability="predict", dataset="titanic", features={"sex": "female", "pclass": 1}
+                )
+            )
+        ],
+    )
+    orchestrator1 = orchestrator_with(llm1, registry=registry)
+    tour1 = orchestrator1.ask("Prédis la survie d'une femme en 1re classe")
+    assert tour1.answer.strip().endswith("?")
+    assert tour1.pending is not None
+    assert tour1.pending.dataset == "titanic"
+    assert tour1.pending.features == {"sex": "female", "pclass": 1}
+
+    # tour 2 : le planificateur n'extrait QUE les nouvelles valeurs du message
+    llm2 = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(
+                Plan(
+                    capability="predict",
+                    dataset="titanic",
+                    features={"age": 28, "sibsp": 0, "parch": 0, "fare": 80.0, "embarked": "S"},
+                )
+            )
+        ],
+    )
+    orchestrator2 = orchestrator_with(llm2, registry=registry)
+    tour2 = orchestrator2.ask(
+        "Elle a 28 ans, pas de famille à bord, billet à 80 livres, embarquée à Southampton",
+        pending=tour1.pending,
+    )
+    assert tour2.error is None
+    assert "a survécu" in tour2.answer  # fusion acquis + complément -> prédiction
+    assert tour2.pending is None  # plus rien en attente
+    # le contexte multi-tours a bien été donné au planificateur
+    assert "CONTEXTE DE CONVERSATION" in llm2.systems_for(PLANNER)[0]
+    assert "sex='female'" in llm2.systems_for(PLANNER)[0]
+
+
+def test_pending_ignore_si_changement_de_sujet(mini_csv: Path, registry: Registry):
+    """L'utilisateur digresse : le contexte en attente n'est pas appliqué de force."""
+    from data_analyst_agent.orchestrator.graph import PendingInference
+
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [
+                tool_call("run_sql", {"query": "SELECT count(*) AS n FROM mini"}),
+                text("4 lignes."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask(
+        "Finalement, combien de lignes dans la table ?",
+        pending=PendingInference(dataset="titanic", features={"sex": "female"}),
+    )
+    assert answer.error is None
+    assert answer.answer == "4 lignes."
+    assert answer.pending is None  # la digression solde le contexte
+
+
+def test_fetch_then_predict_degrade_en_predict_sans_source(registry: Registry):
+    """Catalogue vide + route fetch_then_predict impossible -> predict + relance."""
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(
+                Plan(
+                    capability="fetch_then_predict",
+                    dataset="titanic",
+                    features={"sex": "female", "pclass": 1},
+                )
+            )
+        ],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)  # catalogue vide
+    answer = orchestrator.ask("Prédis la survie d'une femme en 1re classe")
+    assert answer.error is None  # pas de crash « catalogue vide »
+    assert answer.plan.capability == "predict"
+    assert answer.answer.strip().endswith("?")  # relance sur les features manquantes
+    assert answer.pending is not None
+
+
+def test_correction_de_valeur_hors_bornes_multi_tours(registry: Registry):
+    """Le complément corrige une valeur invalide de l'acquis (le nouveau prime)."""
+    from data_analyst_agent.orchestrator.graph import PendingInference
+
+    pending = PendingInference(dataset="titanic", features={**TITANIC_OK, "age": 250})
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [plan_response(Plan(capability="predict", dataset="titanic", features={"age": 25}))],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)
+    answer = orchestrator.ask("Pardon, 25 ans", pending=pending)
+    assert answer.error is None
+    assert "a survécu" in answer.answer
+
+
 # --- query --------------------------------------------------------------------
 
 
