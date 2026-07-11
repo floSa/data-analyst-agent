@@ -76,3 +76,19 @@ sources/                  # catalogue des sources + datasets vendorisés
 notebooks/                # entraînement des modèles jouets (jupytext .md + .ipynb)
 tests/                    # unit / integration / e2e golden / helpers
 ```
+
+---
+
+## Licences & composants
+
+| Composant | Rôle | Licence |
+|---|---|---|
+| DuckDB | Moteur SQL analytique | MIT |
+| FastAPI | API | MIT |
+| LangGraph | Orchestration de l'agent | MIT |
+| Pydantic / pydantic-ai | Typage & agent LLM | MIT |
+| pandas | Manipulation de données | BSD-3-Clause |
+| pg8000 | Driver PostgreSQL | BSD-3-Clause |
+| joblib | Sérialisation des modèles | BSD-3-Clause |
+| Ollama (Qwen3-Coder) | LLM mutualisé local | MIT (Ollama) / Apache-2.0 (Qwen) `<à confirmer selon le modèle>` |
+| **Ce projet** | Code applicatif | MIT — Copyright (c) 2026 floSa `<à confirmer : aucun fichier LICENSE présent>` |
