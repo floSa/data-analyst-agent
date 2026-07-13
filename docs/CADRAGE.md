@@ -132,9 +132,9 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 
 ## 9. Décisions — figées vs à trancher
 
-**✅ Figé :** cible on-prem + commercialisable (MIT/Apache/BSD only) · LLM mutualisé Qwen3-Coder · sandbox Docker+Jupyter buildée avec uv, réseau coupé · analyse maison (scipy/statsmodels/prince, pas pingouin) · inférence Pydantic-à-la-main + registry maison → MLflow · 3 capacités sous orchestrateur, contrat de retour MIME · **couverture de tests maximale exigée (cf. §12)**.
+**Figé :** cible on-prem + commercialisable (MIT/Apache/BSD only) · LLM mutualisé Qwen3-Coder · sandbox Docker+Jupyter buildée avec uv, réseau coupé · analyse maison (scipy/statsmodels/prince, pas pingouin) · inférence Pydantic-à-la-main + registry maison → MLflow · 3 capacités sous orchestrateur, contrat de retour MIME · **couverture de tests maximale exigée (cf. §12)**.
 
-**🔲 À trancher (recos par défaut) — à confirmer avant de les coder :**
+**À trancher (recos par défaut) — à confirmer avant de les coder :**
 1. **Text-to-SQL** : tools-maison comme socle **+ spike Vanna** pour comparer. *(alt. WrenAI, Apache, maintenu.)*
 2. **Excel ad-hoc** : DuckDB pour requête/jointure, pandas pour la stat.
 3. **Orchestration** : LangGraph + nœuds PydanticAI.

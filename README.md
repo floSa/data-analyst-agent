@@ -8,6 +8,12 @@ Agent conversationnel sur données, **on-premise**. À partir d'une source décl
 
 Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM mutualisé (Qwen3-Coder via Ollama), orchestration explicite et traçable, licences 100 % permissives (MIT/Apache/BSD).
 
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-sandbox-2496ED?logo=docker&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-1.2-1C3C3C)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.139-009688?logo=fastapi&logoColor=white)
+
 ## Architecture en un coup d'œil
 
 ```mermaid
@@ -51,6 +57,14 @@ L'image de la sandbox se construit une fois : `docker build -t data-analyst-agen
 ## Configuration
 
 Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), URL Ollama (`DAA_OLLAMA_BASE_URL`), quotas sandbox, chemins du catalogue et du registre — tableau complet dans [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md). Les sources de données se déclarent dans `sources/catalogue.yaml`.
+
+## API / Endpoints
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| `POST` | `/chat` | Question en langage naturel → réponse + artefacts + trace (contrat `ChatAnswer`) |
+| `GET` | `/health` | Sonde de vie |
+| `GET` | `/` | Page de chat inline (rendu des PNG base64 et des tables JSON, zéro asset externe) |
 
 ## Observabilité
 
