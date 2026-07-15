@@ -16,6 +16,7 @@ from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
+from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput, SandboxResult
 from helpers.doubles import FakeClassifier, ScriptedSandbox
 from helpers.scripted_llm import (
@@ -279,6 +280,138 @@ def test_query_multi_lignes_ne_recopie_pas_le_tableau(mini_csv: Path, registry: 
     assert "Ligne 1" not in answer.answer
     assert "4 lignes" in answer.answer
     assert "tableau" in answer.answer
+
+
+# --- mémoire de conversation (objets intermédiaires persistés) -------------------
+
+REPO = Path(__file__).parents[3]
+
+
+def _iris_registry() -> Registry:
+    """Le vrai registre (iris + son artefact) pour prédire des lignes iris réelles."""
+    return Registry.load(REPO / "models" / "registry.yaml")
+
+
+def test_query_memorise_le_tableau(tmp_path: Path, registry: Registry):
+    """Un résultat de requête est persisté dans l'espace de travail de la conversation."""
+    iris = REPO / "sources" / "iris.csv"
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="iris"))])
+        .script(
+            RETRIEVAL,
+            [
+                tool_call(
+                    "run_sql", {"query": "SELECT * FROM iris ORDER BY sepal_length DESC LIMIT 3"}
+                ),
+                text("Voici 3 lignes."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="iris", path=iris)])
+    settings = make_settings(workspace_dir=tmp_path)
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry, settings=settings)
+    orchestrator.ask("les 3 plus grandes fleurs", conversation_id="c1")
+
+    ws = ConversationWorkspace(tmp_path, "c1")
+    assert [a.name for a in ws.artifacts] == ["resultat_1"]
+    assert ws.artifacts[0].row_count == 3
+    assert ws.path_of(ws.artifacts[0]).exists()
+
+
+def test_reutilisation_du_tableau_precedent_pour_prediction(tmp_path: Path):
+    """Tour 1 : requête iris -> resultat_1. Tour 2 : « prédis ces lignes » -> prédiction en lot."""
+    iris = REPO / "sources" / "iris.csv"
+    registry = _iris_registry()
+    settings = make_settings(workspace_dir=tmp_path)
+
+    # tour 1 : produit resultat_1 (3 lignes iris) et le mémorise
+    llm1 = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="iris"))])
+        .script(
+            RETRIEVAL,
+            [
+                tool_call(
+                    "run_sql", {"query": "SELECT * FROM iris ORDER BY sepal_length DESC LIMIT 3"}
+                ),
+                text("3 lignes."),
+            ],
+        )
+    )
+    orch1 = orchestrator_with(
+        llm1,
+        catalog=Catalog(sources=[FileSource(name="iris", path=iris)]),
+        registry=registry,
+        settings=settings,
+    )
+    orch1.ask("donne-moi les 3 dernières lignes du dataset iris", conversation_id="c2")
+
+    # tour 2 : le planificateur désigne resultat_1 comme source (« ces lignes »)
+    llm2 = (
+        ScriptedLLM()
+        .script(
+            PLANNER,
+            [
+                plan_response(
+                    Plan(
+                        capability="fetch_then_predict",
+                        source="resultat_1",
+                        dataset="iris",
+                        data_question="ces lignes",
+                    )
+                )
+            ],
+        )
+        .script(
+            RETRIEVAL,
+            [
+                tool_call("run_sql", {"query": "SELECT * FROM resultat_1"}),
+                text("lignes récupérées."),
+            ],
+        )
+    )
+    # catalogue vide : resultat_1 n'existe QUE grâce à la mémoire de conversation
+    orch2 = orchestrator_with(
+        llm2, catalog=Catalog(sources=[]), registry=registry, settings=settings
+    )
+    answer = orch2.ask("prédis ces 3 lignes", conversation_id="c2")
+
+    assert answer.error is None
+    assert "Prédiction (iris)" in answer.answer
+    detail = json.loads(answer.artifacts[0].data)
+    assert len(detail["rows"]) == 3  # les 3 lignes du tableau précédent, prédites
+    assert detail["columns"][-2:] == ["prediction", "confiance"]
+    # le planificateur a bien reçu la description de l'objet intermédiaire
+    assert "resultat_1" in llm2.systems_for(PLANNER)[0]
+
+
+def test_code_genere_accede_aux_objets_intermediaires(tmp_path: Path, registry: Registry):
+    """Le CSV mémorisé est monté dans la sandbox et annoncé au code d'analyse."""
+    # pré-remplit la mémoire avec un objet intermédiaire
+    ws = ConversationWorkspace(tmp_path, "c3")
+    ws.save_table(["a", "b"], [[1, 2], [3, 4]], "un tableau précédent")
+
+    sandbox = ScriptedSandbox([SandboxResult(status="ok", stdout="ok\n", results=[])])
+    iris = REPO / "sources" / "iris.csv"
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="iris"))])
+        .script(ANALYSIS, [text("```python\nprint('ok')\n```")])
+        .script(SYNTHESIS, [text("Analyse faite.")])
+    )
+    settings = make_settings(workspace_dir=tmp_path)
+    orchestrator = orchestrator_with(
+        llm,
+        catalog=Catalog(sources=[FileSource(name="iris", path=iris)]),
+        registry=registry,
+        settings=settings,
+        sandbox=sandbox,
+    )
+    orchestrator.ask("analyse", conversation_id="c3")
+    # le prompt d'analyse mentionne le fichier intermédiaire réutilisable
+    analysis_prompt = llm.prompts_for(ANALYSIS)[0]
+    assert "resultat_1.csv" in analysis_prompt
 
 
 # --- analyze ------------------------------------------------------------------

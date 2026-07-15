@@ -30,7 +30,9 @@ class FakeOrchestrator:
         self.answer = answer
         self.calls: list[tuple[str, str | None, object]] = []
 
-    def ask(self, question: str, source: str | None = None, pending=None) -> ChatAnswer:
+    def ask(
+        self, question: str, source: str | None = None, pending=None, conversation_id=None
+    ) -> ChatAnswer:
         self.calls.append((question, source, pending))
         return self.answer
 

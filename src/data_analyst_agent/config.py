@@ -1,5 +1,6 @@
 """Configuration de l'application (pydantic-settings, préfixe d'environnement DAA_)."""
 
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -32,6 +33,12 @@ class Settings(BaseSettings):
 
     # --- Inférence (docs/CADRAGE.md §7-③) ---
     models_registry_path: Path = Path("models/registry.yaml")
+
+    # --- Mémoire de conversation (objets intermédiaires persistés) ---
+    # Chaque conversation persiste ses tableaux intermédiaires (CSV) sous un
+    # sous-dossier de ce répertoire ; ils sont réexposés aux tours suivants
+    # (sources éphémères, sandbox du code généré).
+    workspace_dir: Path = Path(tempfile.gettempdir()) / "daa-workspaces"
 
     # --- Sandbox d'exécution (docs/CADRAGE.md §6) ---
     # Commande docker ; surchargez p. ex. avec '["wsl", "docker"]' depuis Windows.

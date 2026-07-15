@@ -40,6 +40,7 @@ from data_analyst_agent.agents.retrieval.sql import QueryResult
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
 from data_analyst_agent.orchestrator.plan import Plan, build_planner
+from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
 
 logger = logging.getLogger("data_analyst_agent.orchestrator")
@@ -81,6 +82,7 @@ class OrchestratorState(TypedDict, total=False):
     pending_in: PendingInference | None
     pending_out: PendingInference | None
     clarification: str | None
+    workspace: ConversationWorkspace | None
     answer: str
     error: str | None
     artifacts: Annotated[list[MimeOutput], operator.add]
@@ -137,12 +139,21 @@ class Orchestrator:
         question: str,
         source: str | None = None,
         pending: PendingInference | None = None,
+        conversation_id: str | None = None,
     ) -> ChatAnswer:
+        # mémoire de conversation : les tableaux intermédiaires produits sont
+        # persistés et réexposés aux tours suivants (cf. workspace.py)
+        workspace = (
+            ConversationWorkspace(self.settings.workspace_dir, conversation_id)
+            if conversation_id is not None
+            else None
+        )
         state: OrchestratorState = self.graph.invoke(
             {
                 "question": question,
                 "source_name": source,
                 "pending_in": pending,
+                "workspace": workspace,
                 "artifacts": [],
                 "trace": [],
             }
@@ -225,7 +236,14 @@ class Orchestrator:
 
     # -- nœuds ----------------------------------------------------------------
 
-    def _resolve_source(self, plan: Plan):
+    def _effective_catalog(self, state: OrchestratorState) -> Catalog:
+        """Catalogue du tour : sources déclarées + objets intermédiaires de la conversation."""
+        workspace = state.get("workspace")
+        if workspace is None or not workspace.artifacts:
+            return self.catalog
+        return Catalog(sources=[*self.catalog.sources, *workspace.as_sources()])
+
+    def _resolve_source(self, plan: Plan, catalog: Catalog):
         """La source du plan si elle existe ; sinon repli sans ambiguïté.
 
         Le LLM omet parfois la source quand la demande semble se suffire
@@ -233,12 +251,12 @@ class Orchestrator:
         sinon on échoue avec la liste des choix — jamais de devinette.
         """
         if plan.source:
-            return self.catalog.get(plan.source)
-        if len(self.catalog.sources) == 1:
-            only = self.catalog.sources[0]
+            return catalog.get(plan.source)
+        if len(catalog.sources) == 1:
+            only = catalog.sources[0]
             plan.source = only.name  # trace et réponse cohérentes
             return only
-        names = ", ".join(s.name for s in self.catalog.sources) or "(catalogue vide)"
+        names = ", ".join(s.name for s in catalog.sources) or "(catalogue vide)"
         raise KeyError(
             f"aucune source choisie et le catalogue en contient plusieurs — précise parmi : {names}"
         )
@@ -286,17 +304,25 @@ class Orchestrator:
     def _plan_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         pending = state.get("pending_in")
+        # les objets intermédiaires de la conversation sont décrits en plus des
+        # sources déclarées, pour que « prédis ces lignes » les désigne
+        sources_description = self.catalog.describe()
+        workspace = state.get("workspace")
+        workspace_description = workspace.describe() if workspace is not None else None
+        if workspace_description:
+            sources_description = f"{sources_description}\n\n{workspace_description}"
         planner = build_planner(
-            self.catalog.describe(),
+            sources_description,
             self._datasets_description(),
             pending_context=self._pending_context(pending),
         )
         plan = planner.run_sync(state["question"], model=self.model).output
         if state.get("source_name"):
             plan.source = state["source_name"]
-        if plan.capability == "fetch_then_predict" and not self.catalog.sources:
-            # aucune source à interroger : on dégrade en predict, la validation
-            # relancera l'utilisateur sur ce qui manque (jamais de crash)
+        if plan.capability == "fetch_then_predict" and not self._effective_catalog(state).sources:
+            # aucune source à interroger (ni déclarée, ni en mémoire de
+            # conversation) : on dégrade en predict, la validation relancera
+            # l'utilisateur sur ce qui manque (jamais de crash)
             plan.capability = "predict"
         if pending is not None and plan.capability == "predict":
             # fusion multi-tours : l'acquis d'abord, le nouveau message prime
@@ -331,11 +357,13 @@ class Orchestrator:
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
-        adapter = open_source(self._resolve_source(plan))
+        adapter = open_source(self._resolve_source(plan, self._effective_catalog(state)))
         outcome = run_retrieval(
             state["question"], adapter=adapter, model=self.model, settings=self.settings
         )
         artifacts = [_table_artifact(outcome.result)] if outcome.result else []
+        # mémorise le tableau produit pour le réutiliser aux tours suivants
+        self._memorize(state, outcome.result)
         detail = outcome.sql or f"{len(outcome.executed)} requête(s), aucune n'a abouti"
         return {
             "retrieval": outcome,
@@ -343,10 +371,34 @@ class Orchestrator:
             "trace": [self._step("retrieval", detail, start)],
         }
 
+    @staticmethod
+    def _memorize(state: OrchestratorState, result: QueryResult | None) -> None:
+        """Persiste un tableau non vide dans l'espace de travail de la conversation."""
+        workspace = state.get("workspace")
+        if workspace is not None and result is not None and result.rows:
+            workspace.save_table(result.columns, result.rows, state["question"])
+
+    @staticmethod
+    def _mount_workspace(
+        state: OrchestratorState, data_files: dict[Path, str], data_context: str
+    ) -> str:
+        """Ajoute les CSV mémorisés aux fichiers montés et les décrit au code généré."""
+        workspace = state.get("workspace")
+        if workspace is None or not workspace.artifacts:
+            return data_context
+        for host_path, name in workspace.sandbox_files().items():
+            data_files.setdefault(host_path, name)
+        lines = [
+            f"- /data/{a.file} ({a.row_count} lignes ; colonnes : {', '.join(a.columns)})"
+            for a in workspace.artifacts
+        ]
+        extra = "Objets intermédiaires de la conversation (réutilisables) :\n" + "\n".join(lines)
+        return f"{data_context}\n\n{extra}" if data_context else extra
+
     def _analysis_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
-        source = self._resolve_source(plan)
+        source = self._resolve_source(plan, self._effective_catalog(state))
         with tempfile.TemporaryDirectory(prefix="daa-analysis-") as tmp:
             if isinstance(source, FileSource):
                 data_files = {source.path: source.path.name}
@@ -365,6 +417,9 @@ class Orchestrator:
                     pd.DataFrame(result.rows, columns=result.columns).to_csv(csv_path, index=False)
                     data_files[csv_path] = f"{table.name}.csv"
                 data_context = schema.to_prompt()
+            # objets intermédiaires de la conversation : montés aussi pour que le
+            # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
+            data_context = self._mount_workspace(state, data_files, data_context)
             outcome = run_analysis(
                 state["question"],
                 data_files=data_files,
@@ -418,7 +473,7 @@ class Orchestrator:
         """Chaînage ① -> ③ : récupère une ligne, la mappe sur les features, prédit."""
         start = time.monotonic()
         plan = state["plan"]
-        adapter = open_source(self._resolve_source(plan))
+        adapter = open_source(self._resolve_source(plan, self._effective_catalog(state)))
         data_question = plan.data_question or state["question"]
         retrieval = run_retrieval(
             data_question + self._expected_columns_hint(plan.dataset or ""),

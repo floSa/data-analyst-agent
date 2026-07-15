@@ -53,7 +53,12 @@ def create_app(orchestrator_factory: Callable[[], Orchestrator] | None = None) -
     def chat(request: ChatRequest) -> ChatAnswer:
         conversation_id = request.conversation_id or uuid.uuid4().hex
         pending = app.state.conversations.get(conversation_id)
-        answer = get_orchestrator().ask(request.message, source=request.source, pending=pending)
+        answer = get_orchestrator().ask(
+            request.message,
+            source=request.source,
+            pending=pending,
+            conversation_id=conversation_id,
+        )
         if len(app.state.conversations) >= MAX_CONVERSATIONS:
             app.state.conversations.clear()  # purge grossière, suffisante en V1
         app.state.conversations[conversation_id] = answer.pending
