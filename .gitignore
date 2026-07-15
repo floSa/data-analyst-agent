@@ -26,3 +26,6 @@ coverage.xml
 .idea/
 .vscode/
 Thumbs.db
+
+# Consignes de contribution locales (non versionnées)
+CLAUDE.md

@@ -38,7 +38,6 @@ Le fonctionnement détaillé (schéma fonctionnel du graphe, séquences, durciss
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | schémas architectural et fonctionnel, description de chaque service, sécurité, configuration, stratégie de tests |
 | [docs/CADRAGE.md](docs/CADRAGE.md) | cahier des charges : contraintes, décisions, stack, roadmap, exigences de tests |
 | [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
-| [CLAUDE.md](CLAUDE.md) | consignes de contribution (humain ou agent) : licences, tests, conventions git |
 
 ## Démarrage
 
