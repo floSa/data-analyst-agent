@@ -90,6 +90,12 @@ CHAT_PAGE = """<!doctype html>
            background: #2563eb; color: white; }
   button:disabled { opacity: .5; }
   .erreur { color: #dc2626; }
+  .reflexion { display: flex; align-items: center; gap: .5rem;
+               font-style: italic; opacity: .8; }
+  .roue { width: 1.1em; height: 1.1em; border-radius: 50%;
+          border: 2px solid #6b7280; border-top-color: transparent;
+          animation: rotation .8s linear infinite; flex: none; }
+  @keyframes rotation { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -137,7 +143,8 @@ formulaire.addEventListener("submit", async (event) => {
   champ.value = "";
   bouton.disabled = true;
   const attente = bulle("agent");
-  attente.textContent = "...";
+  attente.classList.add("reflexion");
+  attente.innerHTML = '<span class="roue"></span><span>L\\'agent réfléchit…</span>';
   try {
     const reponse = await fetch("/chat", {
       method: "POST",
@@ -146,6 +153,7 @@ formulaire.addEventListener("submit", async (event) => {
     });
     const corps = await reponse.json();
     conversationId = corps.conversation_id || conversationId;
+    attente.classList.remove("reflexion");
     attente.textContent = corps.answer || "(pas de réponse)";
     if (corps.error) {
       const p = document.createElement("p");
@@ -163,6 +171,7 @@ formulaire.addEventListener("submit", async (event) => {
       }
     }
   } catch (erreur) {
+    attente.classList.remove("reflexion");
     attente.textContent = "Erreur réseau : " + erreur;
     attente.classList.add("erreur");
   } finally {
