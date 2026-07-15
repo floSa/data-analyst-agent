@@ -17,7 +17,7 @@ from typing import Annotated, TypedDict
 
 import pandas as pd
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 
 from data_analyst_agent.agents.analysis.agent import AnalysisResult, SandboxLike, run_analysis
@@ -316,7 +316,19 @@ class Orchestrator:
             self._datasets_description(),
             pending_context=self._pending_context(pending),
         )
-        plan = planner.run_sync(state["question"], model=self.model).output
+        try:
+            plan = planner.run_sync(state["question"], model=self.model).output
+        except UnexpectedModelBehavior:
+            # demande trop floue : le LLM n'a pas su produire un Plan structuré
+            # (retries épuisés). On répond proprement au lieu de laisser fuir
+            # l'exception — cohérent avec « jamais de crash » (CADRAGE §4).
+            return self._clarify(
+                Plan(capability="query"),
+                "Je n'ai pas bien compris ta demande. Peux-tu préciser ce que tu veux "
+                "faire — interroger une source (titanic, iris…), une analyse ou une "
+                "visualisation, ou une prédiction — et sur quelles données ?",
+                start,
+            )
         if state.get("source_name"):
             plan.source = state["source_name"]
         if plan.capability == "fetch_then_predict" and not self._effective_catalog(state).sources:

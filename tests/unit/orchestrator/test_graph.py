@@ -9,6 +9,7 @@ from pathlib import Path
 
 import joblib
 import pytest
+from pydantic_ai import UnexpectedModelBehavior
 
 from data_analyst_agent.agents.inference.predict import InferenceOutcome, Prediction
 from data_analyst_agent.agents.inference.registry import Registry
@@ -765,6 +766,25 @@ def test_source_inconnue_reponse_propre(registry: Registry):
     assert answer.error is not None
     assert "inconnue" in answer.error
     assert answer.answer.startswith("Je n'ai pas pu répondre")
+
+
+def test_planificateur_illisible_repond_proprement(registry: Registry, monkeypatch):
+    """Demande trop floue : le planner échoue (retries épuisés) -> message d'aide, pas de crash."""
+
+    class _PlannerQuiEchoue:
+        def run_sync(self, *args, **kwargs):
+            raise UnexpectedModelBehavior("Exceeded maximum output retries (1)")
+
+    monkeypatch.setattr(
+        "data_analyst_agent.orchestrator.graph.build_planner",
+        lambda *args, **kwargs: _PlannerQuiEchoue(),
+    )
+    orchestrator = orchestrator_with(ScriptedLLM(), registry=registry)
+    answer = orchestrator.ask("euh... fais un truc")
+    assert answer.error is None  # pas d'exception brute remontée
+    assert "UnexpectedModelBehavior" not in answer.answer
+    assert answer.answer.strip().endswith("?")  # on redemande de préciser
+    assert [s.node for s in answer.trace] == ["plan", "synthesize"]
 
 
 def test_source_forcee_par_l_utilisateur(mini_csv: Path, registry: Registry):
