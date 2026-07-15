@@ -189,6 +189,8 @@ class Orchestrator:
 
     # capacités qui interrogent une source (donc concernées par l'ambiguïté)
     _SOURCE_CAPABILITIES = ("query", "analyze", "fetch_then_predict")
+    # capacités qui appellent un modèle ML (donc un dataset est requis)
+    _PREDICT_CAPABILITIES = ("predict", "fetch_then_predict")
 
     @staticmethod
     def _route(state: OrchestratorState) -> str:
@@ -273,6 +275,14 @@ class Orchestrator:
             "change complètement de sujet, ignore ce contexte."
         )
 
+    def _clarify(self, plan: Plan, question: str, start: float) -> dict:
+        """Court-circuite vers une question de clarification (réponse propre, pas d'erreur)."""
+        return {
+            "plan": plan,
+            "clarification": question,
+            "trace": [self._step("plan", "clarification demandée", start)],
+        }
+
     def _plan_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         pending = state.get("pending_in")
@@ -302,12 +312,16 @@ class Orchestrator:
             and len(self.catalog.sources) > 1
         ):
             names = ", ".join(s.name for s in self.catalog.sources)
-            clarification = f"Sur quelle source veux-tu travailler : {names} ?"
-            return {
-                "plan": plan,
-                "clarification": clarification,
-                "trace": [self._step("plan", "source ambiguë : clarification", start)],
-            }
+            return self._clarify(plan, f"Sur quelle source veux-tu travailler : {names} ?", start)
+        # modèle de prédiction manquant : repli auto s'il n'y en a qu'un, sinon
+        # on demande lequel plutôt que de propager un KeyError ('' -> inconnu).
+        if plan.capability in self._PREDICT_CAPABILITIES and not plan.dataset:
+            datasets = self.registry.datasets
+            if len(datasets) == 1:
+                plan.dataset = datasets[0]
+            elif len(datasets) > 1:
+                names = ", ".join(datasets)
+                return self._clarify(plan, f"Sur quel modèle veux-tu prédire : {names} ?", start)
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         return {
             "plan": plan,
@@ -501,8 +515,7 @@ class Orchestrator:
             answer = self._format_batch(state["batch"], truncated=truncated)
             mode = "lot (déterministe)"
         elif state.get("retrieval") is not None and state.get("plan").capability == "query":
-            answer = state["retrieval"].summary
-            mode = "résumé de la récupération"
+            answer, mode = self._synthesize_query(state["retrieval"])
         elif state.get("analysis") is not None:
             answer = self._synthesize_analysis(state)
             mode = "LLM"
@@ -510,6 +523,25 @@ class Orchestrator:
             answer = "Je n'ai rien produit pour cette question."
             mode = "vide"
         return {"answer": answer, "trace": [self._step("synthesize", mode, start)]}
+
+    @staticmethod
+    def _synthesize_query(retrieval: RetrievalResult) -> tuple[str, str]:
+        """Réponse d'une requête ``query``.
+
+        Le tableau des lignes est déjà affiché comme artefact ; recopier chaque
+        ligne dans le texte fait doublon. On ne fait donc confiance à la
+        synthèse (bavarde) du LLM que pour un résultat court (agrégat, 0-1
+        ligne). Dès qu'il y a plusieurs lignes, on renvoie une phrase brève et
+        déterministe qui renvoie au tableau.
+        """
+        result = retrieval.result
+        if result is not None and result.row_count > 1:
+            n = result.row_count
+            phrase = f"{n} lignes retournées — voir le tableau ci-dessous."
+            if result.truncated:
+                phrase += " (résultat tronqué par la limite de lignes)"
+            return phrase, "résumé déterministe (multi-lignes)"
+        return retrieval.summary, "résumé de la récupération"
 
     def _synthesize_analysis(self, state: OrchestratorState) -> str:
         analysis = state["analysis"]

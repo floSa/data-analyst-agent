@@ -254,6 +254,33 @@ def test_flux_query_sur_fichier(mini_csv: Path, registry: Registry):
     assert "retrieval" in [s.node for s in answer.trace]
 
 
+def test_query_multi_lignes_ne_recopie_pas_le_tableau(mini_csv: Path, registry: Registry):
+    """Résultat à plusieurs lignes : synthèse brève déterministe, pas de recopie ligne à ligne."""
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [
+                tool_call("run_sql", {"query": "SELECT * FROM mini"}),
+                # le LLM bavarde et recopie les lignes : on ne doit PAS s'y fier
+                text("Ligne 1 : f, 1. Ligne 2 : f, 1. Ligne 3 : f, 0. Ligne 4 : m, 0."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Donne-moi toutes les lignes de la table")
+    assert answer.error is None
+    # le tableau (4 lignes) est bien joint
+    table = json.loads(answer.artifacts[0].data)
+    assert len(table["rows"]) == 4
+    # ... mais la synthèse ne recopie pas les lignes : phrase courte renvoyant au tableau
+    assert "Ligne 1" not in answer.answer
+    assert "4 lignes" in answer.answer
+    assert "tableau" in answer.answer
+
+
 # --- analyze ------------------------------------------------------------------
 
 
@@ -539,6 +566,33 @@ def test_source_omise_catalogue_multi_sources(
     # la capacité n'a pas été exécutée : on s'arrête au plan puis on synthétise
     assert [s.node for s in answer.trace] == ["plan", "synthesize"]
     assert answer.artifacts == []
+
+
+def test_predict_sans_modele_multi_modeles_clarifie():
+    """Prédiction sans dataset + plusieurs modèles : on demande lequel, pas de KeyError."""
+    real_registry = Registry.load(Path(__file__).parents[3] / "models" / "registry.yaml")
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="predict", dataset=None))])
+    orchestrator = orchestrator_with(llm, registry=real_registry)
+    answer = orchestrator.ask("Prédis ces lignes avec le modèle auquel tu as accès")
+    # clarification propre (error=null), pas de « KeyError: modèle inconnu : '' »
+    assert answer.error is None
+    for name in ("california_housing", "iris", "titanic"):
+        assert name in answer.answer
+    assert answer.answer.strip().endswith("?")
+    assert [s.node for s in answer.trace] == ["plan", "synthesize"]
+
+
+def test_predict_sans_modele_un_seul_modele_repli_auto(registry: Registry):
+    """Un seul modèle au registre : on le prend d'office plutôt que de demander."""
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [plan_response(Plan(capability="predict", dataset=None, features=TITANIC_OK))],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)  # registre à 1 modèle (titanic)
+    answer = orchestrator.ask("Prédis la survie pour ce passager")
+    assert answer.error is None
+    assert answer.plan.dataset == "titanic"
+    assert "a survécu" in answer.answer
 
 
 def test_query_sur_iris_renvoie_les_colonnes(registry: Registry):

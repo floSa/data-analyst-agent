@@ -27,8 +27,11 @@ Démarche :
 2. Écris UNE requête SELECT qui répond à la question (jointures si besoin).
 3. Exécute-la avec run_sql.
 4. Si run_sql renvoie une erreur SQL, corrige ta requête et réessaie.
-5. Quand le résultat est correct, réponds par une courte synthèse en français
-   citant les valeurs obtenues (sans inventer de chiffres).
+5. Quand le résultat est correct, réponds par une TRÈS courte synthèse en
+   français (1 à 2 phrases). Le tableau des résultats est affiché séparément à
+   l'utilisateur : NE recopie donc PAS les lignes une à une ; contente-toi de
+   décrire ce que montre le résultat (et, au besoin, une ou deux valeurs clés
+   comme un total). N'invente aucun chiffre.
 """
 
 
