@@ -103,7 +103,7 @@ sequenceDiagram
     U->>A: « % de femmes de 1re classe qui ont survécu ? »
     A->>O: ask(question)
     O->>L: plan(question, sources, datasets)
-    L-->>O: Plan{capability: query, source: titanic_pg}
+    L-->>O: Plan{capability: query, source: titanic}
     O->>L: agent récupération (tools)
     L-->>O: get_schema()
     O->>P: introspection (tables, colonnes, FK)

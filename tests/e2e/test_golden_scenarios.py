@@ -30,7 +30,6 @@ from helpers.scripted_llm import (
     tool_call,
 )
 from helpers.titanic import (
-    TITANIC_CSV,
     golden_survival_rate_female_first_class,
     seed_titanic_postgres,
 )
@@ -48,6 +47,7 @@ pytestmark = [
 ]
 
 REPO = Path(__file__).parents[2]
+IRIS_CSV = REPO / "sources" / "iris.csv"
 
 GOLDEN_SQL = """\
 SELECT round(100.0 * sum(p.survived) / count(*), 2) AS taux
@@ -60,8 +60,9 @@ BAR_CHART_CODE = """\
 import pandas as pd
 import matplotlib.pyplot as plt
 
-df = pd.read_csv('/data/titanic.csv')
-taux = df.groupby('Pclass')['Survived'].mean().mul(100).round(1)
+# source Postgres 'titanic' matérialisée : une table = un CSV
+df = pd.read_csv('/data/passengers.csv')
+taux = df.groupby('class_id')['survived'].mean().mul(100).round(1)
 for classe, valeur in taux.items():
     print(f"classe {classe} : {valeur} %")
 
@@ -95,14 +96,14 @@ def catalog(settings: Settings):
         yield Catalog(
             sources=[
                 PostgresSource(
-                    name="titanic_pg",
+                    name="titanic",
                     description="Base Titanic multi-tables (passengers + classes)",
                     dsn=url,
                 ),
                 FileSource(
-                    name="titanic",
-                    description="CSV des passagers du Titanic",
-                    path=TITANIC_CSV,
+                    name="iris",
+                    description="Dataset Iris (CSV local)",
+                    path=IRIS_CSV,
                 ),
             ]
         )
@@ -120,7 +121,7 @@ def test_golden_1_pct_femmes_premiere_classe(catalog, registry, settings):
         ScriptedLLM()
         .script(
             PLANNER,
-            [plan_response(Plan(capability="query", source="titanic_pg", reason="agrégat SQL"))],
+            [plan_response(Plan(capability="query", source="titanic", reason="agrégat SQL"))],
         )
         .script(
             RETRIEVAL,
@@ -232,7 +233,7 @@ def test_chainage_en_lot_toutes_les_femmes(catalog, registry, settings):
                 plan_response(
                     Plan(
                         capability="fetch_then_predict",
-                        source="titanic_pg",
+                        source="titanic",
                         dataset="titanic",
                         data_question="Toutes les femmes de la base",
                     )

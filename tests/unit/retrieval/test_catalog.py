@@ -44,6 +44,15 @@ def test_expansion_variables_environnement(monkeypatch):
     assert source.resolved_dsn() == "postgresql+pg8000://u:secret123@h/erp"
 
 
+def test_catalogue_du_projet_a_exactement_deux_sources():
+    """Le catalogue livré : titanic (base 2 tables) + iris (fichier), rien d'autre."""
+    catalogue = Path(__file__).parents[3] / "sources" / "catalogue.yaml"
+    catalog = load_catalog(catalogue)
+    assert [s.name for s in catalog.sources] == ["titanic", "iris"]
+    assert isinstance(catalog.get("titanic"), PostgresSource)
+    assert isinstance(catalog.get("iris"), FileSource)
+
+
 def test_source_inconnue():
     catalog = Catalog(sources=[])
     with pytest.raises(KeyError, match="inconnue"):

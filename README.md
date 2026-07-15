@@ -55,7 +55,31 @@ L'image de la sandbox se construit une fois : `docker build -t data-analyst-agen
 
 ## Configuration
 
-Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), URL Ollama (`DAA_OLLAMA_BASE_URL`), quotas sandbox, chemins du catalogue et du registre — tableau complet dans [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md). Les sources de données se déclarent dans `sources/catalogue.yaml`.
+Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), URL Ollama (`DAA_OLLAMA_BASE_URL`), quotas sandbox, chemins du catalogue et du registre — tableau complet dans [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md). Les sources de données se déclarent dans `sources/catalogue.yaml` (livré avec deux sources : `titanic` et `iris`).
+
+### Sources livrées
+
+| Source | Type | Contenu |
+|---|---|---|
+| `titanic` | Postgres | Base multi-tables `passengers` + `classes` (jointes par la clé étrangère `class_id`) — pour les jointures SQL. |
+| `iris` | Fichier CSV | Dataset Iris (`sources/iris.csv`) : `sepal_length, sepal_width, petal_length, petal_width, species` — requêtable en SQL/stats/viz. |
+
+**La source `titanic` requiert un Postgres lancé et seedé.** En local :
+
+```bash
+# 1. un Postgres jetable
+docker run -d --name daa-postgres -p 5432:5432 \
+  -e POSTGRES_PASSWORD=change-me postgres:16-alpine
+
+# 2. les variables de connexion (défauts alignés sur .env.example)
+export DAA_PG_HOST=localhost DAA_PG_PORT=5432 \
+       DAA_PG_USER=postgres DAA_PG_PASSWORD=change-me
+
+# 3. création de la base 'titanic' + schéma 2 tables + seed depuis le CSV
+uv run python scripts/seed_titanic_postgres.py
+```
+
+La source `iris` ne demande aucun service (fichier local lu via DuckDB).
 
 ## API / Endpoints
 

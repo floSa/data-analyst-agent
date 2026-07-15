@@ -2,12 +2,17 @@
 # - postgres : DSN SQLAlchemy (driver pg8000) ; ${VARIABLES} d'environnement autorisées.
 # - file     : chemin CSV/Excel, relatif à ce fichier.
 sources:
-  - type: file
-    name: titanic
-    description: Passagers du Titanic (CSV local) — survie, classe, sexe, âge, tarif.
-    path: titanic.csv
-
   - type: postgres
-    name: titanic_pg
-    description: Base Postgres Titanic multi-tables (passengers + classes jointes).
+    name: titanic
+    description: >-
+      Base Titanic multi-tables (passengers + classes jointes par clé
+      étrangère class_id) — survie, sexe, âge, tarif, classe.
     dsn: postgresql+pg8000://${DAA_PG_USER}:${DAA_PG_PASSWORD}@${DAA_PG_HOST}:${DAA_PG_PORT}/titanic
+
+  - type: file
+    name: iris
+    description: >-
+      Dataset Iris (fichier CSV local) — mesures des sépales et pétales
+      (sepal_length, sepal_width, petal_length, petal_width) et espèce
+      (setosa, versicolor, virginica).
+    path: iris.csv
