@@ -521,7 +521,7 @@ def test_source_omise_catalogue_a_une_source(mini_csv: Path, registry: Registry)
 def test_source_omise_catalogue_multi_sources(
     mini_csv: Path, passager_csv: Path, registry: Registry
 ):
-    """Plusieurs sources et aucun choix : erreur claire qui liste les options."""
+    """Plusieurs sources et aucun choix : on POSE une question, on ne plante pas."""
     llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", source=None))])
     catalog = Catalog(
         sources=[
@@ -531,9 +531,42 @@ def test_source_omise_catalogue_multi_sources(
     )
     orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
     answer = orchestrator.ask("Combien de lignes ?")
-    assert answer.error is not None
-    assert "mini" in answer.error
-    assert "passagers" in answer.error
+    # clarification, pas d'erreur brute ni de KeyError remontée à l'utilisateur
+    assert answer.error is None
+    assert "mini" in answer.answer
+    assert "passagers" in answer.answer
+    assert answer.answer.strip().endswith("?")
+    # la capacité n'a pas été exécutée : on s'arrête au plan puis on synthétise
+    assert [s.node for s in answer.trace] == ["plan", "synthesize"]
+    assert answer.artifacts == []
+
+
+def test_query_sur_iris_renvoie_les_colonnes(registry: Registry):
+    """La source iris est interrogeable en SQL : les attributs remontent."""
+    iris = Path(__file__).parents[3] / "sources" / "iris.csv"
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="iris"))])
+        .script(
+            RETRIEVAL,
+            [
+                tool_call("run_sql", {"query": "SELECT * FROM iris LIMIT 5"}),
+                text("Colonnes : sepal_length, sepal_width, petal_length, petal_width, species."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="iris", path=iris)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Donne-moi les attributs du dataset iris")
+    assert answer.error is None
+    table = json.loads(answer.artifacts[0].data)
+    assert table["columns"] == [
+        "sepal_length",
+        "sepal_width",
+        "petal_length",
+        "petal_width",
+        "species",
+    ]
 
 
 def test_source_inconnue_reponse_propre(registry: Registry):

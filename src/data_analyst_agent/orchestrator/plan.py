@@ -39,7 +39,10 @@ Modèles de prédiction disponibles (dataset -> features attendues) :
 
 Contraintes :
 - Pour query/analyze/fetch_then_predict : choisis `source` parmi les sources
-  listées (champ `name`).
+  listées (champ `name`). Si la demande NE DÉSIGNE aucune source (ni par son
+  nom, ni par un dataset comme « iris »/« titanic ») et que plusieurs sources
+  existent, laisse `source` VIDE — ne devine pas : le système demandera à
+  l'utilisateur de préciser.
 - Pour predict/fetch_then_predict : choisis `dataset` parmi les modèles listés.
 - Une prédiction qui désigne des individus STOCKÉS dans une source listée
   (« le passager 42 », « toutes les femmes DE LA BASE ») est fetch_then_predict :

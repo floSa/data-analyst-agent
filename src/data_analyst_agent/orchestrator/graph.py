@@ -80,6 +80,7 @@ class OrchestratorState(TypedDict, total=False):
     batch: BatchInferenceOutcome | None
     pending_in: PendingInference | None
     pending_out: PendingInference | None
+    clarification: str | None
     answer: str
     error: str | None
     artifacts: Annotated[list[MimeOutput], operator.add]
@@ -177,6 +178,7 @@ class Orchestrator:
                 "analyze": "analysis",
                 "predict": "inference",
                 "fetch_then_predict": "fetch_predict",
+                "clarify": "synthesize",
                 "error": "synthesize",
             },
         )
@@ -185,11 +187,16 @@ class Orchestrator:
         builder.add_edge("synthesize", END)
         return builder.compile()
 
+    # capacités qui interrogent une source (donc concernées par l'ambiguïté)
+    _SOURCE_CAPABILITIES = ("query", "analyze", "fetch_then_predict")
+
     @staticmethod
     def _route(state: OrchestratorState) -> str:
         """Règle de routage : du code, pas du prompt (CADRAGE §4)."""
         if state.get("error") or state.get("plan") is None:
             return "error"
+        if state.get("clarification"):
+            return "clarify"
         return state["plan"].capability
 
     def _guarded(self, name: str, fn):
@@ -286,6 +293,21 @@ class Orchestrator:
             plan.dataset = plan.dataset or pending.dataset
             if plan.dataset == pending.dataset:
                 plan.features = {**pending.features, **plan.features}
+        # ambiguïté de source : la capacité interroge une source, aucune n'est
+        # choisie et le catalogue en contient plusieurs -> on demande à
+        # l'utilisateur de préciser plutôt que de deviner ou de planter.
+        if (
+            plan.capability in self._SOURCE_CAPABILITIES
+            and not plan.source
+            and len(self.catalog.sources) > 1
+        ):
+            names = ", ".join(s.name for s in self.catalog.sources)
+            clarification = f"Sur quelle source veux-tu travailler : {names} ?"
+            return {
+                "plan": plan,
+                "clarification": clarification,
+                "trace": [self._step("plan", "source ambiguë : clarification", start)],
+            }
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         return {
             "plan": plan,
@@ -464,6 +486,9 @@ class Orchestrator:
         if state.get("error"):
             answer = f"Je n'ai pas pu répondre : {state['error']}"
             mode = "erreur"
+        elif state.get("clarification"):
+            answer = state["clarification"]
+            mode = "clarification"
         elif inference is not None and inference.status == "invalid":
             answer = inference.reask or "Il manque des informations pour prédire."
             mode = "relance"
