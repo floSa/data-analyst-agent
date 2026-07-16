@@ -1,8 +1,13 @@
-"""Requêter des fichiers Excel/CSV en SQL, via DuckDB (décision §9-②).
+"""Requêter en SQL via DuckDB : fichiers Excel/CSV, ou base DuckDB (décision §9-②).
 
 Excel est lu par pandas/openpyxl (une feuille = une table) puis enregistré
 dans DuckDB — aucune extension DuckDB à télécharger, compatible on-prem.
 Les CSV passent par ``read_csv_auto`` (natif, sans réseau).
+
+Une base ``.duckdb`` s'ouvre en lecture seule et expose ses tables telles
+qu'elles ont été déclarées : clés primaires et **étrangères** comprises. C'est
+ce que le mono-fichier ne peut pas donner — un schéma en étoile dont on tait les
+FK oblige le modèle à deviner les jointures.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ import pandas as pd
 
 from data_analyst_agent.agents.retrieval.sql import (
     ColumnInfo,
+    ForeignKeyInfo,
     QueryError,
     QueryResult,
     SchemaInfo,
@@ -64,8 +70,63 @@ class DuckDBAdapter:
             return adapter
         raise ValueError(f"format non géré : {path.suffix} (attendu .csv, .xlsx, .xlsm)")
 
+    @classmethod
+    def from_database(cls, path: Path) -> DuckDBAdapter:
+        """Ouvre une base DuckDB existante, en lecture seule.
+
+        ``read_only`` n'est pas qu'une ceinture de plus par-dessus
+        ``assert_read_only`` : il laisse plusieurs process ouvrir la même base.
+        Sans lui, DuckDB pose un verrou exclusif et le second démarrage échoue —
+        l'API et un notebook ne pourraient pas cohabiter.
+        """
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"base DuckDB introuvable : {path} — construisez-la avec "
+                "`python scripts/load_maxizoo_duckdb.py --export ../base_demo`."
+            )
+        connection = duckdb.connect(str(path), read_only=True)
+        tables = [
+            row[0]
+            for row in connection.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'main' ORDER BY table_name"
+            ).fetchall()
+        ]
+        if not tables:
+            raise ValueError(f"aucune table dans {path.name}")
+        return cls(connection, tables)
+
     # Cf. PostgresAdapter : au-delà, la colonne est du texte libre.
     MAX_DISTINCT_VALUES = 15
+
+    def _keys(self, table: str) -> tuple[list[str], list[ForeignKeyInfo]]:
+        """Clés primaire et étrangères déclarées (vides si la table n'en a pas).
+
+        Un CSV ou une feuille Excel n'a aucune contrainte : la table ressort
+        alors sans clés, ce qui est la vérité et non un défaut d'introspection.
+        """
+        try:
+            lignes = self.connection.execute(
+                "SELECT constraint_type, constraint_column_names, referenced_table, "
+                "referenced_column_names FROM duckdb_constraints() "
+                "WHERE table_name = ? AND constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')",
+                [table],
+            ).fetchall()
+        except duckdb.Error:
+            return [], []  # introspection best-effort : jamais bloquante
+        primary_key: list[str] = []
+        foreign_keys: list[ForeignKeyInfo] = []
+        for type_contrainte, colonnes, table_ref, colonnes_ref in lignes:
+            if type_contrainte == "PRIMARY KEY":
+                primary_key = list(colonnes)
+            elif table_ref and colonnes_ref:
+                foreign_keys.append(
+                    ForeignKeyInfo(
+                        column=colonnes[0], ref_table=table_ref, ref_column=colonnes_ref[0]
+                    )
+                )
+        return primary_key, foreign_keys
 
     def _distinct_values(self, table: str, column: str, type_sql: str) -> list[str] | None:
         """Valeurs d'une colonne texte à faible cardinalité (sinon ``None``).
@@ -99,7 +160,15 @@ class DuckDBAdapter:
                 )
                 for row in described
             ]
-            tables.append(TableInfo(name=name, columns=columns))
+            primary_key, foreign_keys = self._keys(name)
+            tables.append(
+                TableInfo(
+                    name=name,
+                    columns=columns,
+                    primary_key=primary_key,
+                    foreign_keys=foreign_keys,
+                )
+            )
         return SchemaInfo(dialect=self.dialect, tables=tables)
 
     def run(self, query: str, max_rows: int = 200) -> QueryResult:

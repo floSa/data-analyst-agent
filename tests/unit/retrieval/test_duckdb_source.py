@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter, sanitize_table_name
+from data_analyst_agent.agents.retrieval.duckdb_source import DuckDBAdapter, sanitize_table_name
 from data_analyst_agent.agents.retrieval.sql import QueryError
 
 

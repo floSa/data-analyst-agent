@@ -1,0 +1,4 @@
+store_id,store_name,region,store_type,surface_m2,population,latitude,longitude,is_online
+ONLINE,Canal Online,ONLINE,online,0,0,,,1
+S01,Paris,Île-de-France & Est,grand,1400,2133000,48.8566,2.3522,0
+S12,Brive-la-Gaillarde,Sud,petit,450,46000,45.158,1.5339,0

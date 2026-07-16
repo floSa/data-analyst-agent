@@ -30,14 +30,16 @@ from data_analyst_agent.agents.inference.predict import (
 )
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.inference.schemas import SCHEMAS, describe_features, get_schema
+from data_analyst_agent.agents.inference.validation import align_keys
 from data_analyst_agent.agents.retrieval.agent import RetrievalResult, run_retrieval
 from data_analyst_agent.agents.retrieval.catalog import (
     Catalog,
+    DuckDBSource,
     FileSource,
     load_catalog,
     open_source,
 )
-from data_analyst_agent.agents.retrieval.sql import QueryResult
+from data_analyst_agent.agents.retrieval.sql import QueryResult, SchemaInfo
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
 from data_analyst_agent.orchestrator.plan import Plan, build_planner
@@ -266,7 +268,7 @@ class Orchestrator:
         """Résout un nom de source, tolérant à la décoration du LLM.
 
         Exact d'abord ; sinon, si un (et un seul) nom de source connu apparaît
-        comme mot dans la chaîne demandée (« titanic (postgres) » -> titanic),
+        comme mot dans la chaîne demandée (« maxizoo (duckdb) » -> maxizoo),
         on le retient. Ambigu ou absent -> None (l'appelant demandera).
         """
         names = [s.name for s in catalog.sources]
@@ -374,10 +376,15 @@ class Orchestrator:
             # capacité/source ; sinon on demande de préciser (jamais de crash).
             fallback = self._fallback_plan(workspace)
             if fallback is None:
+                # Les sources sont NOMMÉES depuis le catalogue, jamais codées en
+                # dur : un message qui citerait des sources disparues enverrait
+                # l'utilisateur vers des données qui n'existent plus.
+                connues = ", ".join(s.name for s in self.catalog.sources)
+                perimetre = f" ({connues})" if connues else ""
                 return self._clarify(
                     Plan(capability="query"),
                     "Je n'ai pas bien compris ta demande. Peux-tu préciser ce que tu veux "
-                    "faire — interroger une source (titanic, iris…), une analyse ou une "
+                    f"faire — interroger une source{perimetre}, une analyse ou une "
                     "visualisation, ou une prédiction — et sur quelles données ?",
                     start,
                 )
@@ -404,8 +411,8 @@ class Orchestrator:
             if acquis:
                 plan.features = {**acquis, **plan.features}
         # source désignée mais introuvable : le LLM décore parfois le nom (ex.
-        # « titanic (postgres) » recopié depuis la description au lieu de
-        # « titanic ») -> on normalise ; si vraiment inconnue, on demande plutôt
+        # « maxizoo (duckdb) » recopié depuis la description au lieu de
+        # « maxizoo ») -> on normalise ; si vraiment inconnue, on demande plutôt
         # que de laisser fuir un KeyError brut.
         if plan.source:
             resolved = self._match_source_name(plan.source, self._effective_catalog(state))
@@ -466,9 +473,14 @@ class Orchestrator:
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
-        adapter = open_source(self._resolve_source(plan, self._effective_catalog(state)))
+        source = self._resolve_source(plan, self._effective_catalog(state))
+        adapter = open_source(source)
         outcome = run_retrieval(
-            state["question"], adapter=adapter, model=self.model, settings=self.settings
+            state["question"],
+            adapter=adapter,
+            model=self.model,
+            settings=self.settings,
+            dictionary=source.dictionary_text(),
         )
         artifacts = [_table_artifact(outcome.result)] if outcome.result else []
         # mémorise le tableau produit pour le réutiliser aux tours suivants
@@ -486,6 +498,27 @@ class Orchestrator:
         workspace = state.get("workspace")
         if workspace is not None and result is not None and result.rows:
             workspace.save_table(result.columns, result.rows, state["question"])
+
+    @staticmethod
+    def _duckdb_context(source: DuckDBSource, schema: SchemaInfo) -> str:
+        """Décrit au code généré la base montée dans la sandbox.
+
+        Une base DuckDB n'est pas matérialisée en CSV : elle est montée telle
+        quelle et requêtée sur place. Ce n'est pas qu'une économie — c'est ce
+        qui rend l'analyse JUSTE. Materialiser `sales_daily` (1,4 M de lignes)
+        obligerait à la couper à analysis_table_max_rows, et tout agrégat
+        porterait alors sur 0,7 % des données sans que rien ne le signale.
+        DuckDB étant dans l'image de la sandbox, autant lui laisser le SQL.
+        """
+        return (
+            f"La source est une base DuckDB montée en lecture seule sur "
+            f"/data/{source.path.name}. Elle est COMPLÈTE (aucune troncature) : "
+            f"interroge-la en SQL plutôt que de tout charger en mémoire.\n\n"
+            f"    import duckdb\n"
+            f"    con = duckdb.connect('/data/{source.path.name}', read_only=True)\n"
+            f'    df = con.execute("SELECT ... FROM ...").df()\n\n'
+            f"Schéma :\n{schema.to_prompt()}"
+        )
 
     @staticmethod
     def _mount_workspace(
@@ -512,20 +545,40 @@ class Orchestrator:
             if isinstance(source, FileSource):
                 data_files = {source.path: source.path.name}
                 data_context = ""
+            elif isinstance(source, DuckDBSource):
+                data_files = {source.path: source.path.name}
+                data_context = self._duckdb_context(source, open_source(source).schema())
             else:
                 # source SQL : matérialise chaque table en CSV pour la sandbox
                 adapter = open_source(source)
                 schema = adapter.schema()
                 data_files = {}
+                tronquees = []
                 for table in schema.tables:
                     result = adapter.run(
                         f"SELECT * FROM {table.name}",
                         max_rows=self.settings.analysis_table_max_rows,
                     )
+                    if result.truncated:
+                        tronquees.append(f"{table.name} ({result.row_count} lignes seulement)")
                     csv_path = Path(tmp) / f"{table.name}.csv"
                     pd.DataFrame(result.rows, columns=result.columns).to_csv(csv_path, index=False)
                     data_files[csv_path] = f"{table.name}.csv"
                 data_context = schema.to_prompt()
+                if tronquees:
+                    # Une table coupée à analysis_table_max_rows produit des
+                    # agrégats FAUX qu'aucun garde-fou ne rattrape : « le CA
+                    # total » calculé sur 10 000 des 1,4 M de lignes est
+                    # crédible, précis au centime, et hors de trois ordres de
+                    # grandeur. Le taire serait mentir ; on l'annonce au code
+                    # généré pour qu'il le dise à son tour.
+                    data_context += (
+                        "\n\nATTENTION — extraits TRONQUÉS : "
+                        + ", ".join(tronquees)
+                        + ". Tout total, moyenne ou comptage porte sur CET EXTRAIT, pas sur la "
+                        "table entière. Dis-le explicitement dans ta sortie ; n'annonce jamais "
+                        "un agrégat comme s'il valait pour toute la source."
+                    )
             # objets intermédiaires de la conversation : montés aussi pour que le
             # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
             data_context = self._mount_workspace(state, data_files, data_context)
@@ -611,19 +664,23 @@ class Orchestrator:
                 "error": "aucune ligne récupérée pour alimenter la prédiction",
                 "trace": [self._step("fetch_predict", "récupération vide", start)],
             }
-        # mapping insensible à la casse : les sources (CSV, Excel) gardent
-        # souvent des en-têtes capitalisés ("Pclass", "Sex"...)
-        schema_fields = set(get_schema(plan.dataset or "").model_fields)
+        # Mapping tolérant à la casse ET aux séparateurs : les sources (CSV,
+        # Excel) gardent souvent des en-têtes capitalisés ("StoreType",
+        # "Base Price"...). C'est `align_keys` qui sait les ramener aux noms du
+        # schéma ; un simple .lower() ne suffit que tant que les features
+        # tiennent en un seul mot ("Sex" -> sex), ce qui n'est pas le cas ici
+        # ("StoreType" -> storetype, qui ne ressemble plus à rien).
+        schema = get_schema(plan.dataset or "")
+        schema_fields = set(schema.model_fields)
         raw_rows = [
-            {
-                str(column).lower(): value
-                for column, value in zip(retrieval.result.columns, row, strict=True)
-            }
-            for row in retrieval.result.rows
+            dict(zip(retrieval.result.columns, row, strict=True)) for row in retrieval.result.rows
         ]
         payloads = [
             # ce que l'utilisateur a donné explicitement prime sur la ligne lue
-            {**{k: v for k, v in raw.items() if k in schema_fields}, **plan.features}
+            {
+                **{k: v for k, v in align_keys(schema, raw).items() if k in schema_fields},
+                **plan.features,
+            }
             for raw in raw_rows
         ]
 

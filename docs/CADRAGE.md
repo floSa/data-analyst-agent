@@ -13,9 +13,9 @@ Nom du projet / dossier / repo : **`data-analyst-agent`**. Package Python : `dat
 Réponse rendue en **langage naturel + objets affichables** (tableau, figure). Orchestration explicite, traçable, débuggable, avec **un seul LLM mutualisé** pour tous les rôles langage.
 
 ### Exemples de questions cibles (scénarios « golden »)
-- « À partir de la table `passengers`, donne-moi le **% de femmes de 1ʳᵉ classe qui ont survécu**. » → ① requête SQL agrégée.
-- « **Fais-moi un bar chart** de la survie par classe. » → ② code de viz exécuté en sandbox → figure.
-- « **Fais-moi la prédiction** pour un passager : sexe=female, classe=1, âge=28… » → ③ validation + modèle.
+- « Quels **magasins réalisent le plus de CA** en 2025 ? » → ① requête SQL agrégée (jointure `sales_daily` × `stores`).
+- « **Fais-moi un bar chart** du CA par magasin. » → ② code de viz exécuté en sandbox → figure.
+- « **Combien d'unités vendra-t-on** : grand magasin, univers chien, marque nationale à 49,90 €, un samedi de novembre, en promo −30 % ? » → ③ validation + modèle.
 
 Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 
@@ -23,9 +23,9 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 
 **V1 (ce qu'on construit) :**
 - Chat qui répond en langage naturel + objets affichables.
-- ① Récupération : catalogue de sources, text-to-SQL avec jointure sur Postgres, requêtes sur Excel/CSV via DuckDB.
+- ① Récupération : catalogue de sources, text-to-SQL avec jointure sur Postgres, requêtes sur Excel/CSV/base DuckDB. Une source peut déclarer un **dictionnaire** (Markdown) chargé dans le contexte de l'agent : le DDL donne les types, le dictionnaire donne le sens et les pièges de modélisation.
 - ② Analyse : génération + exécution de code stat **et viz** dans un sandbox durci.
-- ③ Inférence : validation Pydantic des features, slot-filling conversationnel, appel du bon modèle. Datasets jouets : **Titanic** (classif.), **Iris** (classif.), **California Housing** (régression — PAS Boston, retiré de scikit-learn).
+- ③ Inférence : validation Pydantic des features, slot-filling conversationnel, appel du bon modèle. Modèle livré : **prévision des ventes Maxizoo** (régression — quantité vendue par SKU × magasin × jour). Le registre reste multi-modèles et le chemin classification est conservé.
 - Chaînage ①→③ : récupérer une ligne en base → la mapper sur le schéma de features → valider → prédire.
 
 **Hors périmètre V1 (plus tard) :**
@@ -77,7 +77,7 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
   - Dev (4060 Ti 16 Go) : `qwen3-coder:30b` en répartition GPU+RAM (64 Go) — MoE 3B actifs, débit acceptable.
   - Prod (L4 24 Go) : `qwen3-coder:30b` Q4 tient entièrement en VRAM.
   - Modèle configurable via `DAA_LLM_MODEL` (fallback possible : `qwen2.5-coder:14b`, dense, ~9 Go).
-- À ne pas confondre avec les **modèles ML métier** (Titanic/Iris/California) : artefacts scikit-learn séparés, appelés par ③, sans LLM dans le calcul.
+- À ne pas confondre avec les **modèles ML métier** (prévision des ventes Maxizoo) : artefacts scikit-learn séparés, appelés par ③, sans LLM dans le calcul.
 - Qwen3-Coder-Next (80B MoE) écarté : ne tient ni sur la 4060 Ti ni sur la L4.
 
 ## 6. La sandbox (capacité ② et exécution de code)
@@ -187,11 +187,11 @@ Commiter à la fin de chaque étape vérifiée **et testée** (cf. CLAUDE.md).
 **Principe : rien n'est « fait » sans tests verts. La solution n'est pas présentable tant que la suite complète (dont les 3 scénarios golden) ne passe pas.**
 
 - **Tests unitaires** (`tests/unit/`) : chaque fonction/agent isolé. LLM et DB **mockés**. Couvrent la validation Pydantic (cas manquant / hors bornes / mauvais type), le routage, le parsing des sorties sandbox, le registry.
-- **Tests d'intégration** (`tests/integration/`) : sandbox **réelle** (exécution de code + retour MIME), Postgres via **testcontainers**, DuckDB sur un Excel de test, chargement réel des `.pkl`.
+- **Tests d'intégration** (`tests/integration/`) : sandbox **réelle** (exécution de code + retour MIME), Postgres via **testcontainers**, DuckDB sur un Excel de test, chargement réel des `.joblib`. Les données sont un **échantillon versionné** de la base (`tests/fixtures/maxizoo_mini/`), extrait pour porter les 6 pièges du dictionnaire : la base complète (180 Mo) n'est pas versionnée, et un échantillon qui perdrait les pièges laisserait passer les régressions qu'on veut attraper.
 - **Tests end-to-end** (`tests/e2e/`) — les 3 scénarios golden, du message utilisateur à la réponse :
-  1. « % de femmes de 1ʳᵉ classe qui ont survécu » → valeur numérique correcte (vérifiée contre un calcul pandas de référence).
-  2. « bar chart de la survie par classe » → un objet `image/png` non vide est produit.
-  3. « prédiction pour ce passager … » → une classe + une probabilité cohérentes ; et le cas **features incomplètes** → le système redemande (pas de predict).
+  1. « quels magasins réalisent le plus de CA » → valeurs numériques correctes (vérifiées contre un calcul pandas de référence), et `Canal Online` en tête : le e-commerce est une ligne de `stores` (piège n°1 du dictionnaire).
+  2. « bar chart du CA par magasin » → un objet `image/png` non vide est produit.
+  3. « combien d'unités vendra-t-on … » → une valeur cohérente avec son unité ; et le cas **features incomplètes** → le système redemande (pas de predict).
 - **Robustesse** : tests des chemins d'erreur (SQL invalide → self-correction ; code sandbox qui plante → boucle self-debug ; timeout).
 - **Qualité** : `ruff check` + `ruff format --check` en CI ; **couverture visée ≥ 85 %** (`pytest-cov`), la CI échoue en dessous.
 - **Déterminisme** : les tests ne dépendent pas d'un appel LLM réseau (mock/enregistrement) ; un éventuel test « live LLM » est marqué `@pytest.mark.live` et exclu de la CI par défaut.

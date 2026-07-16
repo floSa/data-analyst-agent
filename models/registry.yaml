@@ -1,32 +1,14 @@
 # Registre des modèles ML métier (CADRAGE §7-③).
 # model_path est relatif à ce fichier ; les artefacts sont produits par notebooks/.
 models:
-  - dataset: titanic
-    task: classification
-    model_path: titanic.joblib
-    target: survived
-    labels:
-      "0": n'a pas survécu
-      "1": a survécu
-    description: >-
-      Survie d'un passager du Titanic — pipeline sklearn (imputation +
-      standardisation + one-hot) et régression logistique.
-
-  - dataset: iris
-    task: classification
-    model_path: iris.joblib
-    target: species
-    labels:
-      "0": setosa
-      "1": versicolor
-      "2": virginica
-    description: Espèce d'iris à partir des mesures de sépales/pétales.
-
-  - dataset: california_housing
+  - dataset: maxizoo_sales
     task: regression
-    model_path: california_housing.joblib
-    target: MedHouseVal
-    unit: centaines de milliers de dollars
+    model_path: maxizoo_sales.joblib
+    target: quantity
+    unit: unités vendues (pour un SKU, un magasin et un jour)
     description: >-
-      Prix médian des logements d'un îlot californien (recensement 1990) —
-      HistGradientBoostingRegressor.
+      Prévision de la quantité vendue d'un SKU dans un magasin un jour donné —
+      pipeline scikit-learn (one-hot + HistGradientBoostingRegressor) entraîné
+      sur les 1,35 M de lignes non censurées de sales_daily. Prend les attributs
+      du produit et du magasin (et non leurs identifiants), le calendrier, la
+      remise et l'anomalie de température.

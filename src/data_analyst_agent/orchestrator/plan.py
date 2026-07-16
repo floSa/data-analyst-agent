@@ -23,12 +23,13 @@ Classe la demande de l'utilisateur dans UNE capacité :
   analyse statistique multi-étapes (test du khi-deux, ANOVA, ACP...) — du code
   sera exécuté en sandbox.
 - "predict" : prédiction ML pour UN cas dont les VALEURS des features sont
-  données dans le message (ex. « sexe=female, classe=1, âge=28, tarif=80... »)
-  — extrais-les telles quelles dans `features` (noms exacts du schéma).
+  données dans le message (ex. « grand magasin, univers chien, marque nationale
+  à 49,90 €, un samedi de novembre... ») — extrais-les telles quelles dans
+  `features` (noms exacts du schéma).
 - "fetch_then_predict" : prédiction ML pour un ou des individus DÉSIGNÉS PAR
-  RÉFÉRENCE À UNE SOURCE — un identifiant (« le passager 42 »), un filtre ou
-  un groupe (« toutes les femmes », « les passagers de 3e classe ») : leurs
-  features doivent d'abord être lues dans la source. Formule dans
+  RÉFÉRENCE À UNE SOURCE — un identifiant (« le SKU001 »), un filtre ou un
+  groupe (« tous les produits de l'univers chat », « les SKU du catalogue ») :
+  leurs features doivent d'abord être lues dans la source. Formule dans
   `data_question` ce qu'il faut récupérer (la ou les lignes).
 
 Sources de données disponibles :
@@ -40,20 +41,20 @@ Modèles de prédiction disponibles (dataset -> features attendues) :
 Contraintes :
 - Pour query/analyze/fetch_then_predict : choisis `source` parmi les sources
   listées (champ `name`). Si la demande NE DÉSIGNE aucune source (ni par son
-  nom, ni par un dataset comme « iris »/« titanic ») et que plusieurs sources
-  existent, laisse `source` VIDE — ne devine pas : le système demandera à
-  l'utilisateur de préciser.
+  nom, ni par le sujet des données) et que plusieurs sources existent, laisse
+  `source` VIDE — ne devine pas : le système demandera à l'utilisateur de
+  préciser.
 - Pour predict/fetch_then_predict : choisis `dataset` parmi les modèles listés.
 - Une prédiction qui désigne des individus STOCKÉS dans une source listée
-  (« le passager 42 », « toutes les femmes DE LA BASE ») est fetch_then_predict :
-  un attribut de filtre (ex. le sexe) n'est pas un jeu de features complet.
-- MAIS un cas hypothétique (« une femme de 1re classe », « un passager de
-  30 ans »), sans référence à une ligne existante, est predict : extrais les
-  features effectivement données (même incomplètes — le système redemandera
-  le reste). Idem si aucune source listée ne s'y prête.
+  (« le SKU001 », « tous les produits DU CATALOGUE ») est fetch_then_predict :
+  un attribut de filtre (ex. l'univers produit) n'est pas un jeu de features
+  complet.
+- MAIS un cas hypothétique (« un produit d'entrée de gamme en promo », « un
+  samedi de novembre »), sans référence à une ligne existante, est predict :
+  extrais les features effectivement données (même incomplètes — le système
+  redemandera le reste). Idem si aucune source listée ne s'y prête.
 - N'invente ni source ni dataset ni feature : n'extrais que ce que le message
-  dit réellement. Les indices grammaticaux explicites comptent : « une
-  passagère », « elle » -> sex=female ; « un homme » -> sex=male.
+  dit réellement, et RIEN qui ne soit un champ du schéma listé ci-dessus.
 """
 
 

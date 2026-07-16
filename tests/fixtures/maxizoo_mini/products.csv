@@ -1,0 +1,8 @@
+sku_id,sku_label,commodity_group,brand,brand_type,is_eb,is_pl,base_price,launch_date
+SKU001,Croquettes chien adulte 12 kg,Chien,NutriPaws,nationale,0,0,42.99,
+SKU015,Croquettes chat stérilisé 10 kg,Chat,Ligne Prestige,exclusive,1,0,38.99,
+SKU016,Croquettes chaton 2 kg,Chat,MaxiZoo Sélection,distributeur,0,1,12.99,
+SKU022,Arbre à chat 120 cm,Chat,Ligne Prestige,exclusive,1,0,69.99,
+SKU026,Fontaine à eau 2 L,Chat,MaxiZoo Sélection,distributeur,0,1,29.99,2024-09-01
+SKU049,Lampe UVB 100 W,Reptile,ReptiCare,nationale,0,0,32.99,2025-02-15
+SKU052,Pipettes antiparasitaires chien x6,Hygiène & Soins,MaxiZoo Sélection,distributeur,0,1,22.99,

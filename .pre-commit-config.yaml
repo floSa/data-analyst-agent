@@ -7,8 +7,10 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-added-large-files
-        # dataset vendorisé assumé (694 Ko) ; la limite reste 500 Ko ailleurs
-        exclude: ^sources/california_housing\.csv\.gz$
+        # artefact ML assumé (812 Ko : 300 arbres sur 1,35 M de lignes) ; la
+        # limite reste 500 Ko ailleurs. La base Maxizoo, elle, n'est pas
+        # versionnée du tout — elle se construit via scripts/load_maxizoo_duckdb.py
+        exclude: ^models/maxizoo_sales\.joblib$
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit

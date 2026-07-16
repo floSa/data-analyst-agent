@@ -50,10 +50,10 @@ def test_as_sources_interrogeable_en_sql(tmp_path: Path):
 
 def test_describe_et_sandbox_files(tmp_path: Path):
     ws = ConversationWorkspace(tmp_path, "conv-5")
-    ws.save_table(["sepal_length"], [[7.9]], "3 dernières lignes iris")
+    ws.save_table(["base_price"], [[189.0]], "3 SKU les plus chers")
     description = ws.describe()
     assert "resultat_1" in description
-    assert "sepal_length" in description
+    assert "base_price" in description
     assert "ces lignes" in description  # aiguille le planificateur sur le plus récent
     files = ws.sandbox_files()
     assert list(files.values()) == ["resultat_1.csv"]
@@ -67,14 +67,14 @@ def test_contexte_conversationnel_persiste(tmp_path: Path):
     """La dernière question/action (+ code de figure) survit d'un tour à l'autre."""
     ws = ConversationWorkspace(tmp_path, "c")
     assert ws.describe_context() is None  # rien au premier tour
-    ws.record_turn("fais un graphique iris", "analyze", "iris", code="import matplotlib")
+    ws.record_turn("fais un graphique des ventes", "analyze", "maxizoo", code="import matplotlib")
     # relu par l'instance du tour suivant
     reloaded = ConversationWorkspace(tmp_path, "c")
     assert reloaded.context.last_capability == "analyze"
-    assert reloaded.context.last_source == "iris"
+    assert reloaded.context.last_source == "maxizoo"
     ctx = reloaded.describe_context()
-    assert "graphique iris" in ctx
+    assert "graphique des ventes" in ctx
     assert "AJUSTEMENT" in ctx
     # le code n'est repris que pour la même source
-    assert reloaded.last_code_for("iris") == "import matplotlib"
-    assert reloaded.last_code_for("titanic") is None
+    assert reloaded.last_code_for("maxizoo") == "import matplotlib"
+    assert reloaded.last_code_for("autre") is None

@@ -12,7 +12,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from data_analyst_agent.agents.retrieval.agent import run_retrieval
-from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter
+from data_analyst_agent.agents.retrieval.duckdb_source import DuckDBAdapter
 from data_analyst_agent.config import Settings
 
 
@@ -98,6 +98,53 @@ def test_list_tables_disponible(adapter):
         "Quelles tables ?", adapter=adapter, model=model, settings=make_settings()
     )
     assert "mini" in outcome.summary
+
+
+# --- dictionnaire de la source ---------------------------------------------------
+
+
+def _capture_system_prompt(adapter, **kwargs) -> str:
+    """Rejoue un tour minimal et renvoie le prompt système vu par le modèle."""
+    captured: list[str] = []
+
+    def responder(messages, info):
+        captured.extend(
+            part.content
+            for message in messages
+            for part in message.parts
+            if part.part_kind == "system-prompt"
+        )
+        return ModelResponse(parts=[TextPart("ok")])
+
+    run_retrieval(
+        "peu importe",
+        adapter=adapter,
+        model=FunctionModel(responder),
+        settings=make_settings(),
+        **kwargs,
+    )
+    return "\n".join(captured)
+
+
+def test_dictionnaire_present_avant_la_question(adapter):
+    """Les pièges doivent être connus AU MOMENT d'écrire le SQL, pas après.
+
+    D'où le prompt système plutôt qu'une réponse de tool : un modèle qui
+    apprendrait au 3e tour que le e-commerce est une ligne de `stores` a déjà
+    rendu son classement des magasins.
+    """
+    prompt = _capture_system_prompt(
+        adapter, dictionary="Piège n°1 : le e-commerce est le magasin ONLINE."
+    )
+    assert "Piège n°1 : le e-commerce est le magasin ONLINE." in prompt
+    assert "Dictionnaire de la source" in prompt
+
+
+def test_sans_dictionnaire_le_prompt_nen_parle_pas(adapter):
+    """Une source sans dictionnaire ne doit pas hériter d'un en-tête vide."""
+    prompt = _capture_system_prompt(adapter)
+    assert "Dictionnaire de la source" not in prompt
+    assert "expert SQL" in prompt
 
 
 def test_boucle_infinie_coupee_par_la_limite(adapter):

@@ -100,14 +100,14 @@ sequenceDiagram
     participant L as LLM (Ollama)
     participant P as Postgres
 
-    U->>A: « % de femmes de 1re classe qui ont survécu ? »
+    U->>A: « Quels magasins réalisent le plus de CA en 2025 ? »
     A->>O: ask(question)
     O->>L: plan(question, sources, datasets)
-    L-->>O: Plan{capability: query, source: titanic}
-    O->>L: agent récupération (tools)
+    L-->>O: Plan{capability: query, source: maxizoo}
+    O->>L: agent récupération (tools + dictionnaire)
     L-->>O: get_schema()
     O->>P: introspection (tables, colonnes, FK)
-    L-->>O: run_sql(SELECT … JOIN classes …)
+    L-->>O: run_sql(SELECT … JOIN stores …)
     O->>P: exécution (garde-fou lecture seule)
     P-->>O: taux = 96.81
     L-->>O: « 96,81 % des femmes de 1re classe ont survécu. »
@@ -188,10 +188,21 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   l'adaptateur Postgres via **pg8000** (BSD — psycopg est LGPL, écarté par la règle
   licences) ; les résultats normalisés (`Decimal`→float, dates→ISO) et tronqués à
   `retrieval_max_rows`.
-- `duckdb_excel.py` — les fichiers requêtés en SQL : CSV nativement
+- `duckdb_source.py` — ce que DuckDB sait ouvrir. Les **fichiers** : CSV nativement
   (`read_csv_auto`), Excel lu par pandas/openpyxl puis chaque feuille enregistrée
   comme table DuckDB (une feuille = une table, jointures inter-feuilles possibles).
-  Aucune extension DuckDB à télécharger — compatible on-prem.
+  Les **bases** (`.duckdb`) : ouvertes en lecture seule, avec leurs clés primaires
+  ET étrangères introspectées via `duckdb_constraints()` — un schéma en étoile dont
+  on tairait les FK obligerait le modèle à deviner les jointures. `read_only`
+  n'est pas qu'une ceinture de plus : il évite le verrou exclusif, sans quoi l'API
+  et un notebook ne pourraient pas ouvrir la même base. Aucune extension DuckDB à
+  télécharger — compatible on-prem.
+- Le catalogue peut attacher un **dictionnaire** (Markdown) à une source ; il est
+  chargé dans le prompt système de l'agent SQL. Le DDL dit les types, le
+  dictionnaire dit ce que les données veulent dire — et surtout ses pièges de
+  modélisation, qui ne s'infèrent d'aucun schéma. Il passe *avant* la question, et
+  non en réponse à un tool : un modèle qui apprend au 3e tour que le e-commerce est
+  une ligne de `stores` a déjà rendu son classement des magasins.
 - `agent.py` — l'agent text-to-SQL à **tools typés** (`list_tables`, `get_schema`,
   `run_sql`). Une erreur SQL revient au modèle en texte pour self-correction ;
   `UsageLimits` borne les allers-retours. Renvoie le SQL exécuté, le résultat, le
@@ -264,7 +275,9 @@ tests/
 ├── unit/          # rapide, sans Docker ni réseau : LLM scripté, sandbox doublée
 ├── integration/   # Docker : sandbox réelle, Postgres testcontainers, artefacts ML réels
 ├── e2e/           # les scénarios golden, du message à la réponse (LLM scripté)
-└── helpers/       # ScriptedLLM (réponses par agent), doublures, seed + oracle Titanic
+├── fixtures/      # échantillon Maxizoo versionné (425 Ko) : la base réelle en miniature,
+│                 #   choisi pour porter les 6 pièges du dictionnaire
+└── helpers/       # ScriptedLLM (réponses par agent), doublures, mini-base + oracle Maxizoo
 ```
 
 - Le **LLM est scripté** dans toute la suite (déterminisme, zéro réseau en CI) : le

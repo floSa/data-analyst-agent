@@ -26,7 +26,7 @@ from data_analyst_agent.sandbox.client import MimeOutput
 
 # 1x1 PNG transparent
 PNG_1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-TABLE_JSON = '{"columns": ["sex", "n"], "rows": [["female", 314], ["male", 577]]}'
+TABLE_JSON = '{"columns": ["commodity_group", "n"], "rows": [["Chien", 14], ["Chat", 14]]}'
 
 # Processus pytest séparé : cf. le marqueur `ui` dans pyproject.toml.
 pytestmark = pytest.mark.ui
@@ -35,7 +35,7 @@ pytestmark = pytest.mark.ui
 class FakeOrchestrator:
     def ask(self, question, source=None, pending=None, conversation_id=None) -> ChatAnswer:
         return ChatAnswer(
-            answer="Il y a 891 passagers.",
+            answer="Il y a 60 SKU au catalogue.",
             artifacts=[MimeOutput(mime="application/json", data=TABLE_JSON)],
         )
 
@@ -54,8 +54,8 @@ def app_url(tmp_path: Path):
     conversation = store.create()
     store.record_turn(
         conversation.id,
-        question="sur titanic, combien de passagers au total ?",
-        answer="Il y a un total de 891 passagers.",
+        question="sur maxizoo, combien de SKU au catalogue ?",
+        answer="Il y a un total de 60 SKU au catalogue.",
         artifacts=[
             MimeOutput(mime="application/json", data=TABLE_JSON),
             MimeOutput(mime="image/png", data=PNG_1x1),
@@ -63,7 +63,7 @@ def app_url(tmp_path: Path):
     )
     store.record_turn(
         conversation.id,
-        question="et le passager 999999 ?",
+        question="et le SKU 999999 ?",
         answer="Je n'ai pas pu répondre : aucune ligne récupérée",
         error="aucune ligne récupérée",
     )
@@ -88,7 +88,7 @@ def test_reouvrir_une_conversation_affiche_le_texte_des_reponses(page, app_url: 
     page.click(".fil-titre")
 
     page.wait_for_selector(".message.agent")
-    assert "Il y a un total de 891 passagers." in page.inner_text("#journal")
+    assert "Il y a un total de 60 SKU au catalogue." in page.inner_text("#journal")
     assert "(pas de réponse)" not in page.inner_text("#journal")
 
 
@@ -98,8 +98,9 @@ def test_reouvrir_affiche_aussi_questions_tableaux_figures_et_erreurs(page, app_
     page.wait_for_selector(".message.agent")
 
     journal = page.inner_text("#journal")
-    assert "sur titanic, combien de passagers au total ?" in journal  # la question
-    assert "female" in journal and "314" in journal  # le tableau
+    assert "sur maxizoo, combien de SKU au catalogue ?" in journal  # la question
+    assert "Chien" in journal  # le tableau
+    assert "14" in journal
     assert "aucune ligne récupérée" in journal  # l'erreur
     assert page.locator("#journal img").count() == 1  # la figure
 
@@ -109,19 +110,19 @@ def test_barre_laterale_liste_la_conversation(page, app_url: str):
     page.wait_for_selector(".fil-titre")
 
     assert page.locator(".fil-titre").count() == 1
-    assert "combien de passagers" in page.inner_text(".fil-titre")
+    assert "combien de SKU" in page.inner_text(".fil-titre")
 
 
 def test_envoyer_un_message_affiche_la_reponse(page, app_url: str):
     """Le chemin live doit rester bon : c'est la même fonction de rendu."""
     page.goto(app_url)
     page.click("#nouvelle")
-    page.fill("#message", "combien de passagers ?")
+    page.fill("#message", "combien de SKU ?")
     page.click("#envoyer")
 
     page.wait_for_selector(".message.agent")
     journal = page.inner_text("#journal")
-    assert "Il y a 891 passagers." in journal
+    assert "Il y a 60 SKU au catalogue." in journal
     assert "(pas de réponse)" not in journal
 
 
@@ -154,7 +155,7 @@ def test_dupliquer_une_conversation_lajoute_et_louvre(page, app_url: str):
     page.wait_for_function("document.querySelectorAll('.fil-titre').length === 2")
     assert "(copie)" in page.inner_text("#fils")
     # la copie est ouverte, et son texte s'affiche (pas « (pas de réponse) »)
-    assert "Il y a un total de 891 passagers." in page.inner_text("#journal")
+    assert "Il y a un total de 60 SKU au catalogue." in page.inner_text("#journal")
 
 
 # --- rendu markdown des réponses -------------------------------------------------

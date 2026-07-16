@@ -4,14 +4,10 @@ from typing import Literal, get_args, get_origin
 
 from pydantic import BaseModel
 
-from data_analyst_agent.agents.inference.schemas.california import CaliforniaHousingFeatures
-from data_analyst_agent.agents.inference.schemas.iris import IrisFeatures
-from data_analyst_agent.agents.inference.schemas.titanic import TitanicFeatures
+from data_analyst_agent.agents.inference.schemas.maxizoo_sales import MaxizooSalesFeatures
 
 SCHEMAS: dict[str, type[BaseModel]] = {
-    "titanic": TitanicFeatures,
-    "iris": IrisFeatures,
-    "california_housing": CaliforniaHousingFeatures,
+    "maxizoo_sales": MaxizooSalesFeatures,
 }
 
 
@@ -35,10 +31,10 @@ def field_choices(schema: type[BaseModel], field: str) -> list | None:
 def describe_features(schema: type[BaseModel]) -> str:
     """Décrit les features au planificateur : sens ET valeurs autorisées.
 
-    Le schéma sait qu'``embarked`` est un « Port d'embarquement (S=Southampton,
-    C=Cherbourg, Q=Queenstown) » et n'accepte que S/C/Q. N'envoyer que les NOMS
-    des champs jetait ce savoir : le modèle ne pouvait pas traduire « embarquée
-    à Southampton » en ``embarked='S'`` — jamais on ne le lui avait montré — et
+    Le schéma sait que ``promo_type`` n'accepte que les 6 typologies de
+    l'enseigne plus 'aucune'. N'envoyer que les NOMS des champs jetait ce
+    savoir : le modèle ne pouvait pas traduire « en promo Black Friday » en
+    ``promo_type='produits'`` — jamais on ne le lui avait montré — et
     redemandait indéfiniment une information déjà donnée.
     """
     lignes = []
@@ -56,9 +52,7 @@ def describe_features(schema: type[BaseModel]) -> str:
 
 __all__ = [
     "SCHEMAS",
-    "CaliforniaHousingFeatures",
-    "IrisFeatures",
-    "TitanicFeatures",
+    "MaxizooSalesFeatures",
     "describe_features",
     "field_choices",
     "get_schema",

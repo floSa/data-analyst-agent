@@ -18,12 +18,12 @@ Le LLM étant non déterministe, on vérifie des INVARIANTS, à deux niveaux :
 - SOUPLE (rapporté, n'échoue pas) : capacité routée, nœuds de la trace,
   présence d'un tableau/figure, quelques mots-clés dans la réponse.
 
-Prérequis : l'API tourne (uvicorn), Ollama a le modèle, Postgres 'titanic' est
-seedé (scripts/seed_titanic_postgres.py), l'image sandbox est construite.
+Prérequis : l'API tourne (uvicorn), Ollama a le modèle, la base est construite
+(scripts/load_maxizoo_duckdb.py), l'image sandbox est construite.
 
     uv run python scripts/live_scenarios.py            # tout
     uv run python scripts/live_scenarios.py --base-url http://localhost:8000
-    uv run python scripts/live_scenarios.py --only iris-description titanic-tarifs
+    uv run python scripts/live_scenarios.py --only maxizoo-decouverte maxizoo-pieges
 """
 
 from __future__ import annotations
@@ -72,172 +72,204 @@ class Scenario:
 
 SCENARIOS: list[Scenario] = [
     # Cinq conversations de cinq tours, telles qu'un analyste les mène vraiment :
-    # on découvre un dataset, on creuse sur ce qui vient d'être répondu, on
-    # demande une figure, puis on prédit — en commençant par demander à l'agent
-    # CE QU'IL LUI FAUT et dans quel format.
+    # on découvre la base, on creuse sur ce qui vient d'être répondu, on demande
+    # une figure, puis on prédit — en commençant par demander à l'agent CE QU'IL
+    # LUI FAUT et dans quel format.
     #
-    # Les `expect_data` sont la VÉRITÉ TERRAIN, calculée hors de l'agent (SQL
-    # direct sur la base, pandas sur le CSV, predict sur le modèle). Sans elles,
-    # une réponse bien tournée sur des chiffres faux passe pour un succès.
+    # Les `expect_data` sont la VÉRITÉ TERRAIN. La plupart viennent des 13
+    # questions de référence livrées AVEC la base (`questions_reference.md` du
+    # dépôt d'export) : leurs réponses ont été obtenues en exécutant le SQL sur
+    # les fichiers livrés, hors de tout agent. Le reste est calculé de la même
+    # façon (SQL direct, ou predict sur le modèle). Sans elles, une réponse bien
+    # tournée sur des chiffres faux passe pour un succès.
+    #
+    # Plusieurs tours visent un PIÈGE du dictionnaire — ce sont ceux qui
+    # discriminent : un agent qui ne l'a pas lu répond quelque chose de
+    # plausible, et de faux.
     Scenario(
-        "iris-description",
-        "Iris : description du dataset → min/max → moyenne par espèce → 2 figures",
+        "maxizoo-decouverte",
+        "Maxizoo : description → CA 2025 → top magasins (piège e-commerce) → figure → part online",
         [
             Turn(
-                "peux-tu me faire une description du dataset iris ?",
-                expect_data=[150],
-                answer_regex=[r"iris"],
+                "peux-tu me décrire la base : quelles tables, et combien de lignes de ventes ?",
+                expect_data=["sales_daily", "stores", 1363726],
             ),
             Turn(
-                "quelles sont les valeurs minimum et maximum de sepal_length ?",
-                expect_data=[4.3, 7.9],
+                "quel est le chiffre d'affaires total de 2025 ?",  # Q1
+                capability="query",
+                expect_data=[10186669.50],
             ),
             Turn(
-                "et la longueur moyenne des sépales par espèce ?",
+                # Q2 — LE piège n°1 : « Canal Online » doit sortir premier. Un
+                # agent qui répond « Paris » a oublié que le e-commerce est une
+                # ligne de `stores`.
+                "quels sont les 5 magasins qui réalisent le plus de CA en 2025 ?",
+                capability="query",
                 artifact="table",
-                expect_data=[5.006, 5.936, 6.588, "setosa"],
+                expect_data=["Canal Online", 2064988.99, 1041046.77],
             ),
             Turn(
-                "fais-moi un histogramme des sepal_length",
+                "fais-moi un diagramme en barres de ces CA",
                 capability="analyze",
                 nodes=["plan", "analysis", "synthesize"],
                 artifact="image",
             ),
             Turn(
-                "et un nuage de points sepal_length vs petal_length coloré par espèce",
-                capability="analyze",
-                artifact="image",
+                "la part du e-commerce progresse-t-elle d'une année sur l'autre ?",  # Q4
+                capability="query",
+                artifact="table",
+                expect_data=[(13.34, 0.1334), (20.27, 0.2027)],
             ),
         ],
     ),
     Scenario(
-        "titanic-exploration",
-        "Titanic : description → bornes d'âge → survie par classe → figure → croisement",
+        "maxizoo-univers",
+        "Maxizoo : CA par univers → figure → top SKU → jour de la semaine → figure",
         [
             Turn(
-                "décris-moi la base titanic : quelles tables et quelles colonnes ?",
-                expect_data=["passengers", "classes"],
-            ),
-            Turn(
-                "combien de passagers en tout, et quel est l'âge minimum et maximum ?",
-                expect_data=[891, 0.42, 80],
-            ),
-            Turn(
-                "quel est le taux de survie par LIBELLÉ de classe "
-                "(colonne label de la table classes) ?",
+                "comment se répartit le CA 2025 par univers produit ?",  # Q3
                 capability="query",
                 artifact="table",
-                expect_data=[(62.96, 0.6296), (47.28, 0.4728), (24.24, 0.2424), "1re classe"],
-            ),
-            Turn(
-                "fais un diagramme en barres de ces taux",
-                capability="analyze",
-                artifact="image",
-            ),
-            Turn(
-                "et combien de femmes et d'hommes parmi les survivants ?",
-                capability="query",
-                expect_data=[233, 109],
-            ),
-        ],
-    ),
-    Scenario(
-        "titanic-tarifs",
-        "Titanic : tarif moyen par classe → maximum → figure → ports → figure",
-        [
-            Turn(
-                "sur titanic, quel est le tarif moyen par classe (libellé) ?",
-                capability="query",
-                artifact="table",
-                expect_data=[84.1547, 20.6622, 13.6756],
-            ),
-            Turn(
-                "et quel est le tarif maximum payé ?",
-                capability="query",
-                expect_data=[512.3292],
-            ),
-            Turn(
-                "montre-moi la distribution des tarifs en histogramme",
-                capability="analyze",
-                artifact="image",
-            ),
-            Turn(
-                "quelle est la répartition des ports d'embarquement ?",
-                capability="query",
-                artifact="table",
-                expect_data=[644, 168, 77],
+                expect_data=["Chat", 3790391.44, (37.2, 0.372), 3620136.70],
             ),
             Turn(
                 "fais-en un diagramme en barres",
                 capability="analyze",
                 artifact="image",
             ),
-        ],
-    ),
-    Scenario(
-        "iris-prediction",
-        "Iris : quels attributs ? → prédiction → ajustement → tableau mémorisé → lot",
-        [
             Turn(
-                "je voudrais faire une prédiction sur iris : de quels attributs as-tu "
-                "besoin, et sous quel format ?",
-                expect_data=["sepal_length", "petal_width"],
-            ),
-            Turn(
-                "ok : sepal_length=5.1, sepal_width=3.5, petal_length=1.4, petal_width=0.2",
-                capability="predict",
-                nodes=["plan", "inference", "synthesize"],
-                expect_data=["setosa"],
-            ),
-            Turn(
-                "et si petal_length passait à 5.0 et petal_width à 1.8 ?",
-                capability="predict",
-                expect_data=["virginica"],
-            ),
-            Turn(
-                "donne-moi les 5 premières fleurs d'iris",
+                "quels sont les 10 SKU les plus vendus en CA en 2025 ?",  # Q6
                 capability="query",
                 artifact="table",
-                expect_data=[5.1, 3.5, 1.4, 0.2],
+                expect_data=["SKU001", 1438611.18, 1308100.18],
             ),
             Turn(
-                "prédis l'espèce de ces lignes",
-                capability="fetch_then_predict",
-                nodes=["plan", "fetch_predict", "synthesize"],
+                # Q7 — deux signaux opposés : samedi en magasin, dimanche en
+                # ligne. Un agent qui agrège les deux canaux les écrase.
+                "quel jour de la semaine vend le mieux, en magasin et en ligne ?",
+                capability="query",
                 artifact="table",
-                expect_data=["setosa", 5],
+                expect_data=[1820157, 328192],
+            ),
+            Turn(
+                "montre-moi ça en barres groupées",
+                capability="analyze",
+                artifact="image",
             ),
         ],
     ),
     Scenario(
-        "titanic-prediction",
-        "Titanic : modèle ? → attributs et format → relance → prédiction → ajustement",
+        "maxizoo-pieges",
+        "Maxizoo : panier article (grains) → ruptures (censure) → cold start → cohérence",
         [
             Turn(
-                "peux-tu me faire une prédiction ?",
-                clarify=True,
-                answer_regex=[r"iris", r"titanic"],
+                # Q5 — piège de grain : il faut agréger sales_daily au grain
+                # magasin x jour AVANT de joindre traffic_daily, sinon
+                # nb_tickets est dupliqué 60 fois et le panier divisé par 60.
+                "quel est le panier article moyen par type de magasin en 2025 ?",
+                capability="query",
+                artifact="table",
+                expect_data=[2.76, 2.37, 2.21, 2.06],
             ),
             Turn(
-                "titanic : de quels attributs as-tu besoin, et sous quel format ?",
-                expect_data=["embarked", "Southampton"],
+                # Q8 — la censure : ce n'est PAS du CA perdu. On vérifie les
+                # chiffres ; le sens, lui, se lit dans la réponse.
+                "quelle est l'ampleur des ruptures de stock en 2025 ?",
+                capability="query",
+                expect_data=[3041, (1.08, 0.0108), 42066.45],
             ),
             Turn(
-                "prédis la survie d'une femme de 1re classe",
+                # Q9 — absence de ligne ≠ zéro : les 4 SKU en cold start.
+                "quels produits ont été lancés en cours d'historique, et quand "
+                "ont-ils commencé à vendre ?",
+                capability="query",
+                artifact="table",
+                expect_data=["SKU003", "2023-03-15", "SKU049", "2025-02-15"],
+            ),
+            Turn(
+                "le CA horaire recompose-t-il bien le CA journalier ?",  # Q13
+                capability="query",
+                expect_data=[0.05],
+            ),
+            Turn(
+                "fais-moi un histogramme des quantités vendues par jour",
+                capability="analyze",
+                artifact="image",
+            ),
+        ],
+    ),
+    Scenario(
+        "maxizoo-meteo",
+        "Maxizoo : effet météo (anomalie vs absolu) → heure de pointe → figures",
+        [
+            Turn(
+                # Q11 — piège : raisonner sur temp_anomaly, pas temp_mean_c,
+                # sinon on compare l'été à l'hiver et on mesure la saisonnalité.
+                "la chaleur fait-elle baisser la fréquentation des magasins physiques en été ?",
+                capability="query",
+                artifact="table",
+                expect_data=[51.2, 54.5],
+            ),
+            Turn(
+                "quelle est l'heure de pointe de chaque magasin physique en 2025 ?",  # Q12
+                capability="query",
+                artifact="table",
+                expect_data=[11, 18, "Paris"],
+            ),
+            Turn(
+                "fais-moi un diagramme en barres de ces heures de pointe",
+                capability="analyze",
+                artifact="image",
+            ),
+            Turn(
+                "combien de magasins physiques y a-t-il, et combien de SKU au catalogue ?",
+                capability="query",
+                expect_data=[12, 60],
+            ),
+            Turn(
+                "sur quelle période s'étend l'historique des ventes ?",
+                capability="query",
+                expect_data=["2021-07-01", "2026-06-30"],
+            ),
+        ],
+    ),
+    Scenario(
+        "maxizoo-prediction",
+        "Maxizoo : quel modèle ? → attributs et format → relance → prédiction → ajustement",
+        [
+            Turn(
+                "je voudrais faire une prévision de ventes : de quels attributs "
+                "as-tu besoin, et sous quel format ?",
+                expect_data=["store_type", "commodity_group", "discount_rate"],
+            ),
+            Turn(
+                "prédis les ventes de croquettes chien en grand magasin",
                 capability="predict",
                 clarify=True,
-                answer_regex=[r"age|âge"],
+                answer_regex=[r"base_price|prix"],
             ),
             Turn(
-                "elle a 28 ans, seule à bord, billet à 80 livres, embarquée à Southampton",
+                # La valeur de référence est la sortie du VRAI modèle sur ces
+                # features (calculée hors agent), pas une estimation à vue. Elle
+                # est stable : le notebook d'entraînement est reproductible
+                # (l'ORDER BY de sa requête fige le découpage train/test), donc
+                # un réentraînement rend le même artefact et le même chiffre.
+                "marque nationale à 49.90, un samedi (day_of_week=5) de novembre "
+                "(month=11), sans promo, température de saison",
                 capability="predict",
                 nodes=["plan", "inference", "synthesize"],
-                expect_data=["a survécu", 93.4],
+                expect_data=[3.1374],
             ),
             Turn(
-                "et si elle était en 3e classe ?",
+                "et si le produit était en promo à -30 % (campagne produits) ?",
                 capability="predict",
-                expect_data=["a survécu", 64.6],
+                expect_data=[4.6079],
+            ),
+            Turn(
+                "donne-moi 5 SKU avec leur univers, type de marque et prix catalogue",
+                capability="query",
+                artifact="table",
+                expect_data=["SKU001"],
             ),
         ],
     ),

@@ -22,6 +22,12 @@ coverage.xml
 # Secrets / config locale
 .env
 
+# Base de démonstration Maxizoo — construite depuis le dépôt d'export par
+# `python scripts/load_maxizoo_duckdb.py` (180 Mo). L'export fait autorité :
+# une copie versionnée dériverait de lui sans qu'on le voie.
+sources/maxizoo.duckdb
+sources/maxizoo_dictionnaire.md
+
 # IDE / OS
 .idea/
 .vscode/

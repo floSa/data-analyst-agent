@@ -136,13 +136,13 @@ def test_le_prompt_contient_fichiers_et_contexte():
     sandbox = ScriptedSandbox([OK_PNG])
     run_analysis(
         "Quelle moyenne ?",
-        data_files={Path("/tmp/titanic.csv"): "titanic.csv"},
+        data_files={Path("/tmp/sales_daily.csv"): "sales_daily.csv"},
         data_context="colonnes : age, sex, survived",
         model=FunctionModel(responder),
         settings=make_settings(),
         sandbox=sandbox,
     )
     prompt = captured[0]
-    assert "/data/titanic.csv" in prompt
+    assert "/data/sales_daily.csv" in prompt
     assert "colonnes : age, sex, survived" in prompt
     assert "Quelle moyenne ?" in prompt

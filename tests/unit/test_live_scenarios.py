@@ -21,14 +21,14 @@ def reponse(answer: str, table: dict | None = None) -> dict:
 
 
 def test_valeur_juste_acceptee():
-    assert check_data(Turn("q", expect_data=[891]), reponse("Il y a 891 passagers.")) == []
+    assert check_data(Turn("q", expect_data=[60]), reponse("Il y a 60 SKU.")) == []
 
 
-@pytest.mark.parametrize("faux", [887, 890, 8910])
+@pytest.mark.parametrize("faux", [59, 61, 600])
 def test_valeur_fausse_rejetee(faux: int):
     """Le cas qui compte : un comptage faux ne doit jamais passer pour un arrondi."""
-    problemes = check_data(Turn("q", expect_data=[891]), reponse(f"Il y a {faux} passagers."))
-    assert problemes, f"{faux} accepté à la place de 891"
+    problemes = check_data(Turn("q", expect_data=[60]), reponse(f"Il y a {faux} SKU."))
+    assert problemes, f"{faux} accepté à la place de 60"
 
 
 def test_format_francais_accepte():
@@ -69,10 +69,10 @@ def test_sans_attente_ne_verifie_rien():
 
 def test_tableau_illisible_ne_fait_pas_tomber_le_verificateur():
     data = {
-        "answer": "891 passagers",
+        "answer": "60 SKU",
         "artifacts": [{"mime": "application/json", "data": "{cassé"}],
     }
-    assert check_data(Turn("q", expect_data=[891]), data) == []
+    assert check_data(Turn("q", expect_data=[60]), data) == []
 
 
 def test_valeur_pleine_precision_acceptee_face_a_une_reference_arrondie():

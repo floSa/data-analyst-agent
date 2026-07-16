@@ -1,0 +1,6 @@
+promo_id,campaign_name,promo_type,mechanic,discount_rate,date_start,date_end,perimeter,store_id
+P039,Soldes d'hiver 2025,produits,-25 % sélection,0.250,2025-01-08,2025-02-04,omnicanal,
+P040,Cat Days 2025,produits,-20 % univers chat,0.200,2025-03-10,2025-03-23,omnicanal,
+P041,Anniversaire MaxiZoo 2025,seuils,-10 € dès 60 € d'achat,0.000,2025-05-12,2025-05-25,omnicanal,
+P042,Été sans parasites 2025,produits,-15 % antiparasitaires,0.150,2025-06-05,2025-06-25,omnicanal,
+P060,Magasin rénové Brive,ouverture_magasin,Animations + goodies,0.000,2025-04-10,2025-04-13,magasin,S12

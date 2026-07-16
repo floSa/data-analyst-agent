@@ -46,6 +46,23 @@ Démarche :
    comme un total). N'invente aucun chiffre.
 """
 
+# Le dictionnaire passe AVANT la question, et non en réponse à un tool : les
+# pièges qu'il décrit doivent être connus au moment d'écrire la requête, pas
+# après. Un modèle qui apprend en 3e tour que le e-commerce est une ligne de
+# `stores` a déjà rendu son top magasins.
+DICTIONARY_PROMPT = """\
+
+--- Dictionnaire de la source ---
+Ce document décrit la base que tu interroges : le sens de chaque colonne, les
+valeurs admises, et les pièges de modélisation. Il fait autorité sur le schéma
+brut — le DDL dit les types, le dictionnaire dit ce que les données VEULENT
+DIRE. Lis-le avant d'écrire ta requête, et respecte ses mises en garde même
+quand le SQL « évident » semble marcher : c'est justement là qu'il est faux.
+
+{dictionary}
+--- fin du dictionnaire ---
+"""
+
 
 class ExecutedQuery(BaseModel):
     sql: str
@@ -83,6 +100,7 @@ class RetrievalDeps:
     # de classification floristique… ») : c'est du savoir encyclopédique, pas une
     # lecture de la source, et sur des données privées ce serait de l'invention.
     tools_used: list[str] = field(default_factory=list)
+    dictionary: str | None = None
 
 
 def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
@@ -90,7 +108,10 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
 
     @agent.system_prompt
     def system_prompt(ctx: RunContext[RetrievalDeps]) -> str:
-        return SYSTEM_PROMPT.format(dialect=ctx.deps.adapter.dialect)
+        prompt = SYSTEM_PROMPT.format(dialect=ctx.deps.adapter.dialect)
+        if ctx.deps.dictionary:
+            prompt += DICTIONARY_PROMPT.format(dictionary=ctx.deps.dictionary)
+        return prompt
 
     @agent.tool
     def list_tables(ctx: RunContext[RetrievalDeps]) -> list[str]:
@@ -126,10 +147,13 @@ def run_retrieval(
     adapter: DatabaseAdapter,
     model: Model | None = None,
     settings: Settings | None = None,
+    dictionary: str | None = None,
 ) -> RetrievalResult:
     """Répond à une question par une requête SQL sur la source fournie."""
     settings = settings or get_settings()
-    deps = RetrievalDeps(adapter=adapter, max_rows=settings.retrieval_max_rows)
+    deps = RetrievalDeps(
+        adapter=adapter, max_rows=settings.retrieval_max_rows, dictionary=dictionary
+    )
     agent = build_retrieval_agent()
     run = agent.run_sync(
         question,

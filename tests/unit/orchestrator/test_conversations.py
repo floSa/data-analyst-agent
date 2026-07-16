@@ -59,14 +59,14 @@ def test_pending_survit_a_la_reprise(store: ConversationStore):
     conversation = store.create()
     store.record_turn(
         conversation.id,
-        question="Prédis pour une femme",
-        answer="Quel âge ?",
-        pending=PendingInference(dataset="titanic", features={"sex": "female"}),
+        question="Prédis les ventes en grand magasin",
+        answer="Quel univers produit ?",
+        pending=PendingInference(dataset="maxizoo_sales", features={"store_type": "grand"}),
     )
 
     relue = store.load(conversation.id)
-    assert relue.pending.dataset == "titanic"
-    assert relue.pending.features == {"sex": "female"}
+    assert relue.pending.dataset == "maxizoo_sales"
+    assert relue.pending.features == {"store_type": "grand"}
 
 
 def test_liste_du_plus_recent_au_plus_ancien(store: ConversationStore):

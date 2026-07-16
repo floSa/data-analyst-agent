@@ -1,18 +1,24 @@
 # Catalogue déclaratif des sources de données (CADRAGE §7-①).
 # - postgres : DSN SQLAlchemy (driver pg8000) ; ${VARIABLES} d'environnement autorisées.
+# - duckdb   : base DuckDB (fichier .duckdb), relatif à ce fichier.
 # - file     : chemin CSV/Excel, relatif à ce fichier.
+#
+# `dictionary` : Markdown décrivant la base, chargé dans le contexte de l'agent
+# SQL. Le DDL dit les types ; le dictionnaire dit ce que les données veulent
+# dire — c'est lui qui porte les pièges de modélisation.
+#
+# La base n'est pas versionnée (180 Mo). Construisez-la avant usage :
+#     python scripts/load_maxizoo_duckdb.py --export ../base_demo
 sources:
-  - type: postgres
-    name: titanic
+  - type: duckdb
+    name: maxizoo
     description: >-
-      Base Titanic multi-tables (passengers + classes jointes par clé
-      étrangère class_id) — survie, sexe, âge, tarif, classe.
-    dsn: postgresql+pg8000://${DAA_PG_USER}:${DAA_PG_PASSWORD}@${DAA_PG_HOST}:${DAA_PG_PORT}/titanic
-
-  - type: file
-    name: iris
-    description: >-
-      Dataset Iris (fichier CSV local) — mesures des sépales et pétales
-      (sepal_length, sepal_width, petal_length, petal_width) et espèce
-      (setosa, versicolor, virginica).
-    path: iris.csv
+      Base retail animalerie (démonstration, données synthétiques) — schéma en
+      étoile de 1,66 M de lignes : ventes quotidiennes au grain magasin × SKU ×
+      jour (sales_daily), 13 magasins dont un canal e-commerce (stores), 60 SKU
+      sur 8 univers (products), 56 campagnes promo (promo_calendar,
+      promo_scope), plus la fréquentation (traffic_daily), le grain horaire
+      (sales_hourly), la météo, l'inflation et les horaires d'ouverture.
+      Historique quotidien du 2021-07-01 au 2026-06-30.
+    path: maxizoo.duckdb
+    dictionary: maxizoo_dictionnaire.md

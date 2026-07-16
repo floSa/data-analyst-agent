@@ -11,17 +11,19 @@ from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.sandbox.client import MimeOutput
-from helpers.doubles import FakeClassifier
+from helpers.doubles import FakeRegressor
 from helpers.scripted_llm import PLANNER, ScriptedLLM, plan_response
 
-TITANIC_OK = {
-    "sex": "female",
-    "pclass": 1,
-    "age": 28.0,
-    "sibsp": 0,
-    "parch": 0,
-    "fare": 80.0,
-    "embarked": "S",
+VENTES_OK = {
+    "store_type": "grand",
+    "commodity_group": "Chien",
+    "brand_type": "nationale",
+    "base_price": 49.90,
+    "day_of_week": 5,
+    "month": 11,
+    "discount_rate": 0.30,
+    "promo_type": "produits",
+    "temp_anomaly": 0.0,
 }
 
 
@@ -121,14 +123,14 @@ def test_conversation_multi_tours_via_api(tmp_path):
     """Relance au tour 1, complément au tour 2 avec le même conversation_id."""
     (tmp_path / "registry.yaml").write_text(
         "models:\n"
-        "  - dataset: titanic\n"
-        "    task: classification\n"
-        "    model_path: titanic.joblib\n"
-        "    target: survived\n"
-        '    labels: {"0": "n\'a pas survécu", "1": "a survécu"}\n',
+        "  - dataset: maxizoo_sales\n"
+        "    task: regression\n"
+        "    model_path: maxizoo_sales.joblib\n"
+        "    target: quantity\n"
+        "    unit: unités vendues\n",
         encoding="utf-8",
     )
-    joblib.dump(FakeClassifier(), tmp_path / "titanic.joblib")
+    joblib.dump(FakeRegressor(), tmp_path / "maxizoo_sales.joblib")
     registry = Registry.load(tmp_path / "registry.yaml")
     llm = ScriptedLLM().script(
         PLANNER,
@@ -136,15 +138,21 @@ def test_conversation_multi_tours_via_api(tmp_path):
             # tour 1 : extraction partielle
             plan_response(
                 Plan(
-                    capability="predict", dataset="titanic", features={"sex": "female", "pclass": 1}
+                    capability="predict",
+                    dataset="maxizoo_sales",
+                    features={"store_type": "grand", "commodity_group": "Chien"},
                 )
             ),
             # tour 2 : uniquement les nouvelles valeurs
             plan_response(
                 Plan(
                     capability="predict",
-                    dataset="titanic",
-                    features={"age": 28, "sibsp": 0, "parch": 0, "fare": 80.0, "embarked": "S"},
+                    dataset="maxizoo_sales",
+                    features={
+                        k: v
+                        for k, v in VENTES_OK.items()
+                        if k not in ("store_type", "commodity_group")
+                    },
                 )
             ),
         ],
@@ -158,19 +166,22 @@ def test_conversation_multi_tours_via_api(tmp_path):
     )
     client = TestClient(create_app(orchestrator_factory=lambda: orchestrator, settings=reglages))
 
-    tour1 = client.post("/chat", json={"message": "Prédis pour une femme en 1re classe"}).json()
+    tour1 = client.post(
+        "/chat", json={"message": "Prédis les ventes de croquettes chien en grand magasin"}
+    ).json()
     assert tour1["answer"].strip().endswith("?")
-    assert tour1["pending"]["dataset"] == "titanic"
+    assert tour1["pending"]["dataset"] == "maxizoo_sales"
     conversation_id = tour1["conversation_id"]
 
     tour2 = client.post(
         "/chat",
         json={
-            "message": "28 ans, seule, billet 80 livres, Southampton",
+            "message": "Marque nationale à 49,90 €, samedi de novembre, "
+            "promo -30 %, temps de saison",
             "conversation_id": conversation_id,
         },
     ).json()
-    assert "a survécu" in tour2["answer"]
+    assert "4.1391" in tour2["answer"]
     assert tour2["pending"] is None
     assert tour2["conversation_id"] == conversation_id
 
@@ -179,18 +190,18 @@ def test_flux_reel_predict_via_api(tmp_path):
     """Un vrai Orchestrator (LLM scripté) derrière l'API, sans Docker."""
     (tmp_path / "registry.yaml").write_text(
         "models:\n"
-        "  - dataset: titanic\n"
-        "    task: classification\n"
-        "    model_path: titanic.joblib\n"
-        "    target: survived\n"
-        '    labels: {"0": "n\'a pas survécu", "1": "a survécu"}\n',
+        "  - dataset: maxizoo_sales\n"
+        "    task: regression\n"
+        "    model_path: maxizoo_sales.joblib\n"
+        "    target: quantity\n"
+        "    unit: unités vendues\n",
         encoding="utf-8",
     )
-    joblib.dump(FakeClassifier(), tmp_path / "titanic.joblib")
+    joblib.dump(FakeRegressor(), tmp_path / "maxizoo_sales.joblib")
     registry = Registry.load(tmp_path / "registry.yaml")
     llm = ScriptedLLM().script(
         PLANNER,
-        [plan_response(Plan(capability="predict", dataset="titanic", features=TITANIC_OK))],
+        [plan_response(Plan(capability="predict", dataset="maxizoo_sales", features=VENTES_OK))],
     )
     reglages = Settings(_env_file=None, workspace_dir=tmp_path / "workspaces")
     orchestrator = Orchestrator(
@@ -200,8 +211,8 @@ def test_flux_reel_predict_via_api(tmp_path):
         settings=reglages,
     )
     client = TestClient(create_app(orchestrator_factory=lambda: orchestrator, settings=reglages))
-    body = client.post("/chat", json={"message": "Prédis pour cette passagère..."}).json()
-    assert "a survécu" in body["answer"]
+    body = client.post("/chat", json={"message": "Prédis les ventes de ce produit..."}).json()
+    assert "4.1391" in body["answer"]
     assert body["plan"]["capability"] == "predict"
     assert [step["node"] for step in body["trace"]] == ["plan", "inference", "synthesize"]
 
@@ -246,20 +257,21 @@ def test_reprise_repasse_le_pending_a_lorchestrateur(
     from data_analyst_agent.orchestrator.graph import PendingInference
 
     fake_orchestrator.answer = ChatAnswer(
-        answer="Quel âge ?", pending=PendingInference(dataset="titanic", features={"sex": "female"})
+        answer="Quel univers ?",
+        pending=PendingInference(dataset="maxizoo_sales", features={"store_type": "grand"}),
     )
     client = TestClient(
         create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings)
     )
-    conversation_id = client.post("/chat", json={"message": "Prédis pour une femme"}).json()[
-        "conversation_id"
-    ]
+    conversation_id = client.post(
+        "/chat", json={"message": "Prédis les ventes en grand magasin"}
+    ).json()["conversation_id"]
 
-    client.post("/chat", json={"message": "28 ans", "conversation_id": conversation_id})
+    client.post("/chat", json={"message": "univers chien", "conversation_id": conversation_id})
 
     pending_du_2e_tour = fake_orchestrator.calls[-1][2]
-    assert pending_du_2e_tour.dataset == "titanic"
-    assert pending_du_2e_tour.features == {"sex": "female"}
+    assert pending_du_2e_tour.dataset == "maxizoo_sales"
+    assert pending_du_2e_tour.features == {"store_type": "grand"}
 
 
 def test_conversation_survit_a_un_redemarrage(
