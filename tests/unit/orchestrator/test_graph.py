@@ -527,6 +527,97 @@ def test_ajustement_flou_reprend_la_derniere_action(
     assert "ancien code" in llm.prompts_for(ANALYSIS)[0]
 
 
+TRACEBACK_MATPLOTLIB = """\
+---------------------------------------------------------------------------
+TypeError                                 Traceback (most recent call last)
+Cell In[4], line 15
+     13 plt.figure(figsize=(10, 6))
+---> 15 plt.bar(df_resultat_3['embarked'], df_resultat_3['count'])
+     16
+File /usr/local/lib/python3.12/site-packages/matplotlib/pyplot.py:3138, in bar(x, height)
+   3127 @_copy_docstring_and_deprecators(Axes.bar)
+TypeError: unhashable type: 'list'"""
+
+
+def test_ajustement_apres_prediction_reussie(tmp_path: Path, registry: Registry):
+    """« et si elle était en 3e classe ? » après une prédiction ABOUTIE.
+
+    Le pending est vidé dès qu'une prédiction réussit : sans mémoire des features
+    validées, ce tour redemandait un sibsp donné deux tours plus haut. Les
+    features étant réparties sur PLUSIEURS messages, le planificateur ne pouvait
+    pas non plus les relire dans la seule question précédente.
+    """
+    settings = make_settings(workspace_dir=tmp_path)
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="predict", dataset="titanic", features=TITANIC_OK)),
+            # tour 2 : le planificateur n'extrait QUE le changement demandé
+            plan_response(Plan(capability="predict", dataset="titanic", features={"pclass": 3})),
+        ],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry, settings=settings)
+
+    tour1 = orchestrator.ask("prédis pour cette passagère...", conversation_id="ajust")
+    assert tour1.pending is None  # prédiction aboutie : plus rien en attente
+    assert "a survécu" in tour1.answer
+
+    tour2 = orchestrator.ask("et si elle était en 3e classe ?", conversation_id="ajust")
+
+    assert tour2.error is None
+    assert "valeur manquante" not in tour2.answer  # ne redemande PAS l'acquis
+    assert tour2.plan.features["pclass"] == 3  # le nouveau prime
+    assert tour2.plan.features["sibsp"] == TITANIC_OK["sibsp"]  # l'acquis est repris
+    assert tour2.plan.features["embarked"] == TITANIC_OK["embarked"]
+
+
+def test_ajustement_nherite_pas_dun_autre_dataset(tmp_path: Path, registry: Registry):
+    """Une prédiction sur un AUTRE dataset ne récupère pas l'acquis du précédent."""
+    settings = make_settings(workspace_dir=tmp_path)
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="predict", dataset="titanic", features=TITANIC_OK)),
+            plan_response(Plan(capability="predict", dataset="iris", features={})),
+        ],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry, settings=settings)
+    orchestrator.ask("prédis pour cette passagère...", conversation_id="autre")
+
+    tour2 = orchestrator.ask("et sur iris ?", conversation_id="autre")
+
+    assert "sepal_length" not in tour2.plan.features  # rien d'hérité
+    assert "sibsp" not in tour2.plan.features
+
+
+def test_analyse_en_echec_ne_recrache_pas_le_traceback(mini_csv: Path, registry: Registry):
+    """Un traceback de 40 lignes de pyplot/pandas remontait tel quel à l'écran.
+
+    L'utilisateur n'a que faire de la mécanique interne de la sandbox : il lui
+    faut une phrase honnête. Le détail, lui, part dans la trace.
+    """
+    settings = make_settings(analysis_max_attempts=1)
+    sandbox = ScriptedSandbox([SandboxResult(status="error", error=TRACEBACK_MATPLOTLIB)])
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="mini"))])
+        .script(ANALYSIS, [text("```python\nplt.bar(df['a'], df['b'])\n```")])
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(
+        llm, catalog=catalog, registry=registry, settings=settings, sandbox=sandbox
+    )
+    answer = orchestrator.ask("fais-en un diagramme en barres")
+
+    assert "Traceback" not in answer.answer
+    assert "matplotlib/pyplot.py" not in answer.answer
+    assert "Cell In[4]" not in answer.answer
+    assert "n'a pas abouti" in answer.answer  # une phrase honnête, pas un dump
+    # ... mais la cause reste diagnosticable dans la trace
+    analyse = next(step for step in answer.trace if step.node == "analysis")
+    assert "TypeError: unhashable type: 'list'" in analyse.detail
+
+
 def test_code_genere_accede_aux_objets_intermediaires(tmp_path: Path, registry: Registry):
     """Le CSV mémorisé est monté dans la sandbox et annoncé au code d'analyse."""
     # pré-remplit la mémoire avec un objet intermédiaire

@@ -164,11 +164,17 @@ class Orchestrator:
         plan = state.get("plan")
         if workspace is not None and plan is not None and not state.get("clarification"):
             analysis = state.get("analysis")
+            inference = state.get("inference")
+            # les features d'une prédiction RÉUSSIE deviennent la base d'un
+            # éventuel ajustement au tour suivant (« et si elle était en 3e ? »)
+            aboutie = inference is not None and inference.prediction is not None
             workspace.record_turn(
                 question,
                 plan.capability,
                 plan.source,
                 code=analysis.code if analysis is not None else None,
+                dataset=plan.dataset if aboutie else None,
+                features=dict(inference.features) if aboutie else None,
             )
         return ChatAnswer(
             answer=state.get("answer", ""),
@@ -388,6 +394,15 @@ class Orchestrator:
             plan.dataset = plan.dataset or pending.dataset
             if plan.dataset == pending.dataset:
                 plan.features = {**pending.features, **plan.features}
+        elif plan.capability == "predict" and workspace is not None:
+            # ajustement d'une prédiction déjà ABOUTIE (« et si elle était en 3e
+            # classe ? ») : le pending est vidé dès qu'une prédiction réussit, donc
+            # sans cet acquis le tour repartait de zéro et redemandait des features
+            # déjà données. Même règle que ci-dessus : le nouveau message prime, et
+            # seul le MÊME dataset est repris (une digression n'hérite de rien).
+            acquis = workspace.last_features_for(plan.dataset)
+            if acquis:
+                plan.features = {**acquis, **plan.features}
         # source désignée mais introuvable : le LLM décore parfois le nom (ex.
         # « titanic (postgres) » recopié depuis la description au lieu de
         # « titanic ») -> on normalise ; si vraiment inconnue, on demande plutôt
@@ -531,6 +546,9 @@ class Orchestrator:
             f"{outcome.attempts} essai(s), {len(images)} figure(s),"
             f" statut {outcome.execution.status}"
         )
+        if not outcome.succeeded:
+            # la cause vit ici, pas dans la réponse rendue à l'utilisateur
+            detail += f" — {self._cause_lisible(outcome.execution.error)}"
         return {
             "analysis": outcome,
             "artifacts": images,
@@ -709,12 +727,27 @@ class Orchestrator:
             return phrase, "résumé déterministe (multi-lignes)"
         return retrieval.summary, "résumé de la récupération"
 
+    @staticmethod
+    def _cause_lisible(erreur: str | None) -> str:
+        """La dernière ligne d'un traceback — « TypeError: ... » — sans les 40 autres.
+
+        Un traceback porte sa cause en dernière ligne ; tout ce qui précède est
+        la mécanique interne de la sandbox, illisible et anxiogène côté
+        utilisateur, mais précieux dans la trace.
+        """
+        lignes = [ligne.strip() for ligne in (erreur or "").splitlines() if ligne.strip()]
+        return lignes[-1] if lignes else "cause inconnue"
+
     def _synthesize_analysis(self, state: OrchestratorState) -> str:
         analysis = state["analysis"]
         if not analysis.succeeded:
+            # JAMAIS le traceback : il était recraché tel quel à l'utilisateur —
+            # 40 lignes de pyplot et de pandas pour dire « ça n'a pas marché ».
+            # Le détail part dans la trace (cf. _analysis_node), pas dans la réponse.
             return (
-                "L'analyse a échoué après plusieurs tentatives : "
-                f"{analysis.execution.error or 'erreur inconnue'}"
+                "L'analyse n'a pas abouti : le code produit n'a pas pu s'exécuter "
+                f"après {analysis.attempts} tentative(s). Reformule ou précise ta "
+                "demande (le détail technique est dans la trace)."
             )
         figures = len([r for r in analysis.execution.results if r.mime == "image/png"])
         context = (
