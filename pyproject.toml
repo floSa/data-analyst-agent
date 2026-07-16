@@ -27,6 +27,9 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    # parseur JS (BSD) : valide le script de la page de chat, servie comme une
+    # chaîne Python où un échappement raté casserait tout le script sans bruit.
+    "esprima>=4.0.1",
     "jupytext>=1.19.4",
     "pre-commit>=4.6.0",
     "pytest>=9.1.1",
