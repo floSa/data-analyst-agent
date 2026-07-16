@@ -2,14 +2,19 @@
 
 Contrairement à la suite pytest (LLM scripté, déterministe), ce runner
 interroge le VRAI système — LLM local (Ollama), Postgres, sandbox Docker — sur
-des conversations multi-tours « en cascade » (chaque tour dépend des
-précédents : mémoire, changement de source, slot-filling…).
+cinq conversations de cinq tours « en cascade » (chaque tour dépend des
+précédents : mémoire, anaphores, figures, slot-filling…), telles qu'un analyste
+les mène : décrire un dataset, creuser la réponse précédente, demander une
+figure, puis prédire — en demandant d'abord quels attributs et sous quel format.
 
 Le LLM étant non déterministe, on vérifie des INVARIANTS, à deux niveaux :
 
 - DUR (fait échouer la suite, code de sortie != 0) : HTTP 200, aucune exception
   brute renvoyée à l'utilisateur (KeyError/Traceback…), et une erreur attendue
   seulement là où on l'attend.
+- DUR aussi : les CHIFFRES rendus, comparés à une vérité terrain calculée hors
+  de l'agent (`expect_data`) — sans quoi une réponse bien tournée sur des
+  chiffres faux passe pour un succès.
 - SOUPLE (rapporté, n'échoue pas) : capacité routée, nœuds de la trace,
   présence d'un tableau/figure, quelques mots-clés dans la réponse.
 
@@ -18,7 +23,7 @@ seedé (scripts/seed_titanic_postgres.py), l'image sandbox est construite.
 
     uv run python scripts/live_scenarios.py            # tout
     uv run python scripts/live_scenarios.py --base-url http://localhost:8000
-    uv run python scripts/live_scenarios.py --only iris titanic-join
+    uv run python scripts/live_scenarios.py --only iris-description titanic-tarifs
 """
 
 from __future__ import annotations
@@ -66,36 +71,129 @@ class Scenario:
 # --- définition des scénarios en cascade --------------------------------------
 
 SCENARIOS: list[Scenario] = [
-    # Les `expect_data` sont la VÉRITÉ TERRAIN, calculée à la main hors de l'agent
-    # (SQL direct sur la base, pandas sur le CSV, predict sur le modèle). Sans
-    # elles, une réponse bien tournée sur des chiffres faux passe pour un succès.
+    # Cinq conversations de cinq tours, telles qu'un analyste les mène vraiment :
+    # on découvre un dataset, on creuse sur ce qui vient d'être répondu, on
+    # demande une figure, puis on prédit — en commençant par demander à l'agent
+    # CE QU'IL LUI FAUT et dans quel format.
+    #
+    # Les `expect_data` sont la VÉRITÉ TERRAIN, calculée hors de l'agent (SQL
+    # direct sur la base, pandas sur le CSV, predict sur le modèle). Sans elles,
+    # une réponse bien tournée sur des chiffres faux passe pour un succès.
     Scenario(
-        "iris-exploration",
-        "Iris : source ambiguë → répartition → moyenne",
+        "iris-description",
+        "Iris : description du dataset → min/max → moyenne par espèce → 2 figures",
         [
             Turn(
-                "combien de lignes y a-t-il au total ?",
-                clarify=True,
-                answer_regex=[r"titanic", r"iris"],
+                "peux-tu me faire une description du dataset iris ?",
+                expect_data=[150],
+                answer_regex=[r"iris"],
             ),
             Turn(
-                "dans iris, combien de fleurs par espèce ?",
-                capability="query",
-                nodes=["plan", "retrieval", "synthesize"],
+                "quelles sont les valeurs minimum et maximum de sepal_length ?",
+                expect_data=[4.3, 7.9],
+            ),
+            Turn(
+                "et la longueur moyenne des sépales par espèce ?",
                 artifact="table",
-                expect_data=[50, "setosa", "versicolor", "virginica"],
+                expect_data=[5.006, 5.936, 6.588, "setosa"],
             ),
             Turn(
-                "et quelle est la longueur moyenne des sépales ?",
-                capability="query",
-                expect_data=[5.8433],
+                "fais-moi un histogramme des sepal_length",
+                capability="analyze",
+                nodes=["plan", "analysis", "synthesize"],
+                artifact="image",
+            ),
+            Turn(
+                "et un nuage de points sepal_length vs petal_length coloré par espèce",
+                capability="analyze",
+                artifact="image",
             ),
         ],
     ),
     Scenario(
-        "iris-memoire-predict",
-        "Iris : tableau mémorisé → prédiction sur « ces lignes » → figure",
+        "titanic-exploration",
+        "Titanic : description → bornes d'âge → survie par classe → figure → croisement",
         [
+            Turn(
+                "décris-moi la base titanic : quelles tables et quelles colonnes ?",
+                expect_data=["passengers", "classes"],
+            ),
+            Turn(
+                "combien de passagers en tout, et quel est l'âge minimum et maximum ?",
+                expect_data=[891, 0.42, 80],
+            ),
+            Turn(
+                "quel est le taux de survie par LIBELLÉ de classe "
+                "(colonne label de la table classes) ?",
+                capability="query",
+                artifact="table",
+                expect_data=[(62.96, 0.6296), (47.28, 0.4728), (24.24, 0.2424), "1re classe"],
+            ),
+            Turn(
+                "fais un diagramme en barres de ces taux",
+                capability="analyze",
+                artifact="image",
+            ),
+            Turn(
+                "et combien de femmes et d'hommes parmi les survivants ?",
+                capability="query",
+                expect_data=[233, 109],
+            ),
+        ],
+    ),
+    Scenario(
+        "titanic-tarifs",
+        "Titanic : tarif moyen par classe → maximum → figure → ports → figure",
+        [
+            Turn(
+                "sur titanic, quel est le tarif moyen par classe (libellé) ?",
+                capability="query",
+                artifact="table",
+                expect_data=[84.1547, 20.6622, 13.6756],
+            ),
+            Turn(
+                "et quel est le tarif maximum payé ?",
+                capability="query",
+                expect_data=[512.3292],
+            ),
+            Turn(
+                "montre-moi la distribution des tarifs en histogramme",
+                capability="analyze",
+                artifact="image",
+            ),
+            Turn(
+                "quelle est la répartition des ports d'embarquement ?",
+                capability="query",
+                artifact="table",
+                expect_data=[644, 168, 77],
+            ),
+            Turn(
+                "fais-en un diagramme en barres",
+                capability="analyze",
+                artifact="image",
+            ),
+        ],
+    ),
+    Scenario(
+        "iris-prediction",
+        "Iris : quels attributs ? → prédiction → ajustement → tableau mémorisé → lot",
+        [
+            Turn(
+                "je voudrais faire une prédiction sur iris : de quels attributs as-tu "
+                "besoin, et sous quel format ?",
+                expect_data=["sepal_length", "petal_width"],
+            ),
+            Turn(
+                "ok : sepal_length=5.1, sepal_width=3.5, petal_length=1.4, petal_width=0.2",
+                capability="predict",
+                nodes=["plan", "inference", "synthesize"],
+                expect_data=["setosa"],
+            ),
+            Turn(
+                "et si petal_length passait à 5.0 et petal_width à 1.8 ?",
+                capability="predict",
+                expect_data=["virginica"],
+            ),
             Turn(
                 "donne-moi les 5 premières fleurs d'iris",
                 capability="query",
@@ -103,93 +201,27 @@ SCENARIOS: list[Scenario] = [
                 expect_data=[5.1, 3.5, 1.4, 0.2],
             ),
             Turn(
-                "peux-tu prédire l'espèce de ces lignes ?",
+                "prédis l'espèce de ces lignes",
                 capability="fetch_then_predict",
                 nodes=["plan", "fetch_predict", "synthesize"],
                 artifact="table",
                 expect_data=["setosa", 5],
             ),
-            Turn(
-                "fais un histogramme des sepal_length du tableau resultat_1",
-                capability="analyze",
-                nodes=["plan", "analysis", "synthesize"],
-                artifact="image",
-            ),
         ],
     ),
     Scenario(
-        "titanic-effectifs",
-        "Titanic : comptage → anaphore « et combien ont survécu ? » → moyenne",
+        "titanic-prediction",
+        "Titanic : modèle ? → attributs et format → relance → prédiction → ajustement",
         [
             Turn(
-                "sur titanic, combien de passagers au total ?",
-                capability="query",
-                nodes=["plan", "retrieval", "synthesize"],
-                expect_data=[891],
+                "peux-tu me faire une prédiction ?",
+                clarify=True,
+                answer_regex=[r"iris", r"titanic"],
             ),
             Turn(
-                "et combien ont survécu ?",
-                capability="query",
-                expect_data=[342],
+                "titanic : de quels attributs as-tu besoin, et sous quel format ?",
+                expect_data=["embarked", "Southampton"],
             ),
-            Turn(
-                "quel est l'âge moyen des passagers ?",
-                capability="query",
-                expect_data=[29.6991],
-            ),
-        ],
-    ),
-    Scenario(
-        "titanic-jointure",
-        "Titanic : jointure sur libellé → effectifs enchaînés → figure",
-        [
-            Turn(
-                "sur la base titanic, donne le taux de survie par LIBELLÉ de classe "
-                "(colonne label de la table classes), pas par identifiant",
-                capability="query",
-                nodes=["plan", "retrieval", "synthesize"],
-                artifact="table",
-                expect_data=[(62.96, 0.6296), (47.28, 0.4728), (24.24, 0.2424), "1re classe"],
-            ),
-            Turn(
-                "et combien de passagers y a-t-il par classe ?",
-                capability="query",
-                artifact="table",
-                expect_data=[216, 184, 491],
-            ),
-            Turn(
-                "fais un diagramme en barres de ces effectifs",
-                capability="analyze",
-                artifact="image",
-            ),
-        ],
-    ),
-    Scenario(
-        "titanic-croise",
-        "Titanic : survie par sexe → croisement anaphorique → erreur métier propre",
-        [
-            Turn(
-                "sur titanic, quel est le taux de survie par sexe ?",
-                capability="query",
-                artifact="table",
-                expect_data=[(74.2, 0.742), (18.89, 0.1889)],
-            ),
-            Turn(
-                "et pour les femmes de 1re classe ?",
-                capability="query",
-                expect_data=[(96.81, 0.9681)],
-            ),
-            Turn(
-                "sur titanic, prédis la survie du passager numéro 999999",
-                expect_error=True,
-                answer_regex=[r"Je n'ai pas pu répondre|aucune ligne"],
-            ),
-        ],
-    ),
-    Scenario(
-        "slot-filling",
-        "Prédiction hypothétique titanic : relance puis complément (multi-tours)",
-        [
             Turn(
                 "prédis la survie d'une femme de 1re classe",
                 capability="predict",
@@ -200,32 +232,12 @@ SCENARIOS: list[Scenario] = [
                 "elle a 28 ans, seule à bord, billet à 80 livres, embarquée à Southampton",
                 capability="predict",
                 nodes=["plan", "inference", "synthesize"],
-                answer_regex=[r"surv"],
-                expect_data=["a survécu"],
-            ),
-        ],
-    ),
-    Scenario(
-        "california-ajustement",
-        "California : modèle ambigu → prédiction chiffrée → ajustement d'une feature",
-        [
-            Turn(
-                "peux-tu me faire une prédiction ?",
-                clarify=True,
-                answer_regex=[r"iris", r"titanic"],
+                expect_data=["a survécu", 93.4],
             ),
             Turn(
-                "sur california_housing : MedInc=8.3, HouseAge=41, AveRooms=6.9, "
-                "AveBedrms=1.02, Population=322, AveOccup=2.5, Latitude=37.88, "
-                "Longitude=-122.23",
+                "et si elle était en 3e classe ?",
                 capability="predict",
-                nodes=["plan", "inference", "synthesize"],
-                expect_data=[4.139],
-            ),
-            Turn(
-                "et si MedInc passait à 3.0 ?",
-                capability="predict",
-                expect_data=[2.1149],
+                expect_data=["a survécu", 64.6],
             ),
         ],
     ),
