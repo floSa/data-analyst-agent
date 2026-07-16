@@ -5,6 +5,8 @@ from data_analyst_agent.agents.inference.schemas import (
     CaliforniaHousingFeatures,
     IrisFeatures,
     TitanicFeatures,
+    describe_features,
+    field_choices,
     get_schema,
 )
 from data_analyst_agent.agents.inference.validation import format_reask, validate_features
@@ -101,3 +103,89 @@ def test_get_schema():
 
     with pytest.raises(KeyError, match="connus"):
         get_schema("boston")
+
+
+# -- réalignement des noms de features (« MedInc » vs « med_inc ») ----------------
+
+
+def test_features_en_camel_case_sont_realignees():
+    """« MedInc » est le nom canonique sklearn du dataset : il doit être accepté."""
+    payload = {
+        "MedInc": 8.3,
+        "HouseAge": 41,
+        "AveRooms": 6.9,
+        "AveBedrms": 1.02,
+        "Population": 322,
+        "AveOccup": 2.5,
+        "Latitude": 37.88,
+        "Longitude": -122.23,
+    }
+    outcome = validate_features(get_schema("california_housing"), payload)
+
+    assert outcome.valid, outcome.issues
+    assert outcome.features["med_inc"] == 8.3
+    assert outcome.features["house_age"] == 41
+
+
+def test_realignement_tolere_casse_et_underscores():
+    outcome = validate_features(
+        get_schema("iris"),
+        {"Sepal_Length": 5.1, "sepalwidth": 3.5, "PETAL_LENGTH": 1.4, "petal width": 0.2},
+    )
+    assert outcome.valid, outcome.issues
+    assert outcome.features["sepal_length"] == 5.1
+    assert outcome.features["petal_width"] == 0.2
+
+
+def test_nom_exact_prime_sur_un_alias():
+    outcome = validate_features(
+        get_schema("california_housing"),
+        {
+            "med_inc": 8.3,
+            "MedInc": 1.0,  # alias concurrent : le nom exact doit gagner
+            "house_age": 41,
+            "ave_rooms": 6.9,
+            "ave_bedrms": 1.02,
+            "population": 322,
+            "ave_occup": 2.5,
+            "latitude": 37.88,
+            "longitude": -122.23,
+        },
+    )
+    assert outcome.valid, outcome.issues
+    assert outcome.features["med_inc"] == 8.3
+
+
+def test_champ_vraiment_inconnu_reste_signale():
+    """Le réalignement ne doit pas transformer le garde-fou en passoire."""
+    outcome = validate_features(get_schema("iris"), {"couleur_petale": "bleu"})
+
+    assert not outcome.valid
+    assert any(i.problem == "champ_inconnu" and i.field == "couleur_petale" for i in outcome.issues)
+
+
+# -- description des features pour le planificateur ------------------------------
+
+
+def test_describe_features_donne_sens_et_valeurs_autorisees():
+    """Le planificateur doit pouvoir traduire « Southampton » en 'S' : sans le sens
+    ni les valeurs du champ, il redemande une information déjà donnée."""
+    texte = describe_features(get_schema("titanic"))
+
+    assert "Port d'embarquement (S=Southampton, C=Cherbourg, Q=Queenstown)" in texte
+    assert "valeurs autorisées : 'S', 'C', 'Q'" in texte
+    assert "valeurs autorisées : 'male', 'female'" in texte
+    assert "* age — Âge en années" in texte
+
+
+def test_describe_features_sans_literal_liste_pas_de_valeurs():
+    texte = describe_features(get_schema("california_housing"))
+
+    assert "* med_inc — Revenu médian (dizaines de milliers de $)" in texte
+    assert "valeurs autorisées" not in texte  # que des flottants bornés
+
+
+def test_field_choices_ne_rend_que_les_literal():
+    assert field_choices(get_schema("titanic"), "embarked") == ["S", "C", "Q"]
+    assert field_choices(get_schema("titanic"), "age") is None
+    assert field_choices(get_schema("titanic"), "inexistant") is None
