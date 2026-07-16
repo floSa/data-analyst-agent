@@ -8,6 +8,7 @@ nom ; ``open_source`` fournit l'adaptateur SQL correspondant.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -27,7 +28,18 @@ class PostgresSource(BaseModel):
     dsn: str  # postgresql+pg8000://user:mdp@hote:5432/base
 
     def resolved_dsn(self) -> str:
-        return os.path.expandvars(self.dsn)
+        dsn = os.path.expandvars(self.dsn)
+        # expandvars laisse les ${VAR} inconnues telles quelles : sans ce garde-fou,
+        # le littéral file jusqu'au driver et ressort en « invalid literal for
+        # int() ... '${DAA_PG_PORT}' », qui ne dit pas quoi corriger.
+        manquantes = re.findall(r"\$\{?(\w+)\}?", dsn)
+        if manquantes:
+            raise ValueError(
+                f"source {self.name!r} : variable(s) d'environnement non définie(s) : "
+                f"{', '.join(sorted(set(manquantes)))} — renseignez-les dans le .env "
+                "(modèle : .env.example)."
+            )
+        return dsn
 
 
 class FileSource(BaseModel):

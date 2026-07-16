@@ -87,3 +87,23 @@ def test_open_source_postgres_est_paresseux():
     adapter = open_source(source)
     assert isinstance(adapter, PostgresAdapter)
     assert adapter.dialect == "postgresql"
+
+
+def test_dsn_variable_non_definie_message_explicite(monkeypatch):
+    """Une ${VAR} non résolue doit nommer le coupable, pas finir en int('${...}')."""
+    monkeypatch.delenv("DAA_PG_PORT", raising=False)
+    source = PostgresSource(
+        name="titanic", dsn="postgresql+pg8000://u:p@localhost:${DAA_PG_PORT}/titanic"
+    )
+
+    with pytest.raises(ValueError, match="DAA_PG_PORT") as exc:
+        source.resolved_dsn()
+    assert "titanic" in str(exc.value)
+    assert ".env" in str(exc.value)  # dit quoi corriger
+
+
+def test_dsn_resolu_depuis_lenvironnement(monkeypatch):
+    monkeypatch.setenv("DAA_PG_PORT", "5432")
+    source = PostgresSource(name="t", dsn="postgresql+pg8000://u:p@h:${DAA_PG_PORT}/t")
+
+    assert source.resolved_dsn() == "postgresql+pg8000://u:p@h:5432/t"

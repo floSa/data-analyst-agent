@@ -1,6 +1,8 @@
 """Tests des réglages (pydantic-settings)."""
 
-from data_analyst_agent.config import Settings, get_settings
+import os
+
+from data_analyst_agent.config import Settings, export_env_file, get_settings
 
 
 def make_settings(**overrides) -> Settings:
@@ -25,3 +27,27 @@ def test_surcharge_par_environnement(monkeypatch):
 
 def test_get_settings_est_un_cache():
     assert get_settings() is get_settings()
+
+
+def test_export_env_file_publie_les_variables_hors_settings(tmp_path, monkeypatch):
+    """Les DAA_PG_* du .env doivent atteindre os.environ : le DSN du catalogue est
+    résolu par os.path.expandvars, qui ne lit que l'environnement réel."""
+    env = tmp_path / ".env"
+    env.write_text("DAA_PG_PORT=5432\nDAA_PG_USER=postgres\n", encoding="utf-8")
+    monkeypatch.delenv("DAA_PG_PORT", raising=False)
+    monkeypatch.delenv("DAA_PG_USER", raising=False)
+
+    export_env_file(env)
+
+    assert os.environ["DAA_PG_PORT"] == "5432"
+    assert os.environ["DAA_PG_USER"] == "postgres"
+
+
+def test_export_env_file_ne_recouvre_pas_lenvironnement_reel(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("DAA_PG_PORT=5432\n", encoding="utf-8")
+    monkeypatch.setenv("DAA_PG_PORT", "6543")  # posé explicitement : doit primer
+
+    export_env_file(env)
+
+    assert os.environ["DAA_PG_PORT"] == "6543"

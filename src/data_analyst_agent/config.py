@@ -1,16 +1,20 @@
 """Configuration de l'application (pydantic-settings, préfixe d'environnement DAA_)."""
 
+import os
 import tempfile
 from functools import lru_cache
 from pathlib import Path
 
+from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+ENV_FILE = ".env"
 
 
 class Settings(BaseSettings):
     """Réglages globaux, surchargeables par variables d'environnement (``DAA_*``) ou ``.env``."""
 
-    model_config = SettingsConfigDict(env_prefix="DAA_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_prefix="DAA_", env_file=ENV_FILE, extra="ignore")
 
     # --- LLM mutualisé (docs/CADRAGE.md §5) ---
     # Un seul modèle langage pour tout le système. Qwen3-Coder n'existe qu'en
@@ -54,7 +58,25 @@ class Settings(BaseSettings):
     sandbox_kill_grace: float = 10.0
 
 
+def export_env_file(env_file: str | Path = ENV_FILE) -> None:
+    """Publie les variables du ``.env`` dans l'environnement du process.
+
+    pydantic-settings lit le ``.env`` dans l'objet ``Settings``, mais **ne
+    l'exporte pas**. Or toutes les variables du ``.env`` ne sont pas des champs
+    de ``Settings`` : celles du DSN du catalogue (``DAA_PG_*``) sont résolues par
+    ``os.path.expandvars``, qui ne lit que ``os.environ``. Sans cette passerelle,
+    les renseigner dans le ``.env`` — ce que documente ``.env.example`` — reste
+    sans effet et la source postgres échoue sur un ``${DAA_PG_PORT}`` littéral.
+
+    L'environnement réel prime : on ne réécrit jamais une variable déjà posée.
+    """
+    for cle, valeur in dotenv_values(env_file).items():
+        if valeur is not None:
+            os.environ.setdefault(cle, valeur)
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Instance partagée des réglages (cache process-wide)."""
+    export_env_file()
     return Settings()
