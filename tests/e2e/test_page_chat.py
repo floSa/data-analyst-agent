@@ -25,7 +25,7 @@ from data_analyst_agent.orchestrator.graph import ChatAnswer
 from data_analyst_agent.sandbox.client import MimeOutput
 
 # 1x1 PNG transparent
-PNG_1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+PNG_1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="  # noqa: E501
 TABLE_JSON = '{"columns": ["sex", "n"], "rows": [["female", 314], ["male", 577]]}'
 
 # Processus pytest séparé : cf. le marqueur `ui` dans pyproject.toml.
@@ -99,7 +99,8 @@ def test_reouvrir_affiche_aussi_questions_tableaux_figures_et_erreurs(page, app_
 
     journal = page.inner_text("#journal")
     assert "sur titanic, combien de passagers au total ?" in journal  # la question
-    assert "female" in journal and "314" in journal  # le tableau
+    assert "female" in journal  # le tableau
+    assert "314" in journal
     assert "aucune ligne récupérée" in journal  # l'erreur
     assert page.locator("#journal img").count() == 1  # la figure
 
