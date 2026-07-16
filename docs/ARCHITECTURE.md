@@ -27,7 +27,7 @@ flowchart TB
     end
 
     subgraph app["data-analyst-agent"]
-        API["API FastAPI<br/>POST /chat · GET /health"]
+        API["API FastAPI<br/>POST /chat · /conversations · GET /health"]
         ORCH["Orchestrateur LangGraph<br/>plan → route → capacité → synthèse"]
         LLM["Client LLM mutualisé<br/>PydanticAI → Ollama"]
 
@@ -133,8 +133,24 @@ requête) ; le serveur y associe l'éventuelle *prédiction en attente de featur
 80 livres... »), le planificateur reçoit le contexte (dataset, features déjà
 connues, features manquantes), extrait les nouvelles valeurs, et l'orchestrateur
 fusionne — le nouveau message prime sur l'acquis, ce qui permet aussi de corriger
-une valeur refusée. Une digression solde le contexte. Magasin en mémoire borné
-(V1 : 10-20 utilisateurs).
+une valeur refusée. Une digression solde le contexte.
+
+**Persistance des conversations** (barre latérale) : le fil est écrit sur disque, il
+survit donc au rechargement de la page comme au redémarrage du serveur.
+
+| Route | Rôle |
+|---|---|
+| `GET /conversations` | résumés (id, titre, horodatages, nb de messages), du plus récent au plus ancien |
+| `GET /conversations/{id}` | le fil complet — messages, artefacts et `pending` : de quoi reprendre où on en était |
+| `POST /conversations/{id}/duplicate` | copie sous un nouvel id |
+| `DELETE /conversations/{id}` | supprime le fil **et** sa mémoire |
+
+Le titre est tiré du premier message. Une conversation est un **dossier unique**
+(`workspace_dir/<id>/`) : `transcript.json` y voisine le manifeste et les CSV des
+tableaux intermédiaires (§4.2). D'où deux propriétés : dupliquer est une copie de
+dossier, donc la copie hérite de la mémoire de l'originale (« prédis ces lignes »
+fonctionne encore) et évolue ensuite indépendamment ; supprimer efface aussi les
+CSV, sans laisser de données orphelines.
 
 ### 4.2 `orchestrator/` — plan et graphe
 
@@ -283,8 +299,12 @@ tests/
 - **Mémoire conversationnelle limitée au slot-filling** : le multi-tours couvre
   la complétion de features d'une prédiction (fusion, correction, digression) ;
   il ne couvre pas encore les références anaphoriques générales (« et pour les
-  hommes ? » après une requête SQL). Magasin de conversations en mémoire process
-  (redémarrage = oubli) — suffisant en V1, à externaliser si multi-instances.
+  hommes ? » après une requête SQL).
+- **Conversations stockées sur le disque local** (un dossier par fil) : simple et
+  sans dépendance, mais lié à une instance — à externaliser si multi-instances.
+  Ni purge ni quota : les fils s'accumulent jusqu'à suppression explicite, et la
+  liste relit chaque `transcript.json` à l'affichage (suffisant pour les 10-20
+  utilisateurs de la V1, à indexer au-delà).
 - **Lot borné par `retrieval_max_rows`** : une prédiction en lot porte sur au plus
   `DAA_RETRIEVAL_MAX_ROWS` lignes (200 par défaut) ; au-delà, le résultat est
   tronqué et la réponse le signale.

@@ -88,10 +88,16 @@ La source `iris` ne demande aucun service (fichier local lu via DuckDB).
 | `POST` | `/chat` | Question en langage naturel → réponse + artefacts + trace (contrat `ChatAnswer`) |
 | `GET` | `/health` | Sonde de vie |
 | `GET` | `/` | Page de chat inline (rendu des PNG base64 et des tables JSON, zéro asset externe) |
+| `GET` | `/conversations` | Liste des conversations, de la plus récente à la plus ancienne |
+| `GET` | `/conversations/{id}` | Le fil complet (messages + artefacts) pour le reprendre |
+| `POST` | `/conversations/{id}/duplicate` | Duplique une conversation |
+| `DELETE` | `/conversations/{id}` | Supprime une conversation et sa mémoire |
 
 ## Mémoire de conversation
 
 Chaque conversation (`conversation_id`) dispose d'un espace de travail qui **persiste les tableaux intermédiaires en CSV** (`DAA_WORKSPACE_DIR`). Aux tours suivants, ces objets sont réexposés : interrogeables comme des sources (« et pour les femmes ? »), réutilisables pour une prédiction (« prédis **ces** lignes ») et **montés dans la sandbox** pour que le code d'analyse généré les relise (`pd.read_csv('/data/resultat_1.csv')`).
+
+Le **fil lui-même est persisté** au même endroit (`transcript.json`) : la barre latérale de la page de chat liste les conversations précédentes, on en rouvre une pour reprendre où on en était (figures et tableaux compris), on la duplique ou on la supprime. Comme une conversation est un simple dossier, la duplication emporte la mémoire ci-dessus — la copie sait encore « prédire ces lignes » — et la suppression ne laisse aucun CSV orphelin.
 
 ## Observabilité
 
