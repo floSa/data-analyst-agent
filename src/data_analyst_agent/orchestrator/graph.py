@@ -29,7 +29,7 @@ from data_analyst_agent.agents.inference.predict import (
     run_inference,
 )
 from data_analyst_agent.agents.inference.registry import Registry
-from data_analyst_agent.agents.inference.schemas import SCHEMAS, get_schema
+from data_analyst_agent.agents.inference.schemas import SCHEMAS, describe_features, get_schema
 from data_analyst_agent.agents.retrieval.agent import RetrievalResult, run_retrieval
 from data_analyst_agent.agents.retrieval.catalog import (
     Catalog,
@@ -294,8 +294,11 @@ class Orchestrator:
         lines = []
         for dataset in self.registry.datasets:
             entry = self.registry.get(dataset)
-            fields = ", ".join(SCHEMAS[dataset].model_fields) if dataset in SCHEMAS else "?"
-            lines.append(f"- {dataset} ({entry.task}) : features attendues : {fields}")
+            if dataset in SCHEMAS:
+                lines.append(f"- {dataset} ({entry.task}) : features attendues :")
+                lines.append(describe_features(SCHEMAS[dataset]))
+            else:
+                lines.append(f"- {dataset} ({entry.task}) : features attendues : ?")
         return "\n".join(lines) or "(aucun modèle)"
 
     @staticmethod
@@ -680,11 +683,24 @@ class Orchestrator:
 
         Le tableau des lignes est déjà affiché comme artefact ; recopier chaque
         ligne dans le texte fait doublon. On ne fait donc confiance à la
-        synthèse (bavarde) du LLM que pour un résultat court (agrégat, 0-1
-        ligne). Dès qu'il y a plusieurs lignes, on renvoie une phrase brève et
-        déterministe qui renvoie au tableau.
+        synthèse (bavarde) du LLM que pour un agrégat d'une ligne. Dès qu'il y a
+        plusieurs lignes, on renvoie une phrase brève et déterministe qui
+        renvoie au tableau.
+
+        **Zéro ligne est déterministe aussi** : c'est le cas où le LLM n'a rien
+        à résumer et raconte le résultat qu'il attendait. Observé en vrai — un
+        ``WHERE label LIKE '%First%'`` sur des libellés français ne ramène rien,
+        et la synthèse affirmait « le résultat affiche les informations de
+        toutes les passagères de première classe ». Un tableau vide doit se dire
+        vide : c'est ce qui met l'utilisateur sur la piste du mauvais filtre.
         """
         result = retrieval.result
+        if result is not None and result.row_count == 0:
+            return (
+                "Aucune ligne ne correspond : la requête n'a rien retourné. "
+                "Vérifie les critères (valeurs ou libellés attendus).",
+                "aucun résultat (déterministe)",
+            )
         if result is not None and result.row_count > 1:
             n = result.row_count
             phrase = f"{n} lignes retournées — voir le tableau ci-dessous."

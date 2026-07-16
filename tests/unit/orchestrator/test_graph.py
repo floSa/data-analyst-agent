@@ -283,6 +283,37 @@ def test_query_multi_lignes_ne_recopie_pas_le_tableau(mini_csv: Path, registry: 
     assert "tableau" in answer.answer
 
 
+def test_query_sans_resultat_le_dit_au_lieu_de_raconter(mini_csv: Path, registry: Registry):
+    """Zéro ligne : réponse déterministe honnête, jamais la synthèse du LLM.
+
+    Cas observé en vrai : sur un `WHERE label LIKE '%First%'` (libellés en base
+    français), la requête ne ramenait rien et le LLM affirmait pourtant « le
+    résultat affiche les informations de toutes les passagères de première
+    classe ». Un tableau vide doit se dire vide.
+    """
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [
+                tool_call("run_sql", {"query": "SELECT * FROM mini WHERE sexe = 'inexistant'"}),
+                # le LLM raconte un résultat qu'il n'a pas : on ne doit PAS le relayer
+                text("Le résultat affiche toutes les passagères de première classe."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Et pour les femmes de 1re classe ?")
+
+    assert answer.error is None
+    assert "passagères" not in answer.answer  # la fabulation du LLM est écartée
+    assert "aucune ligne" in answer.answer.lower()
+    table = json.loads(answer.artifacts[0].data)
+    assert table["rows"] == []
+
+
 # --- mémoire de conversation (objets intermédiaires persistés) -------------------
 
 REPO = Path(__file__).parents[3]
