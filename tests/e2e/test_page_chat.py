@@ -217,7 +217,7 @@ def test_html_dans_la_reponse_est_echappe_pas_execute(page, tmp_path: Path):
     store.record_turn(
         c.id,
         question="et ça ?",
-        answer="Attention <img src=x onerror=\"window.__pwn=1\"> et <script>window.__pwn=2</script>",
+        answer='Attention <img src=x onerror="window.__pwn=1"> et <script>window.__pwn=2</script>',
     )
     app = create_app(orchestrator_factory=FakeOrchestrator, settings=settings)
     port = _port_libre()
