@@ -112,3 +112,43 @@ def test_to_ddl_et_prompt():
     assert "PRIMARY KEY" in prompt
     assert "FOREIGN KEY (class_id) REFERENCES classes(class_id)" in prompt
     assert schema.table_names() == ["passengers"]
+
+
+def test_ddl_expose_les_valeurs_des_colonnes_a_faible_cardinalite():
+    """Le modèle doit VOIR les littéraux : sinon il les devine dans sa langue
+    (« LIKE '%First%' » sur des libellés « 1re classe » → zéro ligne)."""
+    table = TableInfo(
+        name="classes",
+        columns=[
+            ColumnInfo(name="class_id", type="INTEGER", nullable=False),
+            ColumnInfo(name="label", type="TEXT", values=["1re classe", "2e classe"]),
+        ],
+        primary_key=["class_id"],
+    )
+    ddl = SchemaInfo(tables=[table]).to_prompt()
+
+    assert "-- valeurs : '1re classe', '2e classe'" in ddl
+    assert "class_id INTEGER NOT NULL PRIMARY KEY," in ddl  # virgule conservée
+
+
+def test_ddl_sans_valeurs_reste_inchange():
+    """Une colonne à forte cardinalité (un nom) n'encombre pas le prompt."""
+    table = TableInfo(name="t", columns=[ColumnInfo(name="name", type="TEXT")])
+    ddl = SchemaInfo(tables=[table]).to_prompt()
+
+    assert "-- valeurs" not in ddl
+    assert ddl == "TABLE t (\n  name TEXT\n)"
+
+
+def test_ddl_derniere_colonne_sans_virgule_finale():
+    """Régression : le commentaire de valeurs ne doit pas laisser une virgule pendante."""
+    table = TableInfo(
+        name="t",
+        columns=[
+            ColumnInfo(name="a", type="TEXT"),
+            ColumnInfo(name="b", type="TEXT", values=["x", "y"]),
+        ],
+    )
+    ddl = SchemaInfo(tables=[table]).to_prompt()
+
+    assert ddl == "TABLE t (\n  a TEXT,\n  b TEXT  -- valeurs : 'x', 'y'\n)"

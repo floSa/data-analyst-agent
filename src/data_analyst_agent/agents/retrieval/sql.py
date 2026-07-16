@@ -14,6 +14,7 @@ import re
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
+from sqlalchemy import String as SQLString
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -36,6 +37,12 @@ class ColumnInfo(BaseModel):
     name: str
     type: str
     nullable: bool = True
+    # Valeurs possibles, pour les colonnes texte à faible cardinalité seulement.
+    # Un modèle ne peut pas filtrer sur des valeurs qu'il n'a jamais vues : sans
+    # cette liste il devine, et il devine dans SA langue — observé en vrai, un
+    # « WHERE label LIKE '%First%' » sur des libellés « 1re classe », qui ne
+    # ramène rien. Les montrer coûte une requête DISTINCT et supprime le doute.
+    values: list[str] | None = None
 
 
 class TableInfo(BaseModel):
@@ -45,17 +52,30 @@ class TableInfo(BaseModel):
     foreign_keys: list[ForeignKeyInfo] = Field(default_factory=list)
 
     def to_ddl(self) -> str:
-        """Description compacte, façon DDL, pour le prompt du LLM."""
-        lines = [f"TABLE {self.name} ("]
+        """Description compacte, façon DDL, pour le prompt du LLM.
+
+        Les colonnes à faible cardinalité exposent leurs valeurs en commentaire :
+        c'est ce qui évite au modèle d'inventer un littéral plausible mais absent.
+        """
+        declarations = []
+        commentaires = []
         for col in self.columns:
             null = "" if col.nullable else " NOT NULL"
             pk = " PRIMARY KEY" if [col.name] == self.primary_key else ""
-            lines.append(f"  {col.name} {col.type}{null}{pk},")
+            declarations.append(f"  {col.name} {col.type}{null}{pk}")
+            commentaires.append(
+                f"  -- valeurs : {', '.join(repr(v) for v in col.values)}" if col.values else ""
+            )
         for fk in self.foreign_keys:
-            lines.append(f"  FOREIGN KEY ({fk.column}) REFERENCES {fk.ref_table}({fk.ref_column}),")
-        lines[-1] = lines[-1].rstrip(",")
-        lines.append(")")
-        return "\n".join(lines)
+            declarations.append(
+                f"  FOREIGN KEY ({fk.column}) REFERENCES {fk.ref_table}({fk.ref_column})"
+            )
+            commentaires.append("")
+        corps = [
+            decl + ("," if i < len(declarations) - 1 else "") + commentaire
+            for i, (decl, commentaire) in enumerate(zip(declarations, commentaires, strict=True))
+        ]
+        return "\n".join([f"TABLE {self.name} (", *corps, ")"])
 
 
 class SchemaInfo(BaseModel):
@@ -159,9 +179,36 @@ class PostgresAdapter:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
 
+    # Au-delà, la colonne est un identifiant ou du texte libre (un nom de
+    # passager…) : la lister n'aide pas le modèle et alourdit le prompt.
+    MAX_DISTINCT_VALUES = 15
+
     @classmethod
     def from_dsn(cls, dsn: str) -> PostgresAdapter:
         return cls(create_engine(dsn))
+
+    def _distinct_values(self, table: str, column: dict) -> list[str] | None:
+        """Valeurs d'une colonne texte à faible cardinalité (sinon ``None``).
+
+        Sert à montrer au modèle les littéraux réellement présents ('1re classe',
+        'S'…) au lieu de le laisser les deviner.
+        """
+        if not isinstance(column["type"], SQLString):
+            return None
+        requete = text(
+            f'SELECT DISTINCT "{column["name"]}" FROM "{table}" '
+            f'WHERE "{column["name"]}" IS NOT NULL LIMIT :limite'
+        )
+        try:
+            with self.engine.connect() as connection:
+                lignes = connection.execute(
+                    requete, {"limite": self.MAX_DISTINCT_VALUES + 1}
+                ).fetchall()
+        except SQLAlchemyError:
+            return None  # introspection best-effort : jamais bloquante
+        if len(lignes) > self.MAX_DISTINCT_VALUES:
+            return None
+        return sorted(str(ligne[0]) for ligne in lignes)
 
     def schema(self) -> SchemaInfo:
         inspector = inspect(self.engine)
@@ -172,6 +219,7 @@ class PostgresAdapter:
                     name=col["name"],
                     type=str(col["type"]),
                     nullable=bool(col.get("nullable", True)),
+                    values=self._distinct_values(name, col),
                 )
                 for col in inspector.get_columns(name)
             ]

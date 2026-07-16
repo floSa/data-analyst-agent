@@ -64,12 +64,40 @@ class DuckDBAdapter:
             return adapter
         raise ValueError(f"format non géré : {path.suffix} (attendu .csv, .xlsx, .xlsm)")
 
+    # Cf. PostgresAdapter : au-delà, la colonne est du texte libre.
+    MAX_DISTINCT_VALUES = 15
+
+    def _distinct_values(self, table: str, column: str, type_sql: str) -> list[str] | None:
+        """Valeurs d'une colonne texte à faible cardinalité (sinon ``None``).
+
+        Montre au modèle les littéraux réellement présents ('setosa'…) plutôt que
+        de le laisser les deviner.
+        """
+        if "VARCHAR" not in type_sql.upper():
+            return None
+        try:
+            lignes = self.connection.execute(
+                f'SELECT DISTINCT "{column}" FROM {table} WHERE "{column}" IS NOT NULL LIMIT ?',
+                [self.MAX_DISTINCT_VALUES + 1],
+            ).fetchall()
+        except duckdb.Error:
+            return None  # introspection best-effort : jamais bloquante
+        if len(lignes) > self.MAX_DISTINCT_VALUES:
+            return None
+        return sorted(str(ligne[0]) for ligne in lignes)
+
     def schema(self) -> SchemaInfo:
         tables = []
         for name in self._table_names:
             described = self.connection.execute(f"DESCRIBE {name}").fetchall()
             columns = [
-                ColumnInfo(name=row[0], type=row[1], nullable=(row[2] != "NO")) for row in described
+                ColumnInfo(
+                    name=row[0],
+                    type=row[1],
+                    nullable=(row[2] != "NO"),
+                    values=self._distinct_values(name, row[0], row[1]),
+                )
+                for row in described
             ]
             tables.append(TableInfo(name=name, columns=columns))
         return SchemaInfo(dialect=self.dialect, tables=tables)

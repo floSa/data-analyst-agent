@@ -93,3 +93,26 @@ def test_format_inconnu(tmp_path: Path):
     fichier.write_bytes(b"PAR1")
     with pytest.raises(ValueError, match="format non géré"):
         DuckDBAdapter.from_file(fichier)
+
+
+def test_schema_expose_les_valeurs_dune_colonne_texte(csv_ventes: Path):
+    """« region » a 2 valeurs : les montrer évite au modèle d'inventer un littéral."""
+    schema = DuckDBAdapter.from_file(csv_ventes).schema()
+    colonnes = {c.name: c for c in schema.tables[0].columns}
+
+    assert colonnes["region"].values == ["nord", "sud"]
+    assert colonnes["montant"].values is None  # numérique : pas de liste de valeurs
+    assert "-- valeurs : 'nord', 'sud'" in schema.to_prompt()
+
+
+def test_schema_ignore_une_colonne_texte_a_forte_cardinalite(tmp_path: Path):
+    """Au-delà du seuil, c'est du texte libre : inutile et coûteux dans le prompt."""
+    fichier = tmp_path / "gros.csv"
+    lignes = "\n".join(f"nom{i},{i}" for i in range(DuckDBAdapter.MAX_DISTINCT_VALUES + 5))
+    fichier.write_text(f"nom,valeur\n{lignes}\n", encoding="utf-8")
+
+    schema = DuckDBAdapter.from_file(fichier).schema()
+    colonnes = {c.name: c for c in schema.tables[0].columns}
+
+    assert colonnes["nom"].values is None
+    assert "-- valeurs" not in schema.to_prompt()
