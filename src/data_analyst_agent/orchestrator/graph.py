@@ -541,7 +541,15 @@ class Orchestrator:
                 settings=self.settings,
                 sandbox=self._sandbox_override,
             )
-        images = [r for r in outcome.execution.results if r.mime == "image/png"]
+        # Une analyse en échec ne livre PAS ses figures : la tentative ratée laisse
+        # des axes vides, et un graphique blanc affiché sous « l'analyse n'a pas
+        # abouti » est pire que pas de graphique du tout — il donne à croire que
+        # la donnée est vide, alors que c'est le code qui a planté.
+        images = (
+            [r for r in outcome.execution.results if r.mime == "image/png"]
+            if outcome.succeeded
+            else []
+        )
         detail = (
             f"{outcome.attempts} essai(s), {len(images)} figure(s),"
             f" statut {outcome.execution.status}"

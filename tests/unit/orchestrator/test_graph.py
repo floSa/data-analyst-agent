@@ -618,6 +618,38 @@ def test_analyse_en_echec_ne_recrache_pas_le_traceback(mini_csv: Path, registry:
     assert "TypeError: unhashable type: 'list'" in analyse.detail
 
 
+def test_analyse_en_echec_ne_livre_pas_de_figure_fantome(mini_csv: Path, registry: Registry):
+    """Une tentative ratée laisse des axes vides : ne pas les afficher.
+
+    Vu en vrai : sous « l'analyse n'a pas abouti », un graphique BLANC s'affichait
+    quand même. Pire que rien — il donne à croire que la donnée est vide, alors
+    que c'est le code généré qui a planté.
+    """
+    settings = make_settings(analysis_max_attempts=1)
+    sandbox = ScriptedSandbox(
+        [
+            SandboxResult(
+                status="error",
+                error="TypeError: 'value' must be an instance of str or bytes, not a float",
+                results=[MimeOutput(mime="image/png", data="cGl4ZWxz")],  # figure vide
+            )
+        ]
+    )
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="mini"))])
+        .script(ANALYSIS, [text("```python\nplt.bar(df['a'], df['b'])\n```")])
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(
+        llm, catalog=catalog, registry=registry, settings=settings, sandbox=sandbox
+    )
+    answer = orchestrator.ask("fais-en un diagramme en barres")
+
+    assert answer.artifacts == []  # aucune figure fantôme
+    assert "n'a pas abouti" in answer.answer
+
+
 def test_code_genere_accede_aux_objets_intermediaires(tmp_path: Path, registry: Registry):
     """Le CSV mémorisé est monté dans la sandbox et annoncé au code d'analyse."""
     # pré-remplit la mémoire avec un objet intermédiaire

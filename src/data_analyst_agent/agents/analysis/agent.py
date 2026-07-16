@@ -36,6 +36,11 @@ Règles impératives :
 3. Pour une figure : matplotlib, puis plt.show().
 4. N'écris jamais sur le disque en dehors de /tmp ; ne tente aucun accès
    réseau ; n'installe rien.
+5. Les données RÉELLES comportent des valeurs manquantes (NaN). Écarte-les
+   (dropna) ou remplace-les explicitement (fillna) AVANT de tracer ou d'agréger
+   une variable catégorielle : un NaN au milieu de catégories texte fait
+   échouer matplotlib sur un « 'value' must be an instance of str or bytes,
+   not a float » que rien dans ton code ne laisse deviner.
 """
 
 CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
