@@ -34,6 +34,7 @@ dev = [
     "pre-commit>=4.6.0",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
+    "pytest-playwright>=0.8.0",
     "ruff>=0.15.20",
     "testcontainers[postgres]>=4.14.2",
 ]
@@ -65,11 +66,16 @@ omit = ["*/sandbox/image/*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests", "scripts"]
-addopts = "-m 'not live' --strict-markers --cov=data_analyst_agent --cov-report=term-missing --cov-fail-under=85"
+addopts = "-m 'not live and not ui' --strict-markers --cov=data_analyst_agent --cov-report=term-missing --cov-fail-under=85"
 markers = [
     "integration: tests d'intégration (Docker, testcontainers, sandbox réelle)",
     "e2e: scénarios golden de bout en bout",
     "live: nécessite le LLM local (Ollama), exclu par défaut et en CI",
+    # La fixture `playwright` est de portée session : sa boucle d'événements
+    # reste active toute la session et fait échouer chaque run_sync de
+    # pydantic-ai qui suit (« This event loop is already running »). D'où un
+    # processus pytest séparé : `uv run pytest -m ui`.
+    "ui: page de chat pilotée dans un navigateur (Playwright, processus séparé)",
 ]
 filterwarnings = [
     # libs tierces, rien à corriger chez nous :

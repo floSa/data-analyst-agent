@@ -46,6 +46,8 @@ Prérequis : [uv](https://docs.astral.sh/uv/) (Python 3.12 géré automatiquemen
 ```bash
 uv sync                                              # environnement + dépendances
 uv run pytest                                        # suite de tests (couverture >= 85 %)
+uv run playwright install chromium                   # une fois, pour les tests de la page
+uv run pytest -m ui --no-cov                         # page de chat dans un vrai navigateur
 uv run uvicorn data_analyst_agent.api.app:app        # API + chat sur http://localhost:8000
 ```
 

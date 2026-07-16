@@ -214,18 +214,22 @@ function rendreTable(bloc, data) {
   bloc.appendChild(table);
 }
 
-// même rendu pour un tour qui arrive et pour un tour relu d'une conversation
-// rouverte : figures et tableaux réapparaissent à l'identique.
-function rendreReponse(bloc, corps) {
+// Même rendu pour un tour qui arrive et pour un tour relu d'une conversation
+// rouverte. Les paramètres sont explicites À DESSEIN : les deux sources ne
+// portent pas le même nom de champ (`answer` pour /chat, `content` pour un
+// message relu de /conversations). Prendre l'objet entier faisait lire un
+// `corps.answer` inexistant à la relecture — toutes les réponses rouvertes
+// s'affichaient « (pas de réponse) », tableaux corrects à côté.
+function rendreReponse(bloc, texte, artefacts, erreur) {
   bloc.classList.remove("reflexion");
-  bloc.textContent = corps.answer || "(pas de réponse)";
-  if (corps.error) {
+  bloc.textContent = texte || "(pas de réponse)";
+  if (erreur) {
     const p = document.createElement("p");
     p.className = "erreur";
-    p.textContent = corps.error;
+    p.textContent = erreur;
     bloc.appendChild(p);
   }
-  for (const artefact of corps.artifacts || []) {
+  for (const artefact of artefacts || []) {
     if (artefact.mime === "image/png") {
       const img = document.createElement("img");
       img.src = "data:image/png;base64," + artefact.data;
@@ -296,7 +300,7 @@ async function ouvrir(id) {
   journal.textContent = "";
   for (const message of conversation.messages) {
     if (message.role === "user") bulle("utilisateur").textContent = message.content;
-    else rendreReponse(bulle("agent"), message);
+    else rendreReponse(bulle("agent"), message.content, message.artifacts, message.error);
   }
   await rafraichirFils();
   defiler();
@@ -332,7 +336,7 @@ formulaire.addEventListener("submit", async (event) => {
     const corps = await reponse.json();
     const nouveau = corps.conversation_id && corps.conversation_id !== conversationId;
     conversationId = corps.conversation_id || conversationId;
-    rendreReponse(attente, corps);
+    rendreReponse(attente, corps.answer, corps.artifacts, corps.error);
     // 1er message : le fil vient d'être créé et titré côté serveur.
     if (nouveau) rafraichirFils();
   } catch (erreur) {
