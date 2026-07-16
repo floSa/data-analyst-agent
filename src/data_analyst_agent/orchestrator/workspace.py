@@ -45,8 +45,13 @@ class ConversationContext(BaseModel):
     last_code: str | None = None  # code d'analyse produit (pour repartir dessus)
 
 
-def _safe(name: str) -> str:
-    """Nom de dossier sûr à partir d'un conversation_id arbitraire."""
+def safe_dir_name(name: str) -> str:
+    """Nom de dossier sûr à partir d'un conversation_id arbitraire.
+
+    Partagé avec :mod:`data_analyst_agent.orchestrator.conversations` : les deux
+    modules écrivent dans le MÊME dossier par conversation, il doit être calculé
+    de la même façon des deux côtés.
+    """
     return re.sub(r"[^0-9A-Za-z_-]+", "_", name).strip("_") or "conversation"
 
 
@@ -57,7 +62,7 @@ class ConversationWorkspace:
     CONTEXT = "context.json"
 
     def __init__(self, base_dir: Path, conversation_id: str) -> None:
-        self.dir = Path(base_dir) / _safe(conversation_id)
+        self.dir = Path(base_dir) / safe_dir_name(conversation_id)
         self.artifacts: list[WorkspaceArtifact] = self._load()
         self.context: ConversationContext = self._load_context()
 
