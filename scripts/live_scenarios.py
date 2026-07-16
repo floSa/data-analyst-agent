@@ -301,14 +301,20 @@ def _correspond_dans_la_reponse(produit: float, decimales: int, attendu: float) 
     """Le nombre ÉCRIT dans la réponse est-il un arrondi juste de l'attendu ?
 
     Tolérance : un demi-ulp à la précision du moins précis des deux — le LLM
-    rédige « environ 63 % » pour 62.96, ou « 5,84 » pour 5.8433. La réponse est
-    une phrase : le risque qu'un nombre sans rapport tombe dans la tolérance y
-    est négligeable.
+    rédige « environ 63 % » pour 62.96, ou « 5,84 » pour 5.8433.
 
-    Une tolérance RELATIVE serait l'erreur inverse : 0.5 % de 891 vaut ±4.5 et
-    accepterait « 887 », une erreur de comptage prise pour un arrondi.
+    Sauf si cet arrondi est si grossier qu'il ne discrimine plus rien : « 1 »
+    est formellement un arrondi de 0.9681, mais avec ±0.5 — la moitié de la
+    valeur — il ne prouve rien, et le « 1 » de « 1re classe » suffisait alors à
+    valider un taux jamais calculé. Au-delà de 5 % de la valeur attendue, on
+    exige donc la précision de la référence.
+
+    Une tolérance RELATIVE partout serait l'erreur inverse : 0.5 % de 891 vaut
+    ±4.5 et accepterait « 887 », une erreur de comptage prise pour un arrondi.
     """
     ulp = 0.5 * 10 ** (-min(decimales, _decimales_de(attendu)))
+    if ulp > 0.05 * abs(attendu):
+        ulp = 0.5 * 10 ** (-_decimales_de(attendu))
     return abs(produit - attendu) <= ulp + 1e-9
 
 

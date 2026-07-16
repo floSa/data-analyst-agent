@@ -120,3 +120,17 @@ def test_arrondi_du_llm_accepte_dans_la_phrase():
     """Dans la RÉPONSE rédigée, « environ 63 % » reste un rendu juste de 62.96."""
     assert check_data(Turn("q", expect_data=[62.96]), reponse("environ 63 %")) == []
     assert check_data(Turn("q", expect_data=[5.8433]), reponse("environ 5,84 unités")) == []
+
+
+def test_arrondi_trop_grossier_ne_prouve_rien():
+    """Le « 1 » de « 1re classe » ne doit pas valider un taux attendu de 0.9681 :
+    un arrondi à ±0.5 sur une valeur de 0.97 ne discrimine plus rien."""
+    answer = "Pour les femmes de 1re classe, précisez ce que vous voulez obtenir."
+    assert check_data(Turn("q", expect_data=[(96.81, 0.9681)]), reponse(answer))
+
+
+def test_fraction_juste_reste_acceptee():
+    """La garde anti-arrondi-grossier ne doit pas rejeter une vraie fraction."""
+    turn = Turn("q", expect_data=[(96.81, 0.9681)])
+    assert check_data(turn, reponse("taux : 0.9681")) == []
+    assert check_data(turn, reponse("taux : 96,81 %")) == []
