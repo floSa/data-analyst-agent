@@ -116,7 +116,11 @@ def create_app(
     return app
 
 
-CHAT_PAGE = """<!doctype html>
+# Chaîne BRUTE (r""") : le script contient des antislashs (regex, "\n"). Sans le
+# préfixe r, Python les interpréterait avant que le navigateur ne les voie — un
+# `split("\n")` deviendrait une chaîne coupée en deux et casserait tout le
+# script, sans le moindre bruit à l'exécution côté serveur.
+CHAT_PAGE = r"""<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
@@ -152,6 +156,15 @@ CHAT_PAGE = """<!doctype html>
              max-width: 80%; }
   .utilisateur { background: #2563eb22; align-self: flex-end; }
   .agent { background: #6b728022; align-self: flex-start; }
+  .agent { white-space: normal; }
+  .agent p { margin: .35rem 0; }
+  .agent p:first-child { margin-top: 0; }
+  .agent p:last-child { margin-bottom: 0; }
+  .agent ul { margin: .35rem 0; padding-left: 1.2rem; }
+  .agent li { margin: .1rem 0; }
+  .agent h4 { margin: .6rem 0 .25rem; font-size: 1rem; }
+  .agent code { background: #6b728033; padding: .05rem .25rem;
+                border-radius: .25rem; font-size: .9em; }
   .agent img { max-width: 100%; border-radius: .4rem; margin-top: .5rem; }
   .agent table { border-collapse: collapse; margin-top: .5rem; font-size: .85rem; }
   .agent td, .agent th { border: 1px solid #6b7280; padding: .2rem .5rem; }
@@ -222,7 +235,7 @@ function rendreTable(bloc, data) {
 // s'affichaient « (pas de réponse) », tableaux corrects à côté.
 function rendreReponse(bloc, texte, artefacts, erreur) {
   bloc.classList.remove("reflexion");
-  bloc.textContent = texte || "(pas de réponse)";
+  bloc.innerHTML = enHtml(texte || "(pas de réponse)");
   if (erreur) {
     const p = document.createElement("p");
     p.className = "erreur";
@@ -238,6 +251,45 @@ function rendreReponse(bloc, texte, artefacts, erreur) {
       try { rendreTable(bloc, JSON.parse(artefact.data)); } catch (e) {}
     }
   }
+}
+
+// --- markdown minimal -------------------------------------------------------
+// Le LLM répond en markdown (**gras**, puces, `code`) et on n'a droit à aucune
+// bibliothèque externe (on-prem, réseau coupé, zéro CDN). D'où ce rendu à la
+// main, volontairement réduit à ce que le modèle produit vraiment.
+//
+// SÉCURITÉ : on échappe TOUT d'abord, puis on ne réintroduit que nos propres
+// balises. Le texte vient d'un LLM, lui-même nourri de données : une réponse
+// contenant "<img onerror=...>" doit s'afficher, jamais s'exécuter.
+
+function echapper(texte) {
+  return texte.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function enligne(texte) {
+  return texte
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+}
+
+function enHtml(texte) {
+  const sortie = [];
+  let liste = false;
+  for (const ligne of echapper(texte).split("\n")) {
+    const puce = ligne.match(/^\s*[*-]\s+(.*)$/);
+    if (puce) {
+      if (!liste) { sortie.push("<ul>"); liste = true; }
+      sortie.push("<li>" + enligne(puce[1]) + "</li>");
+      continue;
+    }
+    if (liste) { sortie.push("</ul>"); liste = false; }
+    const titre = ligne.match(/^#{1,6}\s+(.*)$/);
+    if (titre) { sortie.push("<h4>" + enligne(titre[1]) + "</h4>"); continue; }
+    if (ligne.trim()) sortie.push("<p>" + enligne(ligne) + "</p>");
+  }
+  if (liste) sortie.push("</ul>");
+  return sortie.join("");
 }
 
 function defiler() { journal.scrollTop = journal.scrollHeight; }

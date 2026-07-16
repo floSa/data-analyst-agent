@@ -155,3 +155,87 @@ def test_dupliquer_une_conversation_lajoute_et_louvre(page, app_url: str):
     assert "(copie)" in page.inner_text("#fils")
     # la copie est ouverte, et son texte s'affiche (pas « (pas de réponse) »)
     assert "Il y a un total de 891 passagers." in page.inner_text("#journal")
+
+
+# --- rendu markdown des réponses -------------------------------------------------
+
+
+@pytest.fixture
+def url_markdown(tmp_path: Path):
+    """Un fil dont la réponse est du markdown, comme le LLM en produit vraiment."""
+    settings = Settings(_env_file=None, workspace_dir=tmp_path / "md")
+    store = ConversationStore(settings.workspace_dir)
+    c = store.create()
+    store.record_turn(
+        c.id,
+        question="de quels attributs as-tu besoin ?",
+        answer=(
+            "Voici les attributs disponibles :\n"
+            "\n"
+            "**Table `passengers` :**\n"
+            "*   **Démographie :** `sex` (texte), `age` (nombre décimal).\n"
+            "*   **Finances :** `fare` (nombre décimal).\n"
+            "\n"
+            "Tous les attributs sont présents."
+        ),
+    )
+    app = create_app(orchestrator_factory=FakeOrchestrator, settings=settings)
+    port = _port_libre()
+    serveur = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    fil = threading.Thread(target=serveur.run, daemon=True)
+    fil.start()
+    for _ in range(100):
+        if serveur.started:
+            break
+        time.sleep(0.05)
+    yield f"http://127.0.0.1:{port}"
+    serveur.should_exit = True
+    fil.join(timeout=5)
+
+
+def test_markdown_rendu_pas_affiche_en_brut(page, url_markdown: str):
+    """Les ** et les puces doivent devenir du gras et une liste, pas du texte."""
+    page.goto(url_markdown)
+    page.click(".fil-titre")
+    page.wait_for_selector(".message.agent")
+
+    journal = page.inner_text("#journal")
+    assert "**" not in journal  # plus de balisage brut à l'écran
+    assert "*   " not in journal
+    assert page.locator(".agent strong").count() >= 2  # le gras est rendu
+    assert page.locator(".agent li").count() == 2  # les puces sont une liste
+    assert page.locator(".agent code").count() >= 3  # `sex`, `age`, `fare`
+    assert "Démographie" in journal  # le contenu, lui, est intact
+
+
+def test_html_dans_la_reponse_est_echappe_pas_execute(page, tmp_path: Path):
+    """Le texte vient d'un LLM nourri de données : du HTML doit s'AFFICHER, jamais
+    s'exécuter. Le rendu markdown ne doit pas ouvrir une porte d'injection."""
+    settings = Settings(_env_file=None, workspace_dir=tmp_path / "xss")
+    store = ConversationStore(settings.workspace_dir)
+    c = store.create()
+    store.record_turn(
+        c.id,
+        question="et ça ?",
+        answer="Attention <img src=x onerror=\"window.__pwn=1\"> et <script>window.__pwn=2</script>",
+    )
+    app = create_app(orchestrator_factory=FakeOrchestrator, settings=settings)
+    port = _port_libre()
+    serveur = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    fil = threading.Thread(target=serveur.run, daemon=True)
+    fil.start()
+    for _ in range(100):
+        if serveur.started:
+            break
+        time.sleep(0.05)
+    try:
+        page.goto(f"http://127.0.0.1:{port}")
+        page.click(".fil-titre")
+        page.wait_for_selector(".message.agent")
+
+        assert page.evaluate("window.__pwn === undefined")  # rien n'a été exécuté
+        assert page.locator("#journal img").count() == 0  # la balise n'est pas devenue une image
+        assert "<img src=x" in page.inner_text("#journal")  # elle est affichée telle quelle
+    finally:
+        serveur.should_exit = True
+        fil.join(timeout=5)
