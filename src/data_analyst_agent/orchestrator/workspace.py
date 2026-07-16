@@ -117,6 +117,8 @@ class ConversationWorkspace:
             "quels pour une prédiction) :\n"
             + "\n".join(lines)
             + f"\nLe plus récent est '{latest}'. Une référence comme « ces lignes », "
-            "« le tableau précédent » ou « ce résultat » désigne en général ce dernier : "
-            "choisis-le comme `source`."
+            "« ces fleurs », « le tableau précédent » ou « ce résultat » désigne en "
+            "général ce dernier : choisis-le comme `source`. Pour PRÉDIRE sur un tel "
+            "tableau (« prédis ces lignes »), utilise fetch_then_predict avec ce tableau "
+            "comme `source`."
         )

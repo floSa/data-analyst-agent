@@ -387,6 +387,51 @@ def test_reutilisation_du_tableau_precedent_pour_prediction(tmp_path: Path):
     assert "resultat_1" in llm2.systems_for(PLANNER)[0]
 
 
+def test_predict_sans_features_chaine_sur_le_tableau_memorise(tmp_path: Path):
+    """« prédis ces fleurs » routé en predict sans features -> chaîné sur le dernier tableau."""
+    registry = _iris_registry()
+    settings = make_settings(workspace_dir=tmp_path)
+    # un tableau mémorisé fournissant exactement les features iris
+    ConversationWorkspace(tmp_path, "cp").save_table(
+        ["sepal_length", "sepal_width", "petal_length", "petal_width", "species"],
+        [[7.2, 3.6, 6.1, 2.5, "virginica"], [7.9, 3.8, 6.4, 2.0, "virginica"]],
+        "grandes fleurs",
+    )
+    llm = (
+        ScriptedLLM()
+        # le LLM se trompe : predict sans features (au lieu de fetch_then_predict)
+        .script(PLANNER, [plan_response(Plan(capability="predict", dataset="iris", features={}))])
+        .script(
+            RETRIEVAL,
+            [tool_call("run_sql", {"query": "SELECT * FROM resultat_1"}), text("récupéré.")],
+        )
+    )
+    orchestrator = orchestrator_with(
+        llm, catalog=Catalog(sources=[]), registry=registry, settings=settings
+    )
+    answer = orchestrator.ask("prédis l'espèce de ces fleurs", conversation_id="cp")
+    assert answer.error is None
+    # le pont a re-routé vers une prédiction sur le tableau mémorisé
+    assert answer.plan.capability == "fetch_then_predict"
+    assert answer.plan.source == "resultat_1"
+    assert "Prédiction (iris)" in answer.answer
+    assert [s.node for s in answer.trace] == ["plan", "fetch_predict", "synthesize"]
+
+
+def test_predict_sans_features_sans_tableau_utilisable_redemande(registry: Registry):
+    """Pas de tableau mémorisé compatible : on redemande les features (pas de chaînage forcé)."""
+    llm = ScriptedLLM().script(
+        PLANNER, [plan_response(Plan(capability="predict", dataset="titanic", features={}))]
+    )
+    orchestrator = orchestrator_with(
+        llm, registry=registry
+    )  # pas de conversation_id -> pas de mémoire
+    answer = orchestrator.ask("prédis la survie")
+    assert answer.error is None
+    assert answer.plan.capability == "predict"  # inchangé
+    assert answer.answer.strip().endswith("?")  # relance sur les features
+
+
 def test_code_genere_accede_aux_objets_intermediaires(tmp_path: Path, registry: Registry):
     """Le CSV mémorisé est monté dans la sandbox et annoncé au code d'analyse."""
     # pré-remplit la mémoire avec un objet intermédiaire

@@ -395,6 +395,24 @@ class Orchestrator:
             elif len(datasets) > 1:
                 names = ", ".join(datasets)
                 return self._clarify(plan, f"Sur quel modèle veux-tu prédire : {names} ?", start)
+        # « prédis ces lignes » : le LLM route parfois en 'predict' sans features
+        # au lieu de fetch_then_predict. Si le dernier tableau mémorisé fournit
+        # exactement les features du modèle, on chaîne dessus plutôt que de
+        # redemander des valeurs déjà affichées.
+        workspace = state.get("workspace")
+        if (
+            plan.capability == "predict"
+            and not plan.features
+            and plan.dataset in SCHEMAS
+            and workspace is not None
+            and workspace.artifacts
+        ):
+            latest = workspace.artifacts[-1]
+            needed = set(get_schema(plan.dataset).model_fields)
+            if needed <= {c.lower() for c in latest.columns}:
+                plan.capability = "fetch_then_predict"
+                plan.source = latest.name
+                plan.data_question = plan.data_question or f"toutes les lignes de {latest.name}"
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         return {
             "plan": plan,
