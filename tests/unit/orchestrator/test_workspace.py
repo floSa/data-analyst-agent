@@ -61,3 +61,20 @@ def test_describe_et_sandbox_files(tmp_path: Path):
 
 def test_describe_vide_si_aucun_objet(tmp_path: Path):
     assert ConversationWorkspace(tmp_path, "vide").describe() is None
+
+
+def test_contexte_conversationnel_persiste(tmp_path: Path):
+    """La dernière question/action (+ code de figure) survit d'un tour à l'autre."""
+    ws = ConversationWorkspace(tmp_path, "c")
+    assert ws.describe_context() is None  # rien au premier tour
+    ws.record_turn("fais un graphique iris", "analyze", "iris", code="import matplotlib")
+    # relu par l'instance du tour suivant
+    reloaded = ConversationWorkspace(tmp_path, "c")
+    assert reloaded.context.last_capability == "analyze"
+    assert reloaded.context.last_source == "iris"
+    ctx = reloaded.describe_context()
+    assert "graphique iris" in ctx
+    assert "AJUSTEMENT" in ctx
+    # le code n'est repris que pour la même source
+    assert reloaded.last_code_for("iris") == "import matplotlib"
+    assert reloaded.last_code_for("titanic") is None

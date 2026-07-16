@@ -159,6 +159,17 @@ class Orchestrator:
                 "trace": [],
             }
         )
+        # mémorise ce tour (question + action + code de figure) pour comprendre un
+        # éventuel ajustement au tour suivant (« mets des couleurs plus vives »)
+        plan = state.get("plan")
+        if workspace is not None and plan is not None and not state.get("clarification"):
+            analysis = state.get("analysis")
+            workspace.record_turn(
+                question,
+                plan.capability,
+                plan.source,
+                code=analysis.code if analysis is not None else None,
+            )
         return ChatAnswer(
             answer=state.get("answer", ""),
             artifacts=state.get("artifacts", []),
@@ -319,6 +330,17 @@ class Orchestrator:
             "trace": [self._step("plan", "clarification demandée", start)],
         }
 
+    @staticmethod
+    def _fallback_plan(workspace: ConversationWorkspace | None) -> Plan | None:
+        """Repli quand le planificateur échoue : reprendre la dernière action interrogeant
+        une source (ajustement d'un tour précédent, ex. « mets des couleurs plus vives »)."""
+        if workspace is None:
+            return None
+        ctx = workspace.context
+        if ctx.last_capability in Orchestrator._SOURCE_CAPABILITIES and ctx.last_source:
+            return Plan(capability=ctx.last_capability, source=ctx.last_source)
+        return None
+
     def _plan_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         pending = state.get("pending_in")
@@ -333,20 +355,24 @@ class Orchestrator:
             sources_description,
             self._datasets_description(),
             pending_context=self._pending_context(pending),
+            history_context=(workspace.describe_context() if workspace is not None else None),
         )
         try:
             plan = planner.run_sync(state["question"], model=self.model).output
         except UnexpectedModelBehavior:
-            # demande trop floue : le LLM n'a pas su produire un Plan structuré
-            # (retries épuisés). On répond proprement au lieu de laisser fuir
-            # l'exception — cohérent avec « jamais de crash » (CADRAGE §4).
-            return self._clarify(
-                Plan(capability="query"),
-                "Je n'ai pas bien compris ta demande. Peux-tu préciser ce que tu veux "
-                "faire — interroger une source (titanic, iris…), une analyse ou une "
-                "visualisation, ou une prédiction — et sur quelles données ?",
-                start,
-            )
+            # le LLM n'a pas su produire un Plan structuré (retries épuisés). Si on
+            # a un tour précédent, on suppose un AJUSTEMENT et on reprend sa
+            # capacité/source ; sinon on demande de préciser (jamais de crash).
+            fallback = self._fallback_plan(workspace)
+            if fallback is None:
+                return self._clarify(
+                    Plan(capability="query"),
+                    "Je n'ai pas bien compris ta demande. Peux-tu préciser ce que tu veux "
+                    "faire — interroger une source (titanic, iris…), une analyse ou une "
+                    "visualisation, ou une prédiction — et sur quelles données ?",
+                    start,
+                )
+            plan = fallback
         if state.get("source_name"):
             plan.source = state["source_name"]
         if plan.capability == "fetch_then_predict" and not self._effective_catalog(state).sources:
@@ -485,10 +511,14 @@ class Orchestrator:
             # objets intermédiaires de la conversation : montés aussi pour que le
             # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
             data_context = self._mount_workspace(state, data_files, data_context)
+            # ajustement d'un graphique précédent : on repart de son code
+            workspace = state.get("workspace")
+            previous_code = workspace.last_code_for(plan.source) if workspace is not None else None
             outcome = run_analysis(
                 state["question"],
                 data_files=data_files,
                 data_context=data_context,
+                previous_code=previous_code,
                 model=self.model,
                 settings=self.settings,
                 sandbox=self._sandbox_override,

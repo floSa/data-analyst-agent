@@ -432,6 +432,70 @@ def test_predict_sans_features_sans_tableau_utilisable_redemande(registry: Regis
     assert answer.answer.strip().endswith("?")  # relance sur les features
 
 
+def test_contexte_du_tour_precedent_donne_au_planificateur(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Le planificateur reçoit la question/action précédente (résolution des ajustements)."""
+    settings = make_settings(workspace_dir=tmp_path)
+    ConversationWorkspace(tmp_path, "chist").record_turn("fais un graphique", "analyze", "mini")
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [tool_call("run_sql", {"query": "SELECT count(*) AS n FROM mini"}), text("4.")],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry, settings=settings)
+    orchestrator.ask("et le total ?", conversation_id="chist")
+    system = llm.systems_for(PLANNER)[0]
+    assert "CONTEXTE CONVERSATIONNEL" in system
+    assert "fais un graphique" in system
+
+
+def test_ajustement_flou_reprend_la_derniere_action(
+    tmp_path: Path, mini_csv: Path, registry: Registry, monkeypatch
+):
+    """Planificateur en échec + tour précédent = analyse : on reprend analyze sur la même source."""
+    settings = make_settings(workspace_dir=tmp_path)
+    ConversationWorkspace(tmp_path, "cadj").record_turn(
+        "fais un graphique", "analyze", "mini", code="print('ancien code')"
+    )
+
+    class _PlannerQuiEchoue:
+        def run_sync(self, *args, **kwargs):
+            raise UnexpectedModelBehavior("Exceeded maximum output retries (1)")
+
+    monkeypatch.setattr(
+        "data_analyst_agent.orchestrator.graph.build_planner",
+        lambda *args, **kwargs: _PlannerQuiEchoue(),
+    )
+    sandbox = ScriptedSandbox(
+        [
+            SandboxResult(
+                status="ok", stdout="ok\n", results=[MimeOutput(mime="image/png", data="cGl4ZWxz")]
+            )
+        ]
+    )
+    llm = (
+        ScriptedLLM()
+        .script(ANALYSIS, [text("```python\nprint('nouveau graphique coloré')\n```")])
+        .script(SYNTHESIS, [text("Voici le graphique avec des couleurs plus vives.")])
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(
+        llm, catalog=catalog, registry=registry, settings=settings, sandbox=sandbox
+    )
+    answer = orchestrator.ask("mets des couleurs plus vives", conversation_id="cadj")
+    assert answer.error is None
+    assert answer.plan.capability == "analyze"  # repris du tour précédent
+    assert answer.plan.source == "mini"
+    assert [a.mime for a in answer.artifacts] == ["image/png"]
+    # l'agent d'analyse a bien reçu le code précédent pour l'ajuster
+    assert "ancien code" in llm.prompts_for(ANALYSIS)[0]
+
+
 def test_code_genere_accede_aux_objets_intermediaires(tmp_path: Path, registry: Registry):
     """Le CSV mémorisé est monté dans la sandbox et annoncé au code d'analyse."""
     # pré-remplit la mémoire avec un objet intermédiaire

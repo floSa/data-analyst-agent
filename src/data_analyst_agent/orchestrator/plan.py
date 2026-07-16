@@ -72,15 +72,19 @@ def build_planner(
     sources_description: str,
     datasets_description: str,
     pending_context: str | None = None,
+    history_context: str | None = None,
 ) -> Agent[None, Plan]:
     """Agent planificateur avec sortie structurée Plan.
 
     ``pending_context`` (multi-tours) : décrit une prédiction en attente de
     features — le message courant est probablement un complément d'information.
+    ``history_context`` : décrit le tour précédent (question + action) pour
+    qu'un ajustement (« mets des couleurs plus vives ») soit rattaché à lui.
     """
     system_prompt = PLANNER_SYSTEM_PROMPT.format(
         sources=sources_description, datasets=datasets_description
     )
-    if pending_context:
-        system_prompt = f"{system_prompt}\n{pending_context}"
+    for extra in (history_context, pending_context):
+        if extra:
+            system_prompt = f"{system_prompt}\n{extra}"
     return Agent(output_type=Plan, system_prompt=system_prompt)

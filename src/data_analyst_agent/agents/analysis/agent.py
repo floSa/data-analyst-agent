@@ -69,13 +69,22 @@ def build_analysis_agent(model: Model) -> Agent:
     return Agent(model, system_prompt=SYSTEM_PROMPT)
 
 
-def _initial_prompt(question: str, data_context: str, mounted: list[str]) -> str:
+def _initial_prompt(
+    question: str, data_context: str, mounted: list[str], previous_code: str | None = None
+) -> str:
     parts = []
     if mounted:
         files = "\n".join(f"- /data/{name}" for name in mounted)
         parts.append(f"Fichiers de données disponibles :\n{files}")
     if data_context:
         parts.append(f"Contexte sur les données :\n{data_context}")
+    if previous_code:
+        parts.append(
+            "Un graphique/analyse a déjà été produit au tour précédent par ce code. Si "
+            "la question est un AJUSTEMENT (couleurs, type de graphique, titre…), PARS de "
+            "ce code et modifie-le ; sinon écris un nouveau code.\n"
+            f"```python\n{previous_code}\n```"
+        )
     parts.append(f"Question : {question}")
     return "\n\n".join(parts)
 
@@ -85,6 +94,7 @@ def run_analysis(
     *,
     data_files: dict[Path, str] | None = None,
     data_context: str = "",
+    previous_code: str | None = None,
     model: Model | None = None,
     settings: Settings | None = None,
     sandbox: SandboxLike | None = None,
@@ -104,7 +114,9 @@ def run_analysis(
         own_session.start()
         sandbox = own_session
     try:
-        prompt = _initial_prompt(question, data_context, list((data_files or {}).values()))
+        prompt = _initial_prompt(
+            question, data_context, list((data_files or {}).values()), previous_code
+        )
         message_history = None
         code = ""
         execution = SandboxResult(status="error", error="aucun essai effectué")

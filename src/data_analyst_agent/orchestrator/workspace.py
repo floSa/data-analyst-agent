@@ -36,6 +36,15 @@ class WorkspaceArtifact(BaseModel):
     question: str  # la question qui l'a produit (aide le planificateur)
 
 
+class ConversationContext(BaseModel):
+    """Trace du dernier tour, pour comprendre un ajustement (« plus de couleurs »)."""
+
+    last_question: str = ""
+    last_capability: str | None = None
+    last_source: str | None = None
+    last_code: str | None = None  # code d'analyse produit (pour repartir dessus)
+
+
 def _safe(name: str) -> str:
     """Nom de dossier sûr à partir d'un conversation_id arbitraire."""
     return re.sub(r"[^0-9A-Za-z_-]+", "_", name).strip("_") or "conversation"
@@ -45,15 +54,55 @@ class ConversationWorkspace:
     """Dossier de travail d'une conversation (objets intermédiaires en CSV)."""
 
     MANIFEST = "manifest.json"
+    CONTEXT = "context.json"
 
     def __init__(self, base_dir: Path, conversation_id: str) -> None:
         self.dir = Path(base_dir) / _safe(conversation_id)
         self.artifacts: list[WorkspaceArtifact] = self._load()
+        self.context: ConversationContext = self._load_context()
 
     # -- persistance ----------------------------------------------------------
 
     def _manifest_path(self) -> Path:
         return self.dir / self.MANIFEST
+
+    def _context_path(self) -> Path:
+        return self.dir / self.CONTEXT
+
+    def _load_context(self) -> ConversationContext:
+        path = self._context_path()
+        if not path.exists():
+            return ConversationContext()
+        return ConversationContext.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def record_turn(
+        self, question: str, capability: str | None, source: str | None, code: str | None = None
+    ) -> None:
+        """Mémorise le tour courant (question + action) pour comprendre le suivant."""
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.context = ConversationContext(
+            last_question=question, last_capability=capability, last_source=source, last_code=code
+        )
+        self._context_path().write_text(self.context.model_dump_json(indent=2), encoding="utf-8")
+
+    def describe_context(self) -> str | None:
+        """Contexte du tour précédent pour le planificateur (résolution des ajustements)."""
+        c = self.context
+        if not c.last_question:
+            return None
+        src = f" sur « {c.last_source} »" if c.last_source else ""
+        return (
+            f"CONTEXTE CONVERSATIONNEL : au tour précédent, l'utilisateur a demandé "
+            f"« {c.last_question} » (action : {c.last_capability or '?'}{src}). Si le "
+            "message courant est un AJUSTEMENT de ce tour (« mets des couleurs plus "
+            "vives », « plutôt en barres », « et pour les hommes ? »), reprends la MÊME "
+            f"capacité et la MÊME source{src}."
+        )
+
+    def last_code_for(self, source: str | None) -> str | None:
+        """Le code d'analyse du tour précédent si c'était sur la même source."""
+        c = self.context
+        return c.last_code if (source is not None and c.last_source == source) else None
 
     def _load(self) -> list[WorkspaceArtifact]:
         path = self._manifest_path()
