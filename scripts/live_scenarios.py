@@ -49,6 +49,11 @@ class Turn:
     )  # motifs attendus (souple, insensible casse)
     artifact: str | None = None  # "table" | "image" | None (souple)
     clarify: bool = False  # la réponse doit être une question (souple)
+    # -- invariant de DONNÉES (dur) : valeurs de référence, calculées à la main
+    # depuis la base/le CSV, qui doivent apparaître dans la réponse ou le tableau.
+    # Une phrase bien tournée sur des chiffres faux est le pire échec possible :
+    # le reste des invariants ne le voit pas.
+    expect_data: list[float | str] = field(default_factory=list)
 
 
 @dataclass
@@ -61,23 +66,48 @@ class Scenario:
 # --- définition des scénarios en cascade --------------------------------------
 
 SCENARIOS: list[Scenario] = [
+    # Les `expect_data` sont la VÉRITÉ TERRAIN, calculée à la main hors de l'agent
+    # (SQL direct sur la base, pandas sur le CSV, predict sur le modèle). Sans
+    # elles, une réponse bien tournée sur des chiffres faux passe pour un succès.
     Scenario(
-        "iris",
-        "Iris : exploration → mémoire → prédiction → analyse",
+        "iris-exploration",
+        "Iris : source ambiguë → répartition → moyenne",
         [
             Turn(
-                "donne-moi les 3 dernières lignes du dataset iris",
+                "combien de lignes y a-t-il au total ?",
+                clarify=True,
+                answer_regex=[r"titanic", r"iris"],
+            ),
+            Turn(
+                "dans iris, combien de fleurs par espèce ?",
                 capability="query",
                 nodes=["plan", "retrieval", "synthesize"],
                 artifact="table",
-                answer_regex=[r"lignes?"],
+                expect_data=[50, "setosa", "versicolor", "virginica"],
             ),
             Turn(
-                "peux-tu prédire ces 3 lignes avec le modèle auquel tu as accès ?",
+                "et quelle est la longueur moyenne des sépales ?",
+                capability="query",
+                expect_data=[5.8433],
+            ),
+        ],
+    ),
+    Scenario(
+        "iris-memoire-predict",
+        "Iris : tableau mémorisé → prédiction sur « ces lignes » → figure",
+        [
+            Turn(
+                "donne-moi les 5 premières fleurs d'iris",
+                capability="query",
+                artifact="table",
+                expect_data=[5.1, 3.5, 1.4, 0.2],
+            ),
+            Turn(
+                "peux-tu prédire l'espèce de ces lignes ?",
                 capability="fetch_then_predict",
                 nodes=["plan", "fetch_predict", "synthesize"],
                 artifact="table",
-                answer_regex=[r"[Pp]r[ée]diction", r"iris"],
+                expect_data=["setosa", 5],
             ),
             Turn(
                 "fais un histogramme des sepal_length du tableau resultat_1",
@@ -88,8 +118,30 @@ SCENARIOS: list[Scenario] = [
         ],
     ),
     Scenario(
-        "titanic-join",
-        "Titanic : jointure forcée → agrégat enchaîné",
+        "titanic-effectifs",
+        "Titanic : comptage → anaphore « et combien ont survécu ? » → moyenne",
+        [
+            Turn(
+                "sur titanic, combien de passagers au total ?",
+                capability="query",
+                nodes=["plan", "retrieval", "synthesize"],
+                expect_data=[891],
+            ),
+            Turn(
+                "et combien ont survécu ?",
+                capability="query",
+                expect_data=[342],
+            ),
+            Turn(
+                "quel est l'âge moyen des passagers ?",
+                capability="query",
+                expect_data=[29.6991],
+            ),
+        ],
+    ),
+    Scenario(
+        "titanic-jointure",
+        "Titanic : jointure sur libellé → effectifs enchaînés → figure",
         [
             Turn(
                 "sur la base titanic, donne le taux de survie par LIBELLÉ de classe "
@@ -97,27 +149,40 @@ SCENARIOS: list[Scenario] = [
                 capability="query",
                 nodes=["plan", "retrieval", "synthesize"],
                 artifact="table",
+                expect_data=[(62.96, 0.6296), (47.28, 0.4728), (24.24, 0.2424), "1re classe"],
             ),
             Turn(
                 "et combien de passagers y a-t-il par classe ?",
                 capability="query",
                 artifact="table",
+                expect_data=[216, 184, 491],
+            ),
+            Turn(
+                "fais un diagramme en barres de ces effectifs",
+                capability="analyze",
+                artifact="image",
             ),
         ],
     ),
     Scenario(
-        "clarification-source",
-        "Clarification : question sans source, puis levée d'ambiguïté",
+        "titanic-croise",
+        "Titanic : survie par sexe → croisement anaphorique → erreur métier propre",
         [
             Turn(
-                "combien de lignes y a-t-il au total ?",
-                clarify=True,
-                answer_regex=[r"titanic", r"iris"],
-            ),
-            Turn(
-                "dans iris, combien de lignes ?",
+                "sur titanic, quel est le taux de survie par sexe ?",
                 capability="query",
                 artifact="table",
+                expect_data=[(74.2, 0.742), (18.89, 0.1889)],
+            ),
+            Turn(
+                "et pour les femmes de 1re classe ?",
+                capability="query",
+                expect_data=[(96.81, 0.9681)],
+            ),
+            Turn(
+                "sur titanic, prédis la survie du passager numéro 999999",
+                expect_error=True,
+                answer_regex=[r"Je n'ai pas pu répondre|aucune ligne"],
             ),
         ],
     ),
@@ -136,41 +201,31 @@ SCENARIOS: list[Scenario] = [
                 capability="predict",
                 nodes=["plan", "inference", "synthesize"],
                 answer_regex=[r"surv"],
+                expect_data=["a survécu"],
             ),
         ],
     ),
     Scenario(
-        "clarification-modele",
-        "Clarification : prédiction sans modèle désigné (ex-KeyError)",
+        "california-ajustement",
+        "California : modèle ambigu → prédiction chiffrée → ajustement d'une feature",
         [
             Turn(
                 "peux-tu me faire une prédiction ?",
                 clarify=True,
                 answer_regex=[r"iris", r"titanic"],
             ),
-        ],
-    ),
-    Scenario(
-        "erreur-propre",
-        "Erreur métier propre : individu inexistant (pas de crash)",
-        [
             Turn(
-                "sur titanic, prédis la survie du passager numéro 999999",
-                expect_error=True,
-                answer_regex=[r"Je n'ai pas pu répondre|aucune ligne"],
-            ),
-        ],
-    ),
-    Scenario(
-        "california",
-        "Régression California : prédiction chiffrée",
-        [
-            Turn(
-                "prédis le prix médian pour MedInc=8.3, HouseAge=41, AveRooms=6.9, "
-                "AveBedrms=1.02, Population=322, AveOccup=2.5, Latitude=37.88, Longitude=-122.23",
+                "sur california_housing : MedInc=8.3, HouseAge=41, AveRooms=6.9, "
+                "AveBedrms=1.02, Population=322, AveOccup=2.5, Latitude=37.88, "
+                "Longitude=-122.23",
                 capability="predict",
                 nodes=["plan", "inference", "synthesize"],
-                answer_regex=[r"[Pp]r[ée]diction"],
+                expect_data=[4.139],
+            ),
+            Turn(
+                "et si MedInc passait à 3.0 ?",
+                capability="predict",
+                expect_data=[2.1149],
             ),
         ],
     ),
@@ -190,6 +245,117 @@ def post_chat(base_url: str, message: str, conversation_id: str, timeout: float)
 
 
 C_OK, C_WARN, C_BAD, C_DIM, C_RST = "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m"
+
+
+def _numbers_in(text: str) -> list[tuple[float, int]]:
+    """Les nombres d'un texte, avec leur nombre de décimales AFFICHÉES.
+
+    La précision affichée est ce qui permet de juger : « 63 » est un arrondi
+    acceptable de 62.96, « 62.9 » non, et « 887 » n'est pas 891. Virgule
+    décimale et séparateurs de milliers (espaces) admis.
+    """
+    trouves: list[tuple[float, int]] = []
+    for brut in re.findall(r"-?\d[\d\u00a0\u202f ]*(?:[.,]\d+)?", text):
+        nettoye = re.sub(r"[\u00a0\u202f ]", "", brut).replace(",", ".")
+        try:
+            valeur = float(nettoye)
+        except ValueError:
+            continue
+        trouves.append((valeur, len(nettoye.partition(".")[2])))
+    return trouves
+
+
+def _haystack(data: dict[str, Any]) -> tuple[str, list[tuple[float, int]], list[float]]:
+    """Où chercher une valeur attendue : le texte, les nombres de la RÉPONSE, et
+    séparément ceux des TABLEAUX — les deux ne se jugent pas pareil (cf.
+    ``check_data``).
+    """
+    reponse = data.get("answer") or ""
+    texte = reponse
+    nombres_table: list[float] = []
+    for artefact in data.get("artifacts") or []:
+        if artefact.get("mime") == "application/json":
+            try:
+                table = json.loads(artefact["data"])
+            except (ValueError, KeyError):
+                continue
+            texte += " " + json.dumps(table, ensure_ascii=False)
+            nombres_table.extend(
+                valeur
+                for ligne in table.get("rows") or []
+                for valeur in ligne
+                if isinstance(valeur, (int, float)) and not isinstance(valeur, bool)
+            )
+    return texte, _numbers_in(reponse), nombres_table
+
+
+def _decimales_de(valeur: float) -> int:
+    """Décimales significatives d'une valeur de référence (62.96 → 2, 891 → 0)."""
+    texte = repr(float(valeur))
+    if "e" in texte or "E" in texte:  # notation scientifique : on ne tronque pas
+        return 12
+    return len(texte.partition(".")[2].rstrip("0"))
+
+
+def _correspond_dans_la_reponse(produit: float, decimales: int, attendu: float) -> bool:
+    """Le nombre ÉCRIT dans la réponse est-il un arrondi juste de l'attendu ?
+
+    Tolérance : un demi-ulp à la précision du moins précis des deux — le LLM
+    rédige « environ 63 % » pour 62.96, ou « 5,84 » pour 5.8433. La réponse est
+    une phrase : le risque qu'un nombre sans rapport tombe dans la tolérance y
+    est négligeable.
+
+    Une tolérance RELATIVE serait l'erreur inverse : 0.5 % de 891 vaut ±4.5 et
+    accepterait « 887 », une erreur de comptage prise pour un arrondi.
+    """
+    ulp = 0.5 * 10 ** (-min(decimales, _decimales_de(attendu)))
+    return abs(produit - attendu) <= ulp + 1e-9
+
+
+def _correspond_dans_un_tableau(produit: float, attendu: float) -> bool:
+    """Un tableau porte des valeurs BRUTES : on compare à la précision de l'attendu.
+
+    Indispensable contre les coïncidences : un tableau de 94 passagères contient
+    ~1200 nombres, et la règle indulgente de la réponse (±0.5 pour un attendu à
+    0 décimale) y ferait passer n'importe quel ``passenger_id`` valant 97 pour
+    un taux de 96.81. Un tableau n'arrondit pas — 62.96296296 vaut toujours
+    62.96 à sa précision, mais 97 ne vaut pas 96.81.
+    """
+    ulp = 0.5 * 10 ** (-_decimales_de(attendu))
+    return abs(produit - attendu) <= ulp + 1e-9
+
+
+def _valeur_presente(
+    attendue: float | str,
+    texte: str,
+    nombres_reponse: list[tuple[float, int]],
+    nombres_table: list[float],
+) -> bool:
+    if isinstance(attendue, str):
+        return attendue.lower() in texte.lower()
+    if any(_correspond_dans_la_reponse(n, d, attendue) for n, d in nombres_reponse):
+        return True
+    return any(_correspond_dans_un_tableau(n, attendue) for n in nombres_table)
+
+
+def check_data(turn: Turn, data: dict[str, Any]) -> list[str]:
+    """Les valeurs de référence sont-elles bien celles produites ?
+
+    Une entrée peut être un tuple d'alternatives : un « taux » est aussi juste
+    rendu en fraction (0.742) qu'en pourcentage (74.2), et le LLM choisit
+    librement — l'invariant porte sur la valeur, pas sur cette convention.
+    """
+    if not turn.expect_data:
+        return []
+    texte, nombres_reponse, nombres_table = _haystack(data)
+    manquantes = []
+    for attendue in turn.expect_data:
+        variantes = attendue if isinstance(attendue, tuple) else (attendue,)
+        if any(_valeur_presente(v, texte, nombres_reponse, nombres_table) for v in variantes):
+            continue
+        libelle = " ou ".join(repr(v) for v in variantes)
+        manquantes.append(f"valeur {libelle} absente ou fausse")
+    return manquantes
 
 
 def check_turn(turn: Turn, data: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -227,6 +393,9 @@ def check_turn(turn: Turn, data: dict[str, Any]) -> tuple[list[str], list[str]]:
         soft.append("figure attendue, absente")
     if turn.clarify and not answer.strip().endswith("?"):
         soft.append("clarification attendue (réponse ne finit pas par « ? »)")
+
+    # -- DUR : les chiffres rendus sont-ils les bons ?
+    hard.extend(check_data(turn, data))
 
     return hard, soft
 

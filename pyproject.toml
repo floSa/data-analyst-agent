@@ -64,7 +64,7 @@ omit = ["*/sandbox/image/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tests"]
+pythonpath = ["tests", "scripts"]
 addopts = "-m 'not live' --strict-markers --cov=data_analyst_agent --cov-report=term-missing --cov-fail-under=85"
 markers = [
     "integration: tests d'intégration (Docker, testcontainers, sandbox réelle)",
