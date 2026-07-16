@@ -314,6 +314,44 @@ def test_query_sans_resultat_le_dit_au_lieu_de_raconter(mini_csv: Path, registry
     assert table["rows"] == []
 
 
+def test_reponse_de_memoire_sans_aucune_requete_est_ecartee(mini_csv: Path, registry: Registry):
+    """Le modèle répond de mémoire sur un dataset célèbre, sans rien interroger.
+
+    Observé en vrai sur « décris le dataset iris » : zéro requête, et une jolie
+    prose encyclopédique servie comme une lecture de la source. Sur des données
+    privées ce serait de l'invention — une réponse non fondée est refusée.
+    """
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        # aucun tool_call : le modèle répond directement de son savoir
+        .script(RETRIEVAL, [text("Le jeu de données iris est un classique de la classification.")])
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("peux-tu me faire une description du dataset ?")
+
+    assert "classique" not in answer.answer  # la prose de mémoire est écartée
+    assert "je ne peux donc rien en affirmer" in answer.answer.lower()
+
+
+def test_reponse_fondee_sur_le_schema_seul_reste_acceptee(mini_csv: Path, registry: Registry):
+    """« quelles colonnes ? » se répond avec get_schema, sans run_sql : c'est fondé."""
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [tool_call("get_schema", {}), text("La table mini a deux colonnes : sexe, survie.")],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("quelles colonnes y a-t-il ?")
+
+    assert answer.answer == "La table mini a deux colonnes : sexe, survie."
+
+
 # --- mémoire de conversation (objets intermédiaires persistés) -------------------
 
 REPO = Path(__file__).parents[3]

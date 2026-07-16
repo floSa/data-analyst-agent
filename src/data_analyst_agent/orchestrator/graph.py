@@ -719,7 +719,20 @@ class Orchestrator:
         et la synthèse affirmait « le résultat affiche les informations de
         toutes les passagères de première classe ». Un tableau vide doit se dire
         vide : c'est ce qui met l'utilisateur sur la piste du mauvais filtre.
+
+        **Une réponse non fondée est refusée** : si le modèle n'a appelé AUCUN
+        outil, il a répondu de mémoire. Observé en vrai sur « décris le dataset
+        iris » — zéro requête, et une jolie prose sur « un ensemble classique de
+        classification floristique » servie comme une lecture de la source. Sur
+        des données privées, ce serait de l'invention pure.
         """
+        if not retrieval.grounded:
+            return (
+                "Je n'ai pas interrogé la source pour cette question, je ne peux donc "
+                "rien en affirmer. Reformule en précisant ce que tu veux en savoir "
+                "(par exemple : « combien de lignes ? », « quelles colonnes ? »).",
+                "réponse non fondée, écartée (déterministe)",
+            )
         result = retrieval.result
         if result is not None and result.row_count == 0:
             return (

@@ -22,6 +22,12 @@ SYSTEM_PROMPT = """\
 Tu es un expert SQL (dialecte : {dialect}). On te pose une question sur des
 données ; tu y réponds en interrogeant la base, en LECTURE SEULE.
 
+Règle absolue : tu ne SAIS RIEN de ces données avant de les avoir regardées.
+Même si le jeu de données t'est familier (iris, titanic…), n'utilise JAMAIS tes
+connaissances générales : la source réelle peut différer de ce que tu crois.
+Toute réponse doit s'appuyer sur get_schema et/ou run_sql — pour une
+« description », lis le schéma ET compte les lignes.
+
 Démarche :
 1. Appelle get_schema pour connaître les tables, colonnes et relations.
 2. Écris UNE requête SELECT qui répond à la question (jointures si besoin).
@@ -54,6 +60,12 @@ class RetrievalResult(BaseModel):
     sql: str | None = None
     result: QueryResult | None = None
     executed: list[ExecutedQuery] = []
+    tools_used: list[str] = []  # vide = réponse non fondée sur la source
+
+    @property
+    def grounded(self) -> bool:
+        """La réponse s'appuie-t-elle sur au moins un regard sur la source ?"""
+        return bool(self.tools_used)
 
     @property
     def succeeded(self) -> bool:
@@ -66,6 +78,11 @@ class RetrievalDeps:
     max_rows: int = 200
     executed: list[ExecutedQuery] = field(default_factory=list)
     last_success: tuple[str, QueryResult] | None = None
+    # Outils réellement appelés. Un modèle peut répondre SANS en toucher aucun,
+    # de mémoire, sur un jeu de données célèbre (« iris est un ensemble classique
+    # de classification floristique… ») : c'est du savoir encyclopédique, pas une
+    # lecture de la source, et sur des données privées ce serait de l'invention.
+    tools_used: list[str] = field(default_factory=list)
 
 
 def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
@@ -78,16 +95,19 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
     @agent.tool
     def list_tables(ctx: RunContext[RetrievalDeps]) -> list[str]:
         """Liste les tables disponibles dans la source."""
+        ctx.deps.tools_used.append("list_tables")
         return ctx.deps.adapter.schema().table_names()
 
     @agent.tool
     def get_schema(ctx: RunContext[RetrievalDeps]) -> str:
         """Schéma complet : tables, colonnes, types, clés étrangères."""
+        ctx.deps.tools_used.append("get_schema")
         return ctx.deps.adapter.schema().to_prompt()
 
     @agent.tool
     def run_sql(ctx: RunContext[RetrievalDeps], query: str) -> str:
         """Exécute une requête SELECT et renvoie le résultat (ou l'erreur SQL)."""
+        ctx.deps.tools_used.append("run_sql")
         try:
             result = ctx.deps.adapter.run(query, max_rows=ctx.deps.max_rows)
         except QueryError as exc:
@@ -118,4 +138,10 @@ def run_retrieval(
         usage_limits=UsageLimits(request_limit=settings.retrieval_request_limit),
     )
     sql, result = deps.last_success if deps.last_success else (None, None)
-    return RetrievalResult(summary=run.output, sql=sql, result=result, executed=deps.executed)
+    return RetrievalResult(
+        summary=run.output,
+        sql=sql,
+        result=result,
+        executed=deps.executed,
+        tools_used=deps.tools_used,
+    )
