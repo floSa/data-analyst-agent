@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from data_analyst_agent.agents.retrieval.catalog import FileSource
 
@@ -43,6 +43,13 @@ class ConversationContext(BaseModel):
     last_capability: str | None = None
     last_source: str | None = None
     last_code: str | None = None  # code d'analyse produit (pour repartir dessus)
+    # Features d'une prédiction RÉUSSIE, pour l'ajuster au tour suivant (« et si
+    # elle était en 3e classe ? »). Le `pending` ne couvre que les prédictions
+    # INCOMPLÈTES : dès qu'une prédiction aboutit il est vidé, et l'acquis
+    # disparaissait avec lui — l'agent redemandait alors des features déjà
+    # données, comme le sibsp d'une passagère décrite deux tours plus haut.
+    last_dataset: str | None = None
+    last_features: dict = Field(default_factory=dict)
 
 
 def safe_dir_name(name: str) -> str:
@@ -81,12 +88,23 @@ class ConversationWorkspace:
         return ConversationContext.model_validate_json(path.read_text(encoding="utf-8"))
 
     def record_turn(
-        self, question: str, capability: str | None, source: str | None, code: str | None = None
+        self,
+        question: str,
+        capability: str | None,
+        source: str | None,
+        code: str | None = None,
+        dataset: str | None = None,
+        features: dict | None = None,
     ) -> None:
         """Mémorise le tour courant (question + action) pour comprendre le suivant."""
         self.dir.mkdir(parents=True, exist_ok=True)
         self.context = ConversationContext(
-            last_question=question, last_capability=capability, last_source=source, last_code=code
+            last_question=question,
+            last_capability=capability,
+            last_source=source,
+            last_code=code,
+            last_dataset=dataset,
+            last_features=features or {},
         )
         self._context_path().write_text(self.context.model_dump_json(indent=2), encoding="utf-8")
 
@@ -108,6 +126,17 @@ class ConversationWorkspace:
         """Le code d'analyse du tour précédent si c'était sur la même source."""
         c = self.context
         return c.last_code if (source is not None and c.last_source == source) else None
+
+    def last_features_for(self, dataset: str | None) -> dict:
+        """Les features de la dernière prédiction réussie, si c'est le même dataset.
+
+        Base d'un ajustement (« et si elle était en 3e classe ? ») : sans elles,
+        le tour suivant repart de zéro et redemande tout.
+        """
+        c = self.context
+        if dataset is None or c.last_dataset != dataset:
+            return {}
+        return dict(c.last_features)
 
     def _load(self) -> list[WorkspaceArtifact]:
         path = self._manifest_path()

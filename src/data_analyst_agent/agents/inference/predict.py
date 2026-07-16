@@ -42,6 +42,9 @@ class InferenceOutcome(BaseModel):
     prediction: Prediction | None = None
     issues: list[FeatureIssue] = Field(default_factory=list)
     reask: str | None = None
+    # Features VALIDÉES ayant produit la prédiction (noms du schéma, valeurs
+    # typées) : base d'un ajustement au tour suivant, cf. ConversationContext.
+    features: dict = Field(default_factory=dict)
 
 
 def _predict_frame(
@@ -93,7 +96,7 @@ def run_inference(dataset: str, payload: dict, *, registry: Registry) -> Inferen
         )
     model = registry.model(dataset)
     prediction = _predict_frame(entry, model, pd.DataFrame([outcome.features]), dataset)[0]
-    return InferenceOutcome(status="ok", prediction=prediction)
+    return InferenceOutcome(status="ok", prediction=prediction, features=outcome.features)
 
 
 # --- prédiction en lot ----------------------------------------------------------
