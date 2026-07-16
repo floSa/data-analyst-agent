@@ -757,15 +757,41 @@ def test_query_sur_iris_renvoie_les_colonnes(registry: Registry):
     ]
 
 
-def test_source_inconnue_reponse_propre(registry: Registry):
+def test_source_inconnue_repond_par_clarification(mini_csv: Path, registry: Registry):
+    """Source désignée vraiment introuvable : on demande, pas de KeyError brut."""
     llm = ScriptedLLM().script(
         PLANNER, [plan_response(Plan(capability="query", source="nexiste-pas"))]
     )
-    orchestrator = orchestrator_with(llm, registry=registry)
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
     answer = orchestrator.ask("Combien de lignes ?")
-    assert answer.error is not None
-    assert "inconnue" in answer.error
-    assert answer.answer.startswith("Je n'ai pas pu répondre")
+    assert answer.error is None
+    assert "KeyError" not in answer.answer
+    assert "introuvable" in answer.answer
+    assert "mini" in answer.answer  # liste les sources connues
+    assert answer.answer.strip().endswith("?")
+    assert [s.node for s in answer.trace] == ["plan", "synthesize"]
+
+
+def test_source_decoree_par_le_llm_est_normalisee(mini_csv: Path, registry: Registry):
+    """« mini (file) » (nom décoré par le LLM) est ramené à « mini », pas de crash."""
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini (file)"))])
+        .script(
+            RETRIEVAL,
+            [
+                tool_call("run_sql", {"query": "SELECT count(*) AS n FROM mini"}),
+                text("4 lignes."),
+            ],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Combien de lignes ?")
+    assert answer.error is None
+    assert answer.plan.source == "mini"  # normalisé
+    assert "retrieval" in [s.node for s in answer.trace]
 
 
 def test_planificateur_illisible_repond_proprement(registry: Registry, monkeypatch):

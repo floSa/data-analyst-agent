@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import operator
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -243,6 +244,23 @@ class Orchestrator:
             return self.catalog
         return Catalog(sources=[*self.catalog.sources, *workspace.as_sources()])
 
+    @staticmethod
+    def _match_source_name(requested: str, catalog: Catalog) -> str | None:
+        """Résout un nom de source, tolérant à la décoration du LLM.
+
+        Exact d'abord ; sinon, si un (et un seul) nom de source connu apparaît
+        comme mot dans la chaîne demandée (« titanic (postgres) » -> titanic),
+        on le retient. Ambigu ou absent -> None (l'appelant demandera).
+        """
+        names = [s.name for s in catalog.sources]
+        if requested in names:
+            return requested
+        low = requested.lower()
+        hits = [
+            n for n in names if re.search(rf"(?<![0-9a-z]){re.escape(n.lower())}(?![0-9a-z])", low)
+        ]
+        return hits[0] if len(hits) == 1 else None
+
     def _resolve_source(self, plan: Plan, catalog: Catalog):
         """La source du plan si elle existe ; sinon repli sans ambiguïté.
 
@@ -341,6 +359,23 @@ class Orchestrator:
             plan.dataset = plan.dataset or pending.dataset
             if plan.dataset == pending.dataset:
                 plan.features = {**pending.features, **plan.features}
+        # source désignée mais introuvable : le LLM décore parfois le nom (ex.
+        # « titanic (postgres) » recopié depuis la description au lieu de
+        # « titanic ») -> on normalise ; si vraiment inconnue, on demande plutôt
+        # que de laisser fuir un KeyError brut.
+        if plan.source:
+            resolved = self._match_source_name(plan.source, self._effective_catalog(state))
+            if resolved is None:
+                names = (
+                    ", ".join(s.name for s in self._effective_catalog(state).sources) or "(aucune)"
+                )
+                return self._clarify(
+                    plan,
+                    f"La source « {plan.source} » est introuvable. Sur quelle source "
+                    f"veux-tu travailler : {names} ?",
+                    start,
+                )
+            plan.source = resolved
         # ambiguïté de source : la capacité interroge une source, aucune n'est
         # choisie et le catalogue en contient plusieurs -> on demande à
         # l'utilisateur de préciser plutôt que de deviner ou de planter.
