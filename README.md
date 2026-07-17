@@ -99,7 +99,7 @@ Le catalogue accepte aussi bien un DSN Postgres (`type: postgres`) qu'un fichier
 
 ## Ce que l'agent sait faire, et où il échoue
 
-Les 13 questions de référence ont été passées à l'agent réel (`gemma4:e4b`, dictionnaire en contexte, base complète), et comparées aux réponses vérifiées de l'export. **7 sur 13** au contrôle automatique strict, 8 à 10 selon la sévérité — le détail vaut mieux que le score :
+Les 13 questions de référence ont été passées à l'agent réel (`gemma4:e4b`, dictionnaire en contexte, base complète), et comparées aux réponses vérifiées de l'export. **7 sur 13** au contrôle automatique strict, 8 à 10 selon la sévérité — et ce score, obtenu sur des questions **isolées**, est le plus flatteur des deux : en conversation en cascade, c'est 10 invariants violés sur 15 tours (voir plus bas). Le détail vaut mieux que le score :
 
 | Ce qui passe | Ce qui casse |
 |---|---|
@@ -112,13 +112,25 @@ Les 13 questions de référence ont été passées à l'agent réel (`gemma4:e4b
 
 Ajouter au prompt une consigne de relecture (« si tu es loin de l'ordre de grandeur documenté, ta requête est fausse ») a été **essayé et n'a rien changé** : même requête naïve, même résultat, aucune auto-correction en deux essais. La consigne a donc été retirée plutôt que gardée pour la forme. Le levier est ailleurs — un modèle plus fort, ou le piège de grain écrit noir sur blanc dans le dictionnaire.
 
-Pour rejouer l'exercice sur le système entier (API + sandbox + modèle), cinq conversations de cinq tours reprennent ces questions :
+### En conversation réelle, c'est plus dur
+
+Les 13 questions ci-dessus sont posées **isolément**. Passées en conversation en cascade sur le système entier (API + sandbox + modèle), les mêmes capacités décrochent davantage : **15 tours joués, 10 invariants de données violés**. Trois familles d'échecs, toutes reproductibles :
+
+**1. Les questions sur le système, pas sur les données.** « Peux-tu me décrire la base : quelles tables ? » et « de quels attributs as-tu besoin pour une prévision ? » échouent toutes deux sur « Je n'ai pas bien compris ta demande ». Le planificateur n'a pas de route pour une question *méta* : il attend une question sur les données, et le schéma comme la liste des features lui sont pourtant déjà fournis dans son prompt. C'est le premier tour de deux conversations sur trois — la pire place pour un échec.
+
+**2. L'anaphore vers une figure est instable.** « Fais-moi un diagramme en barres de ces CA » et « montre-moi ça en barres groupées » passent ; « fais-en un diagramme en barres » est routé en `query` et rend un tableau. Même intention, trois formulations, deux réussites — le routage tient à la tournure.
+
+**3. Les questions à deux dimensions perdent la seconde.** « Comment se répartit le CA par univers ? » rend les montants mais pas les parts. « Quel jour vend le mieux, en magasin **et en ligne** ? » agrège les deux canaux au lieu de les séparer — et écrase justement le signal recherché (samedi en magasin, dimanche en ligne).
+
+**Ce qui marche bien, en revanche :** le slot-filling. « Prédis les ventes de croquettes chien en grand magasin » → relance sur les features manquantes → complément → prédiction → « et si le produit était en promo à −30 % ? » → ajustement correct. Quatre tours sur cinq, sans accroc.
+
+Pour rejouer l'exercice :
 
 ```bash
 uv run python scripts/live_scenarios.py
 ```
 
-Leurs valeurs attendues sont la vérité terrain de l'export, pas des estimations : une réponse bien tournée sur des chiffres faux y échoue.
+Les valeurs attendues sont la vérité terrain de l'export, pas des estimations : une réponse bien tournée sur des chiffres faux y échoue. Le runner **sort en échec aujourd'hui** — c'est voulu : il mesure l'écart réel, il ne certifie pas que tout va bien.
 
 ## API / Endpoints
 
