@@ -1,0 +1,84 @@
+{
+  "id": "c71e847539524f35b6a146ec4d8ec675",
+  "title": "je voudrais faire une prévision de ventes : de quels attrib…",
+  "created_at": "2026-07-17T08:18:28+00:00",
+  "updated_at": "2026-07-17T08:19:43+00:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "je voudrais faire une prévision de ventes : de quels attributs as-tu besoin, et sous quel format ?",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:18:57+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "Je n'ai pas bien compris ta demande. Peux-tu préciser ce que tu veux faire — interroger une source (maxizoo), une analyse ou une visualisation, ou une prédiction — et sur quelles données ?",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:18:57+00:00"
+    },
+    {
+      "role": "user",
+      "content": "prédis les ventes de croquettes chien en grand magasin",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:19:05+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "Je ne peux pas encore lancer la prédiction maxizoo_sales :\n- brand_type (Type de marque (nationale, exclusivité enseigne, marque de distributeur)) : valeur manquante\n- base_price (Prix catalogue du SKU en euros, hors promo et hors inflation) : valeur manquante\n- day_of_week (Jour de la semaine, 0 = lundi … 6 = dimanche) : valeur manquante\n- month (Mois de l'année (1 = janvier)) : valeur manquante\n- discount_rate (Taux de remise appliqué (0 = pas de remise ; 0.3 = -30 %). Seules les campagnes de type 'produits' remisent : 0 pour toutes les autres) : valeur manquante\n- promo_type (Typologie de la campagne active ce jour-là, ou 'aucune' hors campagne) : valeur manquante\n- temp_anomaly (Écart de température à la normale du jour, en °C (0 = temps de saison). C'est l'écart qui porte le signal météo, pas la température absolue) : valeur manquante\nPeux-tu me donner ces informations ?",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:19:05+00:00"
+    },
+    {
+      "role": "user",
+      "content": "marque nationale à 49.90, un samedi (day_of_week=5) de novembre (month=11), sans promo, température de saison",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:19:16+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "Prédiction (maxizoo_sales) : 3.1374 unités vendues (pour un SKU, un magasin et un jour).",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:19:16+00:00"
+    },
+    {
+      "role": "user",
+      "content": "et si le produit était en promo à -30 % (campagne produits) ?",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:19:27+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "Prédiction (maxizoo_sales) : 4.6079 unités vendues (pour un SKU, un magasin et un jour).",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:19:27+00:00"
+    },
+    {
+      "role": "user",
+      "content": "donne-moi 5 SKU avec leur univers, type de marque et prix catalogue",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:19:43+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "5 lignes retournées — voir le tableau ci-dessous.",
+      "artifacts": [
+        {
+          "mime": "application/json",
+          "data": "{\"columns\": [\"sku_id\", \"commodity_group\", \"brand_type\", \"base_price\"], \"rows\": [[\"SKU001\", \"Chien\", \"nationale\", 42.99], [\"SKU002\", \"Chien\", \"exclusive\", 19.99], [\"SKU003\", \"Chien\", \"nationale\", 34.99], [\"SKU004\", \"Chien\", \"nationale\", 9.49], [\"SKU005\", \"Chien\", \"distributeur\", 12.99]], \"truncated\": false}"
+        }
+      ],
+      "error": null,
+      "at": "2026-07-17T08:19:43+00:00"
+    }
+  ],
+  "pending": null
+}

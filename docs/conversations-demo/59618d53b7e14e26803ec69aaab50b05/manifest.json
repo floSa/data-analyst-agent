@@ -1,0 +1,45 @@
+{
+  "artifacts": [
+    {
+      "name": "resultat_1",
+      "file": "resultat_1.csv",
+      "columns": [
+        "commodity_group",
+        "total_ca"
+      ],
+      "row_count": 8,
+      "question": "comment se répartit le CA 2025 par univers produit ?"
+    },
+    {
+      "name": "resultat_2",
+      "file": "resultat_2.csv",
+      "columns": [
+        "commodity_group",
+        "total_ca"
+      ],
+      "row_count": 8,
+      "question": "fais-en un diagramme en barres"
+    },
+    {
+      "name": "resultat_3",
+      "file": "resultat_3.csv",
+      "columns": [
+        "sku_id",
+        "total_ca"
+      ],
+      "row_count": 10,
+      "question": "quels sont les 10 SKU les plus vendus en CA en 2025 ?"
+    },
+    {
+      "name": "resultat_4",
+      "file": "resultat_4.csv",
+      "columns": [
+        "jour_semaine",
+        "ca_magasin",
+        "ca_en_ligne"
+      ],
+      "row_count": 7,
+      "question": "quel jour de la semaine vend le mieux, en magasin et en ligne ?"
+    }
+  ]
+}

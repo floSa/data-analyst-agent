@@ -1,0 +1,8 @@
+{
+  "last_question": "montre-moi ça en barres groupées",
+  "last_capability": "analyze",
+  "last_source": "resultat_4",
+  "last_code": "import pandas as pd\nimport matplotlib.pyplot as plt\n\n# Charger les données pertinentes pour un graphique à barres groupées\ndf = pd.read_csv(\"/data/resultat_4.csv\")\n\n# Assurer que les colonnes sont numériques et gérer les NaN (bien qu'il y en ait peu dans cet échantillon)\ndf['ca_magasin'] = pd.to_numeric(df['ca_magasin'], errors='coerce')\ndf['ca_en_ligne'] = pd.to_numeric(df['ca_en_ligne'], errors='coerce')\n\n# Éliminer les lignes avec des NaN dans les colonnes à tracer\ndf_cleaned = df.dropna(subset=['jour_semaine', 'ca_magasin', 'ca_en_ligne'])\n\n# Préparation pour le graphique à barres groupées\njours = df_cleaned['jour_semaine']\nca_magasin = df_cleaned['ca_magasin']\nca_en_ligne = df_cleaned['ca_en_ligne']\n\nx = range(len(jours)) # Indices des jours\nwidth = 0.35 # Largeur des barres\n\nfig, ax = plt.subplots(figsize=(12, 6))\n\n# Tracer les deux séries de données groupées par jour\nrects1 = ax.bar(x, ca_magasin, width, label='CA Magasin')\nrects2 = ax.bar(x, ca_en_ligne, width, label='CA En Ligne')\n\n# Ajouter des étiquettes et un titre\nax.set_ylabel('Chiffre d\\'Affaires')\nax.set_xlabel('Jour de la Semaine')\nax.set_title('Comparaison du CA Magasin vs CA En Ligne par Jour de la Semaine')\nax.set_xticks(x)\n# Utiliser les valeurs réelles des jours comme labels si possible, sinon utiliser l'index\nax.set_xticklabels(jours) \n\nplt.legend()\nplt.tight_layout()\nplt.show()",
+  "last_dataset": null,
+  "last_features": {}
+}

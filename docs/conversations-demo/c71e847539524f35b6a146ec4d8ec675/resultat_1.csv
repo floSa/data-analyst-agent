@@ -1,0 +1,6 @@
+sku_id,commodity_group,brand_type,base_price
+SKU001,Chien,nationale,42.99
+SKU002,Chien,exclusive,19.99
+SKU003,Chien,nationale,34.99
+SKU004,Chien,nationale,9.49
+SKU005,Chien,distributeur,12.99

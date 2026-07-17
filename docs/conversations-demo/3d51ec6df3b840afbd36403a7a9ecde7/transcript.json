@@ -1,0 +1,28 @@
+{
+  "id": "3d51ec6df3b840afbd36403a7a9ecde7",
+  "title": "quel est le chiffre d affaires total de 2025 ?",
+  "created_at": "2026-07-17T08:04:57+00:00",
+  "updated_at": "2026-07-17T08:05:25+00:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "quel est le chiffre d affaires total de 2025 ?",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-17T08:05:25+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "Le chiffre d'affaires total pour l'année 2025 s'élève à 10 186 669,50 €.",
+      "artifacts": [
+        {
+          "mime": "application/json",
+          "data": "{\"columns\": [\"sum(revenue)\"], \"rows\": [[10186669.5]], \"truncated\": false}"
+        }
+      ],
+      "error": null,
+      "at": "2026-07-17T08:05:25+00:00"
+    }
+  ],
+  "pending": null
+}
