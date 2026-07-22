@@ -1,0 +1,84 @@
+{
+  "id": "demo-prevision-1784705627",
+  "title": "prédis les ventes de croquettes chien en grand magasin",
+  "created_at": "2026-07-22T07:33:47+00:00",
+  "updated_at": "2026-07-22T07:34:36+00:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "prédis les ventes de croquettes chien en grand magasin",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-22T07:33:56+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "Je ne peux pas encore lancer la prédiction maxizoo_sales :\n- brand_type (Type de marque (nationale, exclusivité enseigne, marque de distributeur)) : valeur manquante\n- base_price (Prix catalogue du SKU en euros, hors promo et hors inflation) : valeur manquante\n- day_of_week (Jour de la semaine, 0 = lundi … 6 = dimanche) : valeur manquante\n- month (Mois de l'année (1 = janvier)) : valeur manquante\n- discount_rate (Taux de remise appliqué (0 = pas de remise ; 0.3 = -30 %). Seules les campagnes de type 'produits' remisent : 0 pour toutes les autres) : valeur manquante\n- promo_type (Typologie de la campagne active ce jour-là, ou 'aucune' hors campagne) : valeur manquante\n- temp_anomaly (Écart de température à la normale du jour, en °C (0 = temps de saison). C'est l'écart qui porte le signal météo, pas la température absolue) : valeur manquante\nPeux-tu me donner ces informations ?",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-22T07:33:56+00:00"
+    },
+    {
+      "role": "user",
+      "content": "marque nationale à 49.90, un samedi (day_of_week=5) de novembre (month=11), sans promo, température de saison",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-22T07:34:06+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "Prédiction (maxizoo_sales) : 3.1374 unités vendues (pour un SKU, un magasin et un jour).",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-22T07:34:06+00:00"
+    },
+    {
+      "role": "user",
+      "content": "et si le produit était en promo à -30 % (campagne produits) ?",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-22T07:34:15+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "Prédiction (maxizoo_sales) : 4.6079 unités vendues (pour un SKU, un magasin et un jour).",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-22T07:34:15+00:00"
+    },
+    {
+      "role": "user",
+      "content": "et dans un petit magasin plutôt ?",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-22T07:34:21+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "Prédiction (maxizoo_sales) : 3.3879 unités vendues (pour un SKU, un magasin et un jour).",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-22T07:34:21+00:00"
+    },
+    {
+      "role": "user",
+      "content": "donne-moi 5 SKU réels de l'univers chien avec leur prix catalogue",
+      "artifacts": [],
+      "error": null,
+      "at": "2026-07-22T07:34:36+00:00"
+    },
+    {
+      "role": "agent",
+      "content": "5 lignes retournées — voir le tableau ci-dessous.",
+      "artifacts": [
+        {
+          "mime": "application/json",
+          "data": "{\"columns\": [\"sku_id\", \"base_price\"], \"rows\": [[\"SKU001\", 42.99], [\"SKU002\", 19.99], [\"SKU003\", 34.99], [\"SKU004\", 9.49], [\"SKU005\", 12.99]], \"truncated\": false}"
+        }
+      ],
+      "error": null,
+      "at": "2026-07-22T07:34:36+00:00"
+    }
+  ],
+  "pending": null
+}

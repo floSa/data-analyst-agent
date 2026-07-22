@@ -1,0 +1,33 @@
+{
+  "artifacts": [
+    {
+      "name": "resultat_1",
+      "file": "resultat_1.csv",
+      "columns": [
+        "commodity_group",
+        "total_ca"
+      ],
+      "row_count": 8,
+      "question": "comment se répartit le chiffre d'affaires 2025 par univers produit ?"
+    },
+    {
+      "name": "resultat_2",
+      "file": "resultat_2.csv",
+      "columns": [
+        "sku_id",
+        "total_ca"
+      ],
+      "row_count": 10,
+      "question": "quels sont les 10 SKU les plus vendus en CA en 2025 ?"
+    },
+    {
+      "name": "resultat_3",
+      "file": "resultat_3.csv",
+      "columns": [
+        "avg(total_ca)"
+      ],
+      "row_count": 1,
+      "question": "quel est le prix catalogue moyen de ces 10 SKU ?"
+    }
+  ]
+}

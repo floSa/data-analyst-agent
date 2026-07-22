@@ -5,12 +5,10 @@
       "file": "resultat_1.csv",
       "columns": [
         "sku_id",
-        "commodity_group",
-        "brand_type",
         "base_price"
       ],
       "row_count": 5,
-      "question": "donne-moi 5 SKU avec leur univers, type de marque et prix catalogue"
+      "question": "donne-moi 5 SKU réels de l'univers chien avec leur prix catalogue"
     }
   ]
 }

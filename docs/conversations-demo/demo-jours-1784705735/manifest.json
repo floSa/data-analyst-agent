@@ -1,0 +1,35 @@
+{
+  "artifacts": [
+    {
+      "name": "resultat_1",
+      "file": "resultat_1.csv",
+      "columns": [
+        "jour_semaine",
+        "ca_total"
+      ],
+      "row_count": 1,
+      "question": "quel jour de la semaine réalise le plus de CA en magasin physique en 2025 ?"
+    },
+    {
+      "name": "resultat_2",
+      "file": "resultat_2.csv",
+      "columns": [
+        "store_id",
+        "peak_hour",
+        "total_revenue"
+      ],
+      "row_count": 12,
+      "question": "quelle est l'heure de pointe de chaque magasin physique en 2025 ?"
+    },
+    {
+      "name": "resultat_3",
+      "file": "resultat_3.csv",
+      "columns": [
+        "sku_label",
+        "launch_date"
+      ],
+      "row_count": 4,
+      "question": "quels produits ont été lancés en cours d'historique et quand ?"
+    }
+  ]
+}

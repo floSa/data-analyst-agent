@@ -13,11 +13,30 @@
       "name": "resultat_2",
       "file": "resultat_2.csv",
       "columns": [
+        "annee",
+        "ca_total"
+      ],
+      "row_count": 6,
+      "question": "peux-tu m'afficher ceux des autres années ?"
+    },
+    {
+      "name": "resultat_3",
+      "file": "resultat_3.csv",
+      "columns": [
         "store_name",
         "total_ca"
       ],
       "row_count": 5,
       "question": "quels sont les 5 magasins qui réalisent le plus de CA en 2025 ?"
+    },
+    {
+      "name": "resultat_4",
+      "file": "resultat_4.csv",
+      "columns": [
+        "online_share_2025"
+      ],
+      "row_count": 1,
+      "question": "quelle est la part du e-commerce dans le CA 2025 ?"
     }
   ]
 }
