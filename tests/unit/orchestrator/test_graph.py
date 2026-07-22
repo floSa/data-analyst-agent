@@ -850,6 +850,37 @@ def test_analyse_dune_base_duckdb_monte_la_base_sans_la_tronquer(
     assert "TRONQUÉS" not in prompt
 
 
+def test_le_dictionnaire_va_aussi_a_lagent_danalyse(tmp_path: Path, registry: Registry):
+    """Le code d'analyse doit connaître les pièges, pas seulement le schéma.
+
+    Sans le dictionnaire, le code généré filtrait « store_id = 'Lyon' » (Lyon
+    est un store_name ; le store_id est 'S03') et concluait à tort « aucune
+    donnée ». L'agent SQL avait le dictionnaire depuis le début ; l'analyse non.
+    """
+    from data_analyst_agent.agents.retrieval.catalog import DuckDBSource
+    from helpers.maxizoo import build_duckdb
+
+    dico = tmp_path / "dico.md"
+    dico.write_text("Le e-commerce est le magasin ONLINE ; store_id va de S01 à S12.", "utf-8")
+    source = DuckDBSource(
+        name="maxizoo", path=build_duckdb(tmp_path / "maxizoo.duckdb"), dictionary=dico
+    )
+    sandbox = ScriptedSandbox([SandboxResult(status="ok", stdout="ok\n", results=[])])
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="maxizoo"))])
+        .script(ANALYSIS, [text("```python\nprint('ok')\n```")])
+        .script(SYNTHESIS, [text("Analyse faite.")])
+    )
+    orchestrator = orchestrator_with(
+        llm, catalog=Catalog(sources=[source]), registry=registry, sandbox=sandbox
+    )
+    orchestrator.ask("fais un graphique de la météo à Lyon")
+
+    prompt = llm.prompts_for(ANALYSIS)[0]
+    assert "store_id va de S01 à S12" in prompt  # le dictionnaire est bien joint
+
+
 def test_extrait_tronque_est_annonce_au_code_genere(
     tmp_path: Path, registry: Registry, monkeypatch
 ):

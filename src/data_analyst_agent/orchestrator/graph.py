@@ -585,6 +585,14 @@ class Orchestrator:
                         "table entière. Dis-le explicitement dans ta sortie ; n'annonce jamais "
                         "un agrégat comme s'il valait pour toute la source."
                     )
+            # Le dictionnaire va AUSSI à l'agent d'analyse, pas seulement à
+            # l'agent SQL. Sans lui, le code généré filtrait « store_id = 'Lyon' »
+            # — or Lyon est un store_name, le store_id vaut 'S03' — et ne trouvait
+            # rien, concluant à tort « aucune donnée météo pour Lyon ». L'agent SQL,
+            # lui, a toujours eu le dictionnaire et écrit le bon 'S03'.
+            dictionary = source.dictionary_text()
+            if dictionary:
+                data_context = f"{data_context}\n\n{dictionary}" if data_context else dictionary
             # objets intermédiaires de la conversation : montés aussi pour que le
             # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
             data_context = self._mount_workspace(state, data_files, data_context)
