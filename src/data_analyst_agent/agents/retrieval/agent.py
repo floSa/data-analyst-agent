@@ -63,6 +63,21 @@ quand le SQL « évident » semble marcher : c'est justement là qu'il est faux.
 --- fin du dictionnaire ---
 """
 
+# Le contexte du tour précédent, pour résoudre les anaphores : « affiche ceux
+# des autres années » n'a de sens qu'en sachant que « ceux » = le chiffre
+# d'affaires demandé juste avant. Sans lui, l'agent SQL reçoit une phrase
+# incomplète et répond « demande trop vague » au lieu d'écrire la requête.
+HISTORY_PROMPT = """\
+
+--- Contexte de la conversation ---
+{history}
+Le message courant peut S'APPUYER sur ce tour précédent : un « ceux-là », un
+« et pour... », une année ou un filtre différent sous-entendent la MÊME mesure
+et la MÊME logique que la requête précédente. Résous ces sous-entendus toi-même
+à partir du contexte ci-dessus ; ne demande pas de préciser ce qu'il rappelle.
+--- fin du contexte ---
+"""
+
 
 class ExecutedQuery(BaseModel):
     sql: str
@@ -101,6 +116,7 @@ class RetrievalDeps:
     # lecture de la source, et sur des données privées ce serait de l'invention.
     tools_used: list[str] = field(default_factory=list)
     dictionary: str | None = None
+    history: str | None = None
 
 
 def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
@@ -111,6 +127,8 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
         prompt = SYSTEM_PROMPT.format(dialect=ctx.deps.adapter.dialect)
         if ctx.deps.dictionary:
             prompt += DICTIONARY_PROMPT.format(dictionary=ctx.deps.dictionary)
+        if ctx.deps.history:
+            prompt += HISTORY_PROMPT.format(history=ctx.deps.history)
         return prompt
 
     @agent.tool
@@ -148,11 +166,15 @@ def run_retrieval(
     model: Model | None = None,
     settings: Settings | None = None,
     dictionary: str | None = None,
+    history: str | None = None,
 ) -> RetrievalResult:
     """Répond à une question par une requête SQL sur la source fournie."""
     settings = settings or get_settings()
     deps = RetrievalDeps(
-        adapter=adapter, max_rows=settings.retrieval_max_rows, dictionary=dictionary
+        adapter=adapter,
+        max_rows=settings.retrieval_max_rows,
+        dictionary=dictionary,
+        history=history,
     )
     agent = build_retrieval_agent()
     run = agent.run_sync(

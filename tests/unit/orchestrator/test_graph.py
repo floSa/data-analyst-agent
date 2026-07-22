@@ -563,6 +563,35 @@ def test_contexte_du_tour_precedent_donne_au_planificateur(
     assert "fais un graphique" in system
 
 
+def test_contexte_du_tour_precedent_donne_aussi_a_lagent_sql(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """L'anaphore d'un tour au suivant se résout dans l'agent SQL, pas juste le planner.
+
+    « Affiche ceux des autres années » après « le CA de 2025 » : l'agent SQL
+    doit voir le tour précédent, sinon il reçoit une phrase orpheline et répond
+    « demande trop vague ».
+    """
+    settings = make_settings(workspace_dir=tmp_path)
+    ConversationWorkspace(tmp_path, "csql").record_turn(
+        "quel est le chiffre d'affaires total de 2025 ?", "query", "mini"
+    )
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [tool_call("run_sql", {"query": "SELECT count(*) AS n FROM mini"}), text("ok.")],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry, settings=settings)
+    orchestrator.ask("affiche ceux des autres années", conversation_id="csql")
+    system = llm.systems_for(RETRIEVAL)[0]
+    assert "Contexte de la conversation" in system
+    assert "chiffre d'affaires total de 2025" in system
+
+
 def test_ajustement_flou_reprend_la_derniere_action(
     tmp_path: Path, mini_csv: Path, registry: Registry, monkeypatch
 ):

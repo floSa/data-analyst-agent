@@ -147,6 +147,28 @@ def test_sans_dictionnaire_le_prompt_nen_parle_pas(adapter):
     assert "expert SQL" in prompt
 
 
+def test_contexte_conversationnel_transmis_a_lagent_sql(adapter):
+    """L'anaphore « affiche ceux des autres années » ne se résout qu'avec le
+    tour précédent SOUS LES YEUX de l'agent SQL — pas seulement du planificateur.
+
+    Observé en vrai : après « quel est le CA total de 2025 ? », le tour « affiche
+    ceux des autres années » recevait une phrase orpheline et l'agent répondait
+    « demande trop vague » au lieu d'écrire la requête.
+    """
+    prompt = _capture_system_prompt(
+        adapter,
+        history="CONTEXTE CONVERSATIONNEL : au tour précédent, l'utilisateur a "
+        "demandé « quel est le chiffre d'affaires total de 2025 ? » (action : query).",
+    )
+    assert "Contexte de la conversation" in prompt
+    assert "chiffre d'affaires total de 2025" in prompt
+
+
+def test_sans_historique_le_prompt_nen_parle_pas(adapter):
+    prompt = _capture_system_prompt(adapter)
+    assert "Contexte de la conversation" not in prompt
+
+
 def test_boucle_infinie_coupee_par_la_limite(adapter):
     def responder_infini(messages, info):
         return ModelResponse(parts=[ToolCallPart("run_sql", {"query": "SELECT oops FROM mini"})])

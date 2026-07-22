@@ -475,12 +475,18 @@ class Orchestrator:
         plan = state["plan"]
         source = self._resolve_source(plan, self._effective_catalog(state))
         adapter = open_source(source)
+        # Le contexte du tour précédent va AUSSI à l'agent SQL, pas seulement au
+        # planificateur : sans lui, « affiche ceux des autres années » est une
+        # anaphore qu'il ne peut pas résoudre, et il répond « demande trop vague ».
+        workspace = state.get("workspace")
+        history = workspace.describe_context() if workspace is not None else None
         outcome = run_retrieval(
             state["question"],
             adapter=adapter,
             model=self.model,
             settings=self.settings,
             dictionary=source.dictionary_text(),
+            history=history,
         )
         artifacts = [_table_artifact(outcome.result)] if outcome.result else []
         # mémorise le tableau produit pour le réutiliser aux tours suivants
