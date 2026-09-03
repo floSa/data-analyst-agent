@@ -253,8 +253,8 @@ def detect_overflow(
 
 # Là où Ollama tronque en silence, vLLM répond par une erreur HTTP : un 400 dont
 # le corps dit « This model's maximum context length is N tokens. However, you
-# requested M tokens ». Le code doit tenir LES DEUX comportements — c'est le
-# prérequis de la migration (audit §7, tâches 8-9).
+# requested M tokens » (constaté, docs/VLLM.md §3.3). Le code doit tenir LES DEUX
+# comportements — c'est le prérequis de la migration (audit §7, tâches 8-9).
 STATUTS_REFUS = frozenset({400, 413, 422})
 MOTIFS_REFUS = re.compile(
     r"maximum context length"
@@ -277,12 +277,15 @@ CONTEXT_REFUSAL_MESSAGE = (
 def is_context_refusal(exc: BaseException) -> bool:
     """Reconnaît le refus explicite d'un serveur dont la fenêtre est dépassée.
 
-    **Non validé contre un vrai vLLM**, et volontairement : le banc d'essai de
-    la migration est une autre tâche (audit §7, 8-9), et le simuler à la légère
-    donnerait une fausse assurance. Ce qui est tenu ici, c'est que le refus ne se
-    perde plus dans un « Je n'ai pas pu répondre : ModelHTTPError: … » que
-    personne ne saurait relier à la longueur du prompt. Le jour où le banc
-    tourne, c'est cette fonction qu'il faut confronter au corps d'erreur réel.
+    **Confrontée au corps d'erreur réel de vLLM 0.28** (docs/VLLM.md §3.3) :
+    reconnue sans modification, sur un 400 dont le message commence par « This
+    model's maximum context length is 32768 tokens ». Et pas de faux positif sur
+    les deux autres 400 que rend vLLM — ceux qui réclament ses options de tool
+    calling —, leurs messages ne parlant pas de contexte.
+
+    Ce qui est tenu ici : le refus ne se perd plus dans un « Je n'ai pas pu
+    répondre : ModelHTTPError: … » que personne ne saurait relier à la longueur
+    du prompt.
 
     Le statut, quand l'exception en porte un, doit être un refus de requête :
     une panne serveur (500) qui mentionnerait « context » n'est pas un

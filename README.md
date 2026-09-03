@@ -38,6 +38,7 @@ Le fonctionnement détaillé (schéma fonctionnel du graphe, séquences, durciss
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | schémas architectural et fonctionnel, description de chaque service, sécurité, configuration, stratégie de tests |
 | [docs/CADRAGE.md](docs/CADRAGE.md) | cahier des charges : contraintes, décisions, stack, roadmap, exigences de tests |
 | [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
+| [docs/VLLM.md](docs/VLLM.md) | banc d'essai vLLM : le tool calling mesuré, ce qui casse sans les bonnes options, ce qui reste à vérifier |
 
 ## Démarrage
 
@@ -280,10 +281,10 @@ Les tests marqués `live` (LLM local requis) sont exclus par défaut : `uv run p
 
 ```
 src/data_analyst_agent/   # package (orchestrator, agents, sandbox, api)
-docs/                     # ARCHITECTURE, CADRAGE, spike-vanna
+docs/                     # ARCHITECTURE, CADRAGE, AUDIT, VLLM, spike-vanna
 models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
 sources/                  # catalogue des sources + datasets vendorisés
-scripts/                  # administration des comptes, migration du workspace, seed Postgres, batterie live
+scripts/                  # comptes, migration du workspace, seed Postgres, batterie live, banc vLLM
 notebooks/                # entraînement des modèles jouets (jupytext .md + .ipynb)
 tests/                    # unit / integration / e2e golden / helpers
 ```
