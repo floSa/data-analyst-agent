@@ -99,6 +99,13 @@ tombé. Sans session : `401` sur l'API, page de connexion en navigation. Les
 routes qui modifient l'état exigent en plus l'en-tête `X-CSRF-Token`, repris du
 cookie posé à la connexion.
 
+**Chacun ne voit que ses conversations.** Les routes `/conversations…` et le
+`conversation_id` accepté par `POST /chat` sont résolus sous le dossier de
+l'utilisateur de la session, et il n'existe pas de vue plus large : le fil d'un
+autre compte répond **`404`, jamais `403`** — un `403` confirmerait son
+existence. Reprendre l'identifiant du fil de quelqu'un d'autre dans `POST /chat`
+n'y écrit rien : cela ouvre un fil neuf et vide chez soi.
+
 | Méthode | Route | Session | Rôle |
 |---|---|---|---|
 | `GET` | `/health` | non | Sonde de vie |
@@ -108,10 +115,10 @@ cookie posé à la connexion.
 | `GET` | `/me` | oui | Le compte de la session en cours (`{"login": …}`) |
 | `POST` | `/chat` | oui | Question en langage naturel → réponse + artefacts + trace (contrat `ChatAnswer`) |
 | `GET` | `/` | oui | Page de chat (rendu des PNG base64 et des tables JSON, zéro asset externe) |
-| `GET` | `/conversations` | oui | Liste des conversations, de la plus récente à la plus ancienne |
-| `GET` | `/conversations/{id}` | oui | Le fil complet (messages + artefacts) pour le reprendre |
-| `POST` | `/conversations/{id}/duplicate` | oui | Duplique une conversation |
-| `DELETE` | `/conversations/{id}` | oui | Supprime une conversation et sa mémoire |
+| `GET` | `/conversations` | oui | **Ses** conversations, de la plus récente à la plus ancienne |
+| `GET` | `/conversations/{id}` | oui | Le fil complet (messages + artefacts) pour le reprendre ; `404` s'il est à quelqu'un d'autre |
+| `POST` | `/conversations/{id}/duplicate` | oui | Duplique une de ses conversations |
+| `DELETE` | `/conversations/{id}` | oui | Supprime une de ses conversations et sa mémoire |
 
 ### Comptes et sessions
 
@@ -130,11 +137,61 @@ Les sessions sont **côté serveur** : le navigateur ne reçoit qu'un identifian
 opaque, tout l'état est sur disque. C'est ce qui rend la déconnexion effective —
 et ce qui permet à `disable` de couper immédiatement les onglets déjà ouverts.
 
+**Le login est normalisé** à la création comme à la connexion : normalisation
+unicode NFKC, espaces de bord retirés, casse repliée (`casefold`). `floSa`,
+`FLOSA` et ` flosa ` désignent donc un seul et même compte — ce qui compte
+d'autant plus que le login est aussi le nom du dossier où vivent ses
+conversations. L'espace interne, le caractère de contrôle et le login de plus de
+64 caractères sont refusés ; l'unicode, lui, est accepté.
+
 ## Mémoire de conversation
 
 Chaque conversation (`conversation_id`) dispose d'un espace de travail qui **persiste les tableaux intermédiaires en CSV** (`DAA_WORKSPACE_DIR`). Aux tours suivants, ces objets sont réexposés : interrogeables comme des sources (« et pour les femmes ? »), réutilisables pour une prédiction (« prédis **ces** lignes ») et **montés dans la sandbox** pour que le code d'analyse généré les relise (`pd.read_csv('/data/resultat_1.csv')`).
 
 Le **fil lui-même est persisté** au même endroit (`transcript.json`) : la barre latérale de la page de chat liste les conversations précédentes, on en rouvre une pour reprendre où on en était (figures et tableaux compris), on la duplique ou on la supprime. Comme une conversation est un simple dossier, la duplication emporte la mémoire ci-dessus — la copie sait encore « prédire ces lignes » — et la suppression ne laisse aucun CSV orphelin.
+
+### Arborescence
+
+Tout est rangé **par utilisateur**, et c'est ce rangement qui cloisonne : une
+route ne peut pas oublier un filtre qui n'existe pas, elle n'a jamais eu qu'une
+racine sous les yeux. Les verrous suivent — ils sont posés à côté de la
+ressource qu'ils sérialisent — ce qui cloisonne aussi la contention entre
+comptes. Les dossiers sont créés en `0o700`.
+
+```
+$DAA_WORKSPACE_DIR/
+└── <utilisateur>/            # login normalisé, encodé pour le système de fichiers
+    ├── .locks/               # verrous de CET utilisateur
+    └── <conversation_id>/
+        ├── transcript.json   # le fil : messages, titre, propriétaire, prédiction en attente
+        ├── manifest.json     # les tableaux intermédiaires mémorisés
+        ├── context.json      # le tour précédent (pour résoudre un ajustement)
+        └── resultat_*.csv    # les tableaux eux-mêmes
+```
+
+Les deux segments variables passent par le même encodage : tout octet hors
+`[0-9A-Za-z_-]` devient `~XX`. Il est réversible, donc **sans collision** — deux
+logins qui ne diffèrent que par la ponctuation ne peuvent pas se retrouver dans
+le même dossier — et il ne peut produire ni `/` ni `.`, donc ni `..` ni chemin
+absolu.
+
+### Reprise d'un dossier antérieur au cloisonnement
+
+Un `workspace_dir` où les conversations sont posées **à la racine** date d'avant
+le rangement par utilisateur : l'application ne les y cherche plus. Un script
+dédié les range, sans rien réécrire d'autre que leur propriétaire :
+
+```bash
+# à blanc (défaut) : montre ce qui serait fait, n'écrit rien
+uv run python scripts/migrate_workspace_owner.py --workspace <dossier> --owner <login>
+# pour de vrai
+uv run python scripts/migrate_workspace_owner.py --workspace <dossier> --owner <login> --appliquer
+```
+
+Il est idempotent (relancé, il ne trouve plus rien), il refuse tout le lot
+plutôt que d'écraser un fil en cas de collision de noms, et il estampille avant
+de déplacer — une interruption laisse donc soit un fil encore à la racine, que
+la relance reprendra, soit un fil rangé et lisible par son compte.
 
 ## Observabilité
 
@@ -157,7 +214,7 @@ src/data_analyst_agent/   # package (orchestrator, agents, sandbox, api)
 docs/                     # ARCHITECTURE, CADRAGE, spike-vanna
 models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
 sources/                  # catalogue des sources + datasets vendorisés
-scripts/                  # administration des comptes, seed Postgres, batterie live
+scripts/                  # administration des comptes, migration du workspace, seed Postgres, batterie live
 notebooks/                # entraînement des modèles jouets (jupytext .md + .ipynb)
 tests/                    # unit / integration / e2e golden / helpers
 ```
