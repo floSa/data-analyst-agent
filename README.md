@@ -150,6 +150,75 @@ Chaque conversation (`conversation_id`) dispose d'un espace de travail qui **per
 
 Le **fil lui-même est persisté** au même endroit (`transcript.json`) : la barre latérale de la page de chat liste les conversations précédentes, on en rouvre une pour reprendre où on en était (figures et tableaux compris), on la duplique ou on la supprime. Comme une conversation est un simple dossier, la duplication emporte la mémoire ci-dessus — la copie sait encore « prédire ces lignes » — et la suppression ne laisse aucun CSV orphelin.
 
+### Ce que l'agent se rappelle vraiment
+
+Moins que ce que la persistance laisse croire, et il vaut mieux le savoir :
+
+- **le transcript n'est jamais renvoyé au modèle** — il sert l'affichage ;
+- **le contexte conversationnel ne retient qu'UN tour** (`context.json`) : la
+  question précédente, l'action, la source, le code de figure, les features de
+  la dernière prédiction réussie. Deux tours en arrière est déjà oublié ;
+- ce qui remonte vraiment au modèle, c'est **la liste des tableaux
+  intermédiaires** — et c'est elle, et elle seule, qui grossissait sans fin.
+
+### Ce qui entre dans le contexte est plafonné
+
+Réinjecter tous les tableaux à chaque tour n'avait aucune borne : mesuré à
+100 tours, le `docker run` de l'analyse portait 100 arguments `--volume` et le
+prompt du planificateur 13 348 caractères de catalogue d'objets. Au-delà de la
+fenêtre du serveur, Ollama tronque **sans erreur ni message** — 48 350 tokens
+envoyés pour 32 768 servis, et l'agent répond « je n'ai pas bien compris ».
+
+Deux plafonds, appliqués **aux trois axes à la fois** (prompt du planificateur,
+montages de la sandbox, catalogue des sources éphémères) — les désaccorder
+donnerait un tableau décrit au modèle mais introuvable à l'exécution :
+
+| Réglage | Défaut | Ce qu'il borne |
+|---|---|---|
+| `DAA_CONTEXT_ARTIFACT_WINDOW` | `8` | nombre de tableaux réinjectés, les plus récents (`0` = pas de fenêtre) |
+| `DAA_CONTEXT_TOKEN_BUDGET` | `8000` | taille du prompt du planificateur, décomptée **avant** l'appel (`0` = pas de budget) |
+
+**On plafonne ce qu'on injecte, pas ce qu'on conserve** : les tableaux évincés
+restent sur le disque, dans le manifeste et dans le fil affiché. Au dépassement
+du budget, ce sont les **plus anciens** qui sortent en premier — la dégradation
+est ordonnée, pas subie.
+
+### Quand du contexte est coupé, l'application le dit
+
+C'est le corollaire : une mémoire plafonnée qui ne s'annonce pas est une
+mémoire qui ment. La coupe apparaît dans la trace (`prompt_tokens`,
+`server_prompt_tokens`, `truncated`, `truncation`) **et** dans la réponse rendue
+— la trace n'est pas dépliée par défaut :
+
+```
+Il y a 150 lignes dans la table `iris`.
+
+Contexte tronqué : 892 des 900 tableaux intermédiaires de cette conversation ne
+sont plus transmis au modèle (fenêtre DAA_CONTEXT_ARTIFACT_WINDOW=8). Ils
+restent enregistrés — le fil, lui, reste complet.
+```
+
+Trois situations sont distinguées, et se cumulent :
+
+1. **éviction délibérée** — la fenêtre ou le budget ont retiré des tableaux ;
+2. **prompt plus long que la fenêtre du serveur** (`DAA_CONTEXT_MODEL_WINDOW`,
+   `32768`) — constaté *avant* l'envoi, parce qu'au-delà le modèle ne rend plus
+   de sortie exploitable et qu'il n'y aurait alors plus rien à mesurer ;
+3. **troncature constatée côté serveur** — `prompt_eval_count` confronté à ce
+   qu'on a envoyé. Le compteur de tokens local est approché (3 caractères par
+   token) et **surestime** de 1 à 17 % (mesuré contre `gemma4:e4b`) : il coupe
+   donc un peu trop tôt plutôt que trop tard.
+
+Un serveur qui **refuse** au lieu de tronquer (vLLM répond `400 … maximum
+context length`) est reconnu comme tel et dit en clair, au lieu de finir en
+`ModelHTTPError` illisible.
+
+Pour mesurer soi-même ce qu'une conversation injecte, tour après tour :
+
+```bash
+uv run python scripts/mesure_contexte.py --tours 1 10 30 100
+```
+
 ### Arborescence
 
 Tout est rangé **par utilisateur**, et c'est ce rangement qui cloisonne : une
@@ -195,7 +264,7 @@ la relance reprendra, soit un fil rangé et lisible par son compte.
 
 ## Observabilité
 
-Chaque réponse embarque une trace typée par nœud du graphe (plan, capacité exécutée, synthèse, durées) — visible dans le JSON de `/chat` — et le serveur journalise chaque nœud (logger `data_analyst_agent.orchestrator`).
+Chaque réponse embarque une trace typée par nœud du graphe (plan, capacité exécutée, synthèse, durées) — visible dans le JSON de `/chat` — et le serveur journalise chaque nœud (logger `data_analyst_agent.orchestrator`). Le nœud `plan` y ajoute ce qu'a pesé le prompt (`prompt_tokens`), ce que le serveur dit en avoir lu (`server_prompt_tokens`) et ce qui a été coupé du contexte (`truncated`, `truncation`).
 
 ## Qualité
 
