@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connexion — data-analyst-agent</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { margin: 0; height: 100vh; display: flex; align-items: center;
+         justify-content: center; }
+  form { display: flex; flex-direction: column; gap: .75rem; width: 18rem;
+         padding: 2rem; border: 1px solid #6b728055; border-radius: .6rem;
+         background: #6b728011; }
+  h1 { font-size: 1.1rem; margin: 0 0 .5rem; }
+  label { font-size: .85rem; display: flex; flex-direction: column; gap: .25rem; }
+  input { padding: .55rem; border-radius: .4rem; border: 1px solid #6b7280;
+          font: inherit; }
+  button { padding: .6rem 1.2rem; border-radius: .4rem; border: 0;
+           background: #2563eb; color: white; cursor: pointer; font: inherit; }
+  .erreur { color: #dc2626; font-size: .85rem; margin: 0; }
+  /* Le gabarit n'a pas de conditionnelle : un message vide ne s'affiche pas. */
+  .erreur:empty { display: none; }
+</style>
+</head>
+<body>
+<!-- Un formulaire HTML ordinaire : la connexion ne dépend pas de JavaScript.
+     Le champ caché reprend le jeton du cookie anti-CSRF (double envoi) : un
+     site tiers peut faire partir une requête, il ne peut pas lire ce cookie. -->
+<form method="post" action="/login">
+  <h1>data-analyst-agent</h1>
+  <p class="erreur">{{erreur}}</p>
+  <label for="login">Identifiant
+    <input type="text" id="login" name="login" autocomplete="username" autofocus required>
+  </label>
+  <label for="motdepasse">Mot de passe
+    <input type="password" id="motdepasse" name="motdepasse"
+           autocomplete="current-password" required>
+  </label>
+  <input type="hidden" name="csrf" value="{{csrf}}">
+  <button type="submit" id="connexion">Se connecter</button>
+</form>
+</body>
+</html>

@@ -9,19 +9,30 @@ Les conversations sont persistées sur disque (cf. ``orchestrator/conversations`
 et listées dans la barre latérale : on peut en ouvrir une ancienne et reprendre
 où on en était, la dupliquer ou la supprimer.
 
+**Toutes les routes exigent une session**, sauf ``/health`` — une sonde de
+disponibilité n'a pas de session, et lui refuser l'accès ferait passer le
+service pour tombé. Une requête sans session reçoit 401 sur l'API et la page de
+connexion en navigation.
+
 Lancement : uv run uvicorn data_analyst_agent.api.app:app
 """
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Callable
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 import data_analyst_agent
 from data_analyst_agent.api import pages
+from data_analyst_agent.auth.accounts import AccountStore
+from data_analyst_agent.auth.current_user import CurrentUser, current_user
+from data_analyst_agent.auth.sessions import TOKEN_BYTES, Session, SessionStore
+from data_analyst_agent.auth.throttle import LoginThrottle
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.orchestrator.conversations import (
     Conversation,
@@ -29,6 +40,24 @@ from data_analyst_agent.orchestrator.conversations import (
     ConversationSummary,
 )
 from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator
+
+# Les seules routes atteignables sans session. `/health` parce qu'une sonde n'en
+# a pas ; `/login` parce qu'il faut bien une porte pour en obtenir une.
+ROUTES_OUVERTES = frozenset({"/health", "/login"})
+
+# Les méthodes qui modifient l'état sont celles que le CSRF vise : le cookie de
+# session part tout seul sur une requête déclenchée par un autre site, ce que
+# les en-têtes d'authentification ne faisaient pas. `SameSite=Lax` ne suffit
+# pas — il ne couvre pas les sous-requêtes d'un site tiers et dépend du
+# navigateur.
+METHODES_MUTANTES = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+EN_TETE_CSRF = "X-CSRF-Token"
+
+# Message unique, quel que soit le refus : distinguer « ce compte n'existe pas »
+# de « ce mot de passe est faux » donne un oracle d'énumération des comptes.
+ECHEC_CONNEXION = "Identifiants invalides."
+ECHEC_VERROUILLE = "Trop de tentatives. Réessayez dans quelques minutes."
+ECHEC_FORMULAIRE = "Formulaire expiré. Recommencez."
 
 
 class ChatRequest(BaseModel):
@@ -49,9 +78,21 @@ def create_app(
     app.state.orchestrator = None
     app.state.orchestrator_factory = orchestrator_factory or Orchestrator
     app.state.settings = settings or get_settings()
+    reglages: Settings = app.state.settings
     # les conversations vivent sur disque : elles survivent au rechargement de la
     # page comme au redémarrage du serveur.
-    app.state.store = ConversationStore(app.state.settings.workspace_dir)
+    app.state.store = ConversationStore(reglages.workspace_dir)
+    app.state.accounts = AccountStore(reglages.auth_accounts_path)
+    app.state.sessions = SessionStore(
+        reglages.auth_state_dir,
+        reglages.session_idle_timeout,
+        reglages.session_absolute_timeout,
+    )
+    app.state.throttle = LoginThrottle(
+        reglages.auth_state_dir,
+        reglages.login_max_failures,
+        reglages.login_lockout_seconds,
+    )
 
     def get_orchestrator() -> Orchestrator:
         if app.state.orchestrator is None:
@@ -60,6 +101,141 @@ def create_app(
 
     def store() -> ConversationStore:
         return app.state.store
+
+    # -- cookies --------------------------------------------------------------
+
+    def poser_cookie_csrf(reponse: Response, jeton: str) -> None:
+        """Le jeton anti-CSRF, LISIBLE par la page — c'est tout l'intérêt.
+
+        Il n'est pas `HttpOnly` parce que le script doit le relire pour le
+        renvoyer en en-tête : un site tiers peut faire partir le cookie de
+        session avec une requête, il ne peut pas LIRE ce cookie-ci (même
+        origine) donc pas fabriquer l'en-tête qui va avec.
+        """
+        reponse.set_cookie(
+            reglages.csrf_cookie_name,
+            jeton,
+            httponly=False,
+            samesite="lax",
+            path="/",
+            secure=reglages.session_cookie_secure,
+            max_age=int(reglages.session_absolute_timeout),
+        )
+
+    def poser_cookies_de_session(reponse: Response, jeton: str, session: Session) -> None:
+        reponse.set_cookie(
+            reglages.session_cookie_name,
+            jeton,
+            httponly=True,  # hors de portée d'un script, donc d'une injection
+            samesite="lax",
+            path="/",
+            secure=reglages.session_cookie_secure,
+            max_age=int(reglages.session_absolute_timeout),
+        )
+        poser_cookie_csrf(reponse, session.csrf_token)
+
+    # -- garde d'accès --------------------------------------------------------
+
+    def csrf_valide(request: Request, session: Session) -> bool:
+        fourni = request.headers.get(EN_TETE_CSRF, "")
+        return bool(fourni) and secrets.compare_digest(fourni, session.csrf_token)
+
+    def refuser(request: Request) -> Response:
+        """401 pour l'API, page de connexion pour la navigation.
+
+        Le critère est la requête elle-même : une navigation de navigateur
+        demande du HTML en GET. Un `fetch` de la page, lui, reçoit 401 et se
+        redirige de son côté — le rediriger ici lui ferait recevoir du HTML là
+        où il attend du JSON.
+        """
+        if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+            return RedirectResponse("/login", status_code=302)
+        return JSONResponse({"detail": "authentification requise"}, status_code=401)
+
+    @app.middleware("http")
+    async def exiger_une_session(request: Request, call_next):
+        if request.url.path in ROUTES_OUVERTES:
+            return await call_next(request)
+        session = app.state.sessions.resolve(request.cookies.get(reglages.session_cookie_name))
+        if session is None:
+            return refuser(request)
+        if request.method in METHODES_MUTANTES and not csrf_valide(request, session):
+            return JSONResponse({"detail": "jeton anti-CSRF absent ou invalide"}, status_code=403)
+        # Ce que lira `Depends(current_user)` : la garde est ici, en un seul
+        # endroit, et une route ajoutée demain est protégée sans rien déclarer.
+        request.state.user = CurrentUser(login=session.login)
+        return await call_next(request)
+
+    # -- connexion / déconnexion ----------------------------------------------
+
+    def page_de_connexion(message: str = "", code: int = 200) -> Response:
+        """Rend la page de connexion avec un jeton anti-CSRF frais.
+
+        Le formulaire de connexion n'a pas encore de session à quoi lier son
+        jeton : c'est un double envoi (cookie + champ caché), qu'un site tiers
+        ne peut pas reproduire puisqu'il ne lit pas le cookie.
+        """
+        jeton = secrets.token_urlsafe(TOKEN_BYTES)
+        reponse = HTMLResponse(
+            pages.render(pages.LOGIN, csrf=jeton, erreur=message), status_code=code
+        )
+        poser_cookie_csrf(reponse, jeton)
+        # Ni cache navigateur ni cache mandataire sur une page qui porte un jeton.
+        reponse.headers["Cache-Control"] = "no-store"
+        return reponse
+
+    @app.get("/login", response_class=HTMLResponse)
+    def afficher_connexion(request: Request) -> Response:
+        deja = app.state.sessions.resolve(request.cookies.get(reglages.session_cookie_name))
+        return RedirectResponse("/", status_code=302) if deja else page_de_connexion()
+
+    @app.post("/login")
+    def connexion(
+        request: Request,
+        login: Annotated[str, Form()],
+        motdepasse: Annotated[str, Form()],
+        csrf: Annotated[str, Form()] = "",
+    ) -> Response:
+        adresse = request.client.host if request.client else "inconnue"
+        cookie = request.cookies.get(reglages.csrf_cookie_name, "")
+        if not cookie or not secrets.compare_digest(csrf, cookie):
+            return page_de_connexion(ECHEC_FORMULAIRE, 403)
+        if app.state.throttle.locked(login, adresse):
+            return page_de_connexion(ECHEC_VERROUILLE, 429)
+        compte = app.state.accounts.verify(login, motdepasse)
+        if compte is None:
+            app.state.throttle.record_failure(login, adresse)
+            return page_de_connexion(ECHEC_CONNEXION, 401)
+        app.state.throttle.reset(login, adresse)
+        # Régénération de l'identifiant de session : la session éventuellement en
+        # cours est révoquée et une NOUVELLE est ouverte. Sans ça, un identifiant
+        # posé d'avance par un attaquant (fixation de session) resterait le sien
+        # une fois la victime authentifiée.
+        app.state.sessions.revoke(request.cookies.get(reglages.session_cookie_name))
+        jeton, session = app.state.sessions.create(compte.login)
+        reponse = RedirectResponse("/", status_code=303)  # 303 : le navigateur repasse en GET
+        poser_cookies_de_session(reponse, jeton, session)
+        return reponse
+
+    @app.post("/logout")
+    def deconnexion(request: Request) -> Response:
+        """Ferme la session côté SERVEUR, pas seulement dans le navigateur.
+
+        Effacer le cookie ne suffirait pas : le jeton resterait valable pour qui
+        l'aurait recopié.
+        """
+        app.state.sessions.revoke(request.cookies.get(reglages.session_cookie_name))
+        reponse = Response(status_code=204)
+        reponse.delete_cookie(reglages.session_cookie_name, path="/")
+        reponse.delete_cookie(reglages.csrf_cookie_name, path="/")
+        return reponse
+
+    @app.get("/me", response_model=CurrentUser)
+    def qui_suis_je(utilisateur: Annotated[CurrentUser, Depends(current_user)]) -> CurrentUser:
+        """L'utilisateur de la session en cours, pour un client d'API."""
+        return utilisateur
+
+    # -- routes applicatives --------------------------------------------------
 
     @app.get("/health")
     def health() -> dict:
@@ -112,8 +288,10 @@ def create_app(
             raise HTTPException(status_code=404, detail="conversation inconnue")
 
     @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return pages.gabarit(pages.CHAT)
+    def index(utilisateur: Annotated[CurrentUser, Depends(current_user)]) -> str:
+        return pages.render(
+            pages.CHAT, login=utilisateur.login, cookie_csrf=reglages.csrf_cookie_name
+        )
 
     return app
 

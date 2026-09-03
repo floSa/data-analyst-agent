@@ -10,15 +10,20 @@ Le serveur est un vrai uvicorn sur un port libre ; l'orchestrateur est doublé
 (aucun LLM, aucun Docker), et le magasin est pré-rempli sur disque.
 """
 
+import contextlib
+import secrets
 import socket
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 import uvicorn
+from argon2 import PasswordHasher
 
 from data_analyst_agent.api.app import create_app
+from data_analyst_agent.auth.accounts import AccountStore
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.conversations import ConversationStore
 from data_analyst_agent.orchestrator.graph import ChatAnswer
@@ -30,6 +35,14 @@ TABLE_JSON = '{"columns": ["sex", "n"], "rows": [["female", 314], ["male", 577]]
 
 # Processus pytest séparé : cf. le marqueur `ui` dans pyproject.toml.
 pytestmark = pytest.mark.ui
+
+# La page est derrière l'authentification : chaque test ouvre une session par le
+# formulaire, comme un utilisateur. Le mot de passe est tiré au hasard à chaque
+# exécution — aucun mot de passe de test n'existe dans le dépôt.
+LOGIN = "alice"
+MOT_DE_PASSE = secrets.token_urlsafe(16)
+# argon2 par défaut, c'est 64 Mio par empreinte : inutile de les payer ici.
+HACHEUR_RAPIDE = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
 
 
 class FakeOrchestrator:
@@ -46,10 +59,54 @@ def _port_libre() -> int:
         return s.getsockname()[1]
 
 
+def _reglages(tmp_path: Path, dossier: str) -> Settings:
+    """Réglages isolés, avec un compte prêt à ouvrir une session."""
+    settings = Settings(
+        _env_file=None,
+        workspace_dir=tmp_path / dossier,
+        auth_accounts_path=tmp_path / "users.yaml",
+        auth_state_dir=tmp_path / "auth",
+        # Le serveur de test écoute en http sur 127.0.0.1 : un cookie `Secure`
+        # serait jeté par le navigateur. C'est exactement le cas que ce réglage
+        # existe pour couvrir — le développement local.
+        session_cookie_secure=False,
+    )
+    AccountStore(settings.auth_accounts_path, hasher=HACHEUR_RAPIDE).create(LOGIN, MOT_DE_PASSE)
+    return settings
+
+
+@contextlib.contextmanager
+def _servir(settings: Settings) -> Iterator[str]:
+    """Un uvicorn réel sur un port libre, arrêté à la sortie."""
+    app = create_app(orchestrator_factory=FakeOrchestrator, settings=settings)
+    port = _port_libre()
+    serveur = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    fil = threading.Thread(target=serveur.run, daemon=True)
+    fil.start()
+    for _ in range(100):
+        if serveur.started:
+            break
+        time.sleep(0.05)
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        serveur.should_exit = True
+        fil.join(timeout=5)
+
+
+def connexion(page, base_url: str) -> None:
+    """Ouvre une session par le formulaire, puis atterrit sur la page de chat."""
+    page.goto(f"{base_url}/login")
+    page.fill("#login", LOGIN)
+    page.fill("#motdepasse", MOT_DE_PASSE)
+    page.click("#connexion")
+    page.wait_for_selector("#journal")
+
+
 @pytest.fixture
 def app_url(tmp_path: Path):
     """Un uvicorn réel, sur un magasin de conversations pré-rempli."""
-    settings = Settings(_env_file=None, workspace_dir=tmp_path / "workspaces")
+    settings = _reglages(tmp_path, "workspaces")
     store = ConversationStore(settings.workspace_dir)
     conversation = store.create()
     store.record_turn(
@@ -68,23 +125,13 @@ def app_url(tmp_path: Path):
         error="aucune ligne récupérée",
     )
 
-    app = create_app(orchestrator_factory=FakeOrchestrator, settings=settings)
-    port = _port_libre()
-    serveur = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    fil = threading.Thread(target=serveur.run, daemon=True)
-    fil.start()
-    for _ in range(100):
-        if serveur.started:
-            break
-        time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}"
-    serveur.should_exit = True
-    fil.join(timeout=5)
+    with _servir(settings) as url:
+        yield url
 
 
 def test_reouvrir_une_conversation_affiche_le_texte_des_reponses(page, app_url: str):
     """LE bug : « (pas de réponse) » à la place de chaque réponse relue."""
-    page.goto(app_url)
+    connexion(page, app_url)
     page.click(".fil-titre")
 
     page.wait_for_selector(".message.agent")
@@ -93,7 +140,7 @@ def test_reouvrir_une_conversation_affiche_le_texte_des_reponses(page, app_url: 
 
 
 def test_reouvrir_affiche_aussi_questions_tableaux_figures_et_erreurs(page, app_url: str):
-    page.goto(app_url)
+    connexion(page, app_url)
     page.click(".fil-titre")
     page.wait_for_selector(".message.agent")
 
@@ -106,7 +153,7 @@ def test_reouvrir_affiche_aussi_questions_tableaux_figures_et_erreurs(page, app_
 
 
 def test_barre_laterale_liste_la_conversation(page, app_url: str):
-    page.goto(app_url)
+    connexion(page, app_url)
     page.wait_for_selector(".fil-titre")
 
     assert page.locator(".fil-titre").count() == 1
@@ -115,7 +162,7 @@ def test_barre_laterale_liste_la_conversation(page, app_url: str):
 
 def test_envoyer_un_message_affiche_la_reponse(page, app_url: str):
     """Le chemin live doit rester bon : c'est la même fonction de rendu."""
-    page.goto(app_url)
+    connexion(page, app_url)
     page.click("#nouvelle")
     page.fill("#message", "combien de passagers ?")
     page.click("#envoyer")
@@ -127,7 +174,7 @@ def test_envoyer_un_message_affiche_la_reponse(page, app_url: str):
 
 
 def test_nouvelle_conversation_vide_le_journal(page, app_url: str):
-    page.goto(app_url)
+    connexion(page, app_url)
     page.click(".fil-titre")
     page.wait_for_selector(".message.agent")
 
@@ -136,7 +183,7 @@ def test_nouvelle_conversation_vide_le_journal(page, app_url: str):
 
 
 def test_supprimer_une_conversation_la_retire_de_la_barre(page, app_url: str):
-    page.goto(app_url)
+    connexion(page, app_url)
     page.wait_for_selector(".fil-titre")
     page.on("dialog", lambda dialogue: dialogue.accept())
 
@@ -147,7 +194,7 @@ def test_supprimer_une_conversation_la_retire_de_la_barre(page, app_url: str):
 
 
 def test_dupliquer_une_conversation_lajoute_et_louvre(page, app_url: str):
-    page.goto(app_url)
+    connexion(page, app_url)
     page.wait_for_selector(".fil-titre")
 
     page.click(".fil-action[title='Dupliquer']")
@@ -164,7 +211,7 @@ def test_dupliquer_une_conversation_lajoute_et_louvre(page, app_url: str):
 @pytest.fixture
 def url_markdown(tmp_path: Path):
     """Un fil dont la réponse est du markdown, comme le LLM en produit vraiment."""
-    settings = Settings(_env_file=None, workspace_dir=tmp_path / "md")
+    settings = _reglages(tmp_path, "md")
     store = ConversationStore(settings.workspace_dir)
     c = store.create()
     store.record_turn(
@@ -180,23 +227,13 @@ def url_markdown(tmp_path: Path):
             "Tous les attributs sont présents."
         ),
     )
-    app = create_app(orchestrator_factory=FakeOrchestrator, settings=settings)
-    port = _port_libre()
-    serveur = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    fil = threading.Thread(target=serveur.run, daemon=True)
-    fil.start()
-    for _ in range(100):
-        if serveur.started:
-            break
-        time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}"
-    serveur.should_exit = True
-    fil.join(timeout=5)
+    with _servir(settings) as url:
+        yield url
 
 
 def test_markdown_rendu_pas_affiche_en_brut(page, url_markdown: str):
     """Les ** et les puces doivent devenir du gras et une liste, pas du texte."""
-    page.goto(url_markdown)
+    connexion(page, url_markdown)
     page.click(".fil-titre")
     page.wait_for_selector(".message.agent")
 
@@ -212,7 +249,7 @@ def test_markdown_rendu_pas_affiche_en_brut(page, url_markdown: str):
 def test_html_dans_la_reponse_est_echappe_pas_execute(page, tmp_path: Path):
     """Le texte vient d'un LLM nourri de données : du HTML doit s'AFFICHER, jamais
     s'exécuter. Le rendu markdown ne doit pas ouvrir une porte d'injection."""
-    settings = Settings(_env_file=None, workspace_dir=tmp_path / "xss")
+    settings = _reglages(tmp_path, "xss")
     store = ConversationStore(settings.workspace_dir)
     c = store.create()
     store.record_turn(
@@ -220,23 +257,53 @@ def test_html_dans_la_reponse_est_echappe_pas_execute(page, tmp_path: Path):
         question="et ça ?",
         answer='Attention <img src=x onerror="window.__pwn=1"> et <script>window.__pwn=2</script>',
     )
-    app = create_app(orchestrator_factory=FakeOrchestrator, settings=settings)
-    port = _port_libre()
-    serveur = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    fil = threading.Thread(target=serveur.run, daemon=True)
-    fil.start()
-    for _ in range(100):
-        if serveur.started:
-            break
-        time.sleep(0.05)
-    try:
-        page.goto(f"http://127.0.0.1:{port}")
+    with _servir(settings) as url:
+        connexion(page, url)
         page.click(".fil-titre")
         page.wait_for_selector(".message.agent")
 
         assert page.evaluate("window.__pwn === undefined")  # rien n'a été exécuté
         assert page.locator("#journal img").count() == 0  # la balise n'est pas devenue une image
         assert "<img src=x" in page.inner_text("#journal")  # elle est affichée telle quelle
-    finally:
-        serveur.should_exit = True
-        fil.join(timeout=5)
+
+
+# --- connexion, dans un vrai navigateur -------------------------------------------
+
+
+@pytest.fixture
+def url_nue(tmp_path: Path):
+    """Un serveur avec un compte, mais aucune conversation."""
+    with _servir(_reglages(tmp_path, "nu")) as url:
+        yield url
+
+
+def test_sans_session_le_navigateur_arrive_sur_la_page_de_connexion(page, url_nue: str):
+    """Ce que voit un visiteur : le formulaire, pas la page de chat ni un JSON."""
+    page.goto(url_nue)
+
+    page.wait_for_selector("#connexion")
+    assert page.locator("#journal").count() == 0
+    assert "Se connecter" in page.inner_text("form")
+
+
+def test_mauvais_mot_de_passe_reaffiche_le_formulaire_avec_une_erreur(page, url_nue: str):
+    page.goto(f"{url_nue}/login")
+    page.fill("#login", LOGIN)
+    page.fill("#motdepasse", MOT_DE_PASSE + "-faux")
+    page.click("#connexion")
+
+    page.wait_for_selector(".erreur")
+    assert "Identifiants invalides" in page.inner_text(".erreur")
+    assert page.locator("#journal").count() == 0  # toujours dehors
+
+
+def test_connexion_puis_deconnexion(page, url_nue: str):
+    """La déconnexion ramène au formulaire, et revenir n'y change rien."""
+    connexion(page, url_nue)
+    assert LOGIN in page.inner_text("#compte")
+
+    page.click("#deconnexion")
+
+    page.wait_for_selector("#connexion")
+    page.goto(url_nue)
+    page.wait_for_selector("#connexion")  # la session est bien fermée côté serveur

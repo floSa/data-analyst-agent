@@ -48,8 +48,16 @@ uv sync                                              # environnement + dépendan
 uv run pytest                                        # suite de tests (couverture >= 85 %)
 uv run playwright install chromium                   # une fois, pour les tests de la page
 uv run pytest -m ui --no-cov                         # page de chat dans un vrai navigateur
+uv run python scripts/manage_users.py create alice   # un compte (aucun n'existe au départ)
 uv run uvicorn data_analyst_agent.api.app:app        # API + chat sur http://localhost:8000
 ```
+
+**L'application est authentifiée** : hormis `/health`, aucune route n'est
+atteignable sans session. Il n'y a ni inscription ouverte ni compte par défaut —
+le premier compte se crée avec `scripts/manage_users.py` (le mot de passe est
+demandé au terminal). En développement local, l'accès se fait en http : le
+cookie de session étant `Secure` par défaut, il faut poser
+`DAA_SESSION_COOKIE_SECURE=false` dans le `.env`, et rien d'autre.
 
 Sous Windows, les tests nécessitant Docker (intégration, e2e) se lancent depuis WSL ; sans Docker ils sont automatiquement sautés. Le test live du LLM (`-m live`) est exclu par défaut.
 
@@ -57,7 +65,7 @@ L'image de la sandbox se construit une fois : `docker build -t data-analyst-agen
 
 ## Configuration
 
-Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), URL Ollama (`DAA_OLLAMA_BASE_URL`), quotas sandbox, chemins du catalogue et du registre — tableau complet dans [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md). Les sources de données se déclarent dans `sources/catalogue.yaml` (livré avec deux sources : `titanic` et `iris`).
+Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), URL Ollama (`DAA_OLLAMA_BASE_URL`), quotas sandbox, chemins du catalogue et du registre, durées de session et seuils de verrouillage (`DAA_SESSION_*`, `DAA_LOGIN_*`) — tableau complet dans [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md). Les sources de données se déclarent dans `sources/catalogue.yaml` (livré avec deux sources : `titanic` et `iris`).
 
 ### Sources livrées
 
@@ -85,15 +93,42 @@ La source `iris` ne demande aucun service (fichier local lu via DuckDB).
 
 ## API / Endpoints
 
-| Méthode | Route | Rôle |
-|---|---|---|
-| `POST` | `/chat` | Question en langage naturel → réponse + artefacts + trace (contrat `ChatAnswer`) |
-| `GET` | `/health` | Sonde de vie |
-| `GET` | `/` | Page de chat inline (rendu des PNG base64 et des tables JSON, zéro asset externe) |
-| `GET` | `/conversations` | Liste des conversations, de la plus récente à la plus ancienne |
-| `GET` | `/conversations/{id}` | Le fil complet (messages + artefacts) pour le reprendre |
-| `POST` | `/conversations/{id}/duplicate` | Duplique une conversation |
-| `DELETE` | `/conversations/{id}` | Supprime une conversation et sa mémoire |
+Toutes les routes exigent une session valide, **sauf `/health`** — une sonde de
+disponibilité n'en a pas, et lui refuser l'accès ferait passer le service pour
+tombé. Sans session : `401` sur l'API, page de connexion en navigation. Les
+routes qui modifient l'état exigent en plus l'en-tête `X-CSRF-Token`, repris du
+cookie posé à la connexion.
+
+| Méthode | Route | Session | Rôle |
+|---|---|---|---|
+| `GET` | `/health` | non | Sonde de vie |
+| `GET` | `/login` | non | Page de connexion (formulaire HTML, sans JavaScript) |
+| `POST` | `/login` | non | Ouvre une session ; pose le cookie de session et le jeton anti-CSRF |
+| `POST` | `/logout` | oui | Révoque la session **côté serveur** et efface les cookies |
+| `GET` | `/me` | oui | Le compte de la session en cours (`{"login": …}`) |
+| `POST` | `/chat` | oui | Question en langage naturel → réponse + artefacts + trace (contrat `ChatAnswer`) |
+| `GET` | `/` | oui | Page de chat (rendu des PNG base64 et des tables JSON, zéro asset externe) |
+| `GET` | `/conversations` | oui | Liste des conversations, de la plus récente à la plus ancienne |
+| `GET` | `/conversations/{id}` | oui | Le fil complet (messages + artefacts) pour le reprendre |
+| `POST` | `/conversations/{id}/duplicate` | oui | Duplique une conversation |
+| `DELETE` | `/conversations/{id}` | oui | Supprime une conversation et sa mémoire |
+
+### Comptes et sessions
+
+Les comptes vivent dans un fichier YAML non versionné (`var/users.yaml` par
+défaut, 0600), mots de passe hachés en **argon2id**. Le fichier ne se peuple que
+par le CLI — forme du fichier dans `users.example.yaml` :
+
+```bash
+uv run python scripts/manage_users.py create alice          # ouvre un compte
+uv run python scripts/manage_users.py list                  # état des comptes
+uv run python scripts/manage_users.py disable alice         # ferme le compte et ses sessions
+uv run python scripts/manage_users.py reset-password alice  # nouveau mot de passe
+```
+
+Les sessions sont **côté serveur** : le navigateur ne reçoit qu'un identifiant
+opaque, tout l'état est sur disque. C'est ce qui rend la déconnexion effective —
+et ce qui permet à `disable` de couper immédiatement les onglets déjà ouverts.
 
 ## Mémoire de conversation
 
@@ -122,6 +157,7 @@ src/data_analyst_agent/   # package (orchestrator, agents, sandbox, api)
 docs/                     # ARCHITECTURE, CADRAGE, spike-vanna
 models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
 sources/                  # catalogue des sources + datasets vendorisés
+scripts/                  # administration des comptes, seed Postgres, batterie live
 notebooks/                # entraînement des modèles jouets (jupytext .md + .ipynb)
 tests/                    # unit / integration / e2e golden / helpers
 ```

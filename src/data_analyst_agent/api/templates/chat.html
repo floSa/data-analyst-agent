@@ -24,6 +24,13 @@
   .fil:hover .fil-action, .fil:focus-within .fil-action { opacity: .7; }
   .fil-action:hover { opacity: 1; }
   .vide { font-size: .8rem; opacity: .6; padding: .5rem; }
+  /* pied de barre : qui est connecté, et par où sortir */
+  #compte { margin-top: auto; padding-top: .5rem; border-top: 1px solid #6b728055;
+            display: flex; align-items: center; gap: .5rem; font-size: .8rem; }
+  #login { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+           white-space: nowrap; opacity: .8; }
+  #deconnexion { flex: none; padding: .3rem .6rem; font-size: .8rem;
+                 background: none; border: 1px solid #6b7280; color: inherit; }
   /* colonne de chat */
   #colonne { flex: 1; display: flex; flex-direction: column; min-width: 0;
              max-width: 860px; margin: 0 auto; padding: 1rem; }
@@ -64,6 +71,10 @@
 <nav id="barre">
   <button id="nouvelle" type="button">+ Nouvelle conversation</button>
   <div id="fils"></div>
+  <div id="compte">
+    <span id="login" title="{{login}}">{{login}}</span>
+    <button id="deconnexion" type="button">Se déconnecter</button>
+  </div>
 </nav>
 <main id="colonne">
   <h1>data-analyst-agent</h1>
@@ -75,6 +86,34 @@
   </form>
 </main>
 <script>
+// Toutes les requêtes passent par `appel` : c'est là que le jeton anti-CSRF est
+// ajouté aux méthodes qui modifient l'état, et là qu'une session expirée renvoie
+// à la page de connexion. Le cookie de session part tout seul, y compris sur une
+// requête déclenchée par un autre site — le jeton, lui, ne se devine pas depuis
+// une autre origine.
+const COOKIE_CSRF = "{{cookie_csrf}}";
+
+function jetonCsrf() {
+  const trouve = document.cookie.match(new RegExp("(?:^|; )" + COOKIE_CSRF + "=([^;]*)"));
+  return trouve ? decodeURIComponent(trouve[1]) : "";
+}
+
+async function appel(url, options) {
+  const parametres = Object.assign({}, options);
+  const methode = parametres.method || "GET";
+  if (methode !== "GET") {
+    parametres.headers = Object.assign({"X-CSRF-Token": jetonCsrf()}, parametres.headers);
+  }
+  const reponse = await fetch(url, parametres);
+  if (reponse.status === 401) {
+    // Session expirée ou révoquée : la page ne peut rien faire de plus utile
+    // que de rendre la main au formulaire de connexion.
+    location.href = "/login";
+    throw new Error("session expirée");
+  }
+  return reponse;
+}
+
 const journal = document.getElementById("journal");
 const formulaire = document.getElementById("formulaire");
 const champ = document.getElementById("message");
@@ -173,7 +212,7 @@ function enHtml(texte) {
 function defiler() { journal.scrollTop = journal.scrollHeight; }
 
 async function rafraichirFils() {
-  const reponse = await fetch("/conversations");
+  const reponse = await appel("/conversations");
   const liste = await reponse.json();
   fils.textContent = "";
   if (!liste.length) {
@@ -200,8 +239,8 @@ async function rafraichirFils() {
     dupliquer.textContent = "⧉";
     dupliquer.title = "Dupliquer";
     dupliquer.addEventListener("click", async () => {
-      const reponse = await fetch("/conversations/" + resume.id + "/duplicate",
-                                 {method: "POST"});
+      const reponse = await appel("/conversations/" + resume.id + "/duplicate",
+                                  {method: "POST"});
       if (reponse.ok) { ouvrir((await reponse.json()).id); }
     });
 
@@ -212,7 +251,7 @@ async function rafraichirFils() {
     supprimer.title = "Supprimer";
     supprimer.addEventListener("click", async () => {
       if (!confirm("Supprimer « " + resume.title + " » ?")) return;
-      await fetch("/conversations/" + resume.id, {method: "DELETE"});
+      await appel("/conversations/" + resume.id, {method: "DELETE"});
       if (resume.id === conversationId) nouvelleConversation();
       else rafraichirFils();
     });
@@ -223,7 +262,7 @@ async function rafraichirFils() {
 }
 
 async function ouvrir(id) {
-  const reponse = await fetch("/conversations/" + id);
+  const reponse = await appel("/conversations/" + id);
   if (!reponse.ok) { rafraichirFils(); return; }
   const conversation = await reponse.json();
   conversationId = conversation.id;
@@ -246,6 +285,11 @@ function nouvelleConversation() {
 
 document.getElementById("nouvelle").addEventListener("click", nouvelleConversation);
 
+document.getElementById("deconnexion").addEventListener("click", async () => {
+  await appel("/logout", {method: "POST"});
+  location.href = "/login";
+});
+
 formulaire.addEventListener("submit", async (event) => {
   event.preventDefault();
   const texte = champ.value.trim();
@@ -258,7 +302,7 @@ formulaire.addEventListener("submit", async (event) => {
   attente.innerHTML = `<span class="roue"></span><span>L'agent réfléchit…</span>`;
   defiler();
   try {
-    const reponse = await fetch("/chat", {
+    const reponse = await appel("/chat", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({message: texte, conversation_id: conversationId}),
