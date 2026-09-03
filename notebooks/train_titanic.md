@@ -88,9 +88,7 @@ preprocess = ColumnTransformer(
     [
         (
             "num",
-            Pipeline(
-                [("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]
-            ),
+            Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]),
             numeric,
         ),
         (

@@ -35,7 +35,10 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pytest-playwright>=0.8.0",
-    "ruff>=0.15.20",
+    # Version bornée au patch près : ruff 0.16 formate les blocs de code des
+    # fichiers Markdown, 0.15 refuse de le faire. Une borne large laissait la CI
+    # (dernière version) contredire le hook pre-commit (version épinglée).
+    "ruff>=0.16.1,<0.17",
     "testcontainers[postgres]>=4.14.2",
 ]
 
