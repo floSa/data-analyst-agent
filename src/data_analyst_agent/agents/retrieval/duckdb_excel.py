@@ -3,6 +3,10 @@
 Excel est lu par pandas/openpyxl (une feuille = une table) puis enregistré
 dans DuckDB — aucune extension DuckDB à télécharger, compatible on-prem.
 Les CSV passent par ``read_csv_auto`` (natif, sans réseau).
+
+DuckDB tourne dans le process de l'API, pas dans la sandbox : toute connexion
+est donc verrouillée dès sa remise à l'adaptateur (``lock_external_access``),
+sinon le SQL généré par le modèle lit n'importe quel fichier de l'hôte.
 """
 
 from __future__ import annotations
@@ -30,6 +34,21 @@ def sanitize_table_name(name: str) -> str:
     return cleaned or "table_sans_nom"
 
 
+def lock_external_access(connection: duckdb.DuckDBPyConnection) -> None:
+    """Coupe tout accès disque/réseau de la connexion, définitivement.
+
+    Sans ce verrou, ``assert_read_only`` laisse passer
+    ``SELECT * FROM read_csv_auto('/etc/passwd')`` : la requête *est* un
+    ``SELECT``, et son résultat remonte à l'utilisateur comme un tableau
+    ordinaire. Même chose avec ``read_text`` ou ``glob``.
+
+    À poser **après** la matérialisation des données (``CREATE TABLE ... AS``,
+    ``register``, ou ``connect(..., read_only=True)``) : le chargement légitime,
+    lui, a besoin de l'accès disque. DuckDB refuse de rouvrir le réglage ensuite.
+    """
+    connection.execute("SET enable_external_access=false")
+
+
 class DuckDBAdapter:
     dialect = "duckdb"
 
@@ -38,6 +57,9 @@ class DuckDBAdapter:
         self._table_names = table_names
         # garde une référence aux DataFrames enregistrés (sinon ramassés par le GC)
         self._frames: dict[str, pd.DataFrame] = {}
+        # Point de passage unique de toutes les fabriques : le verrou vaut donc
+        # pour n'importe quel chemin d'ouverture, présent ou à venir.
+        lock_external_access(connection)
 
     @classmethod
     def from_file(cls, path: Path) -> DuckDBAdapter:
@@ -49,18 +71,22 @@ class DuckDBAdapter:
         if suffix == ".csv":
             table = sanitize_table_name(path.stem)
             escaped = str(path).replace("'", "''")
-            connection.execute(f"CREATE VIEW {table} AS SELECT * FROM read_csv_auto('{escaped}')")
+            # CREATE TABLE et non CREATE VIEW : une vue relirait le fichier à
+            # chaque requête, ce que le verrou d'accès externe interdit ensuite.
+            connection.execute(f"CREATE TABLE {table} AS SELECT * FROM read_csv_auto('{escaped}')")
             return cls(connection, [table])
         if suffix in (".xlsx", ".xlsm"):
             sheets = pd.read_excel(path, sheet_name=None)  # toutes les feuilles
-            adapter = cls(connection, [])
+            # Tout enregistrer avant de construire l'adaptateur, qui verrouille.
+            frames: dict[str, pd.DataFrame] = {}
             for sheet_name, frame in sheets.items():
                 table = sanitize_table_name(str(sheet_name))
-                adapter._frames[table] = frame
+                frames[table] = frame
                 connection.register(table, frame)
-                adapter._table_names.append(table)
-            if not adapter._table_names:
+            if not frames:
                 raise ValueError(f"aucune feuille lisible dans {path.name}")
+            adapter = cls(connection, list(frames))
+            adapter._frames = frames
             return adapter
         raise ValueError(f"format non géré : {path.suffix} (attendu .csv, .xlsx, .xlsm)")
 
