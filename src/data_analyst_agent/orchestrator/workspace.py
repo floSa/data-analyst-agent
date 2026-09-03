@@ -16,8 +16,15 @@ source éphémère et de la table DuckDB correspondante (via le nom de fichier).
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
+import os
 import re
+import threading
+import uuid
+import weakref
+from collections.abc import Iterator
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +35,11 @@ from data_analyst_agent.agents.retrieval.catalog import FileSource
 # Un dossier de conversation contient les questions de l'utilisateur et les
 # données qu'il a fait remonter : seul le compte du service a à les lire.
 DIR_MODE = 0o700
+
+# Les verrous sont des fichiers vides rangés à part des conversations : un
+# `delete` emporte le dossier du fil, il ne doit pas emporter le verrou qui
+# sérialise ce delete avec les écritures concurrentes.
+LOCKS_DIR = ".locks"
 
 
 def make_private_dir(path: Path) -> None:
@@ -42,6 +54,144 @@ def make_private_dir(path: Path) -> None:
     for dossier in reversed(path.parents):
         dossier.mkdir(mode=DIR_MODE, exist_ok=True)
     path.mkdir(mode=DIR_MODE, exist_ok=True)
+
+
+# -- écritures atomiques ------------------------------------------------------
+
+
+@contextlib.contextmanager
+def atomic_write_to(path: Path) -> Iterator[Path]:
+    """Cède un chemin temporaire, renommé sur ``path`` à la sortie du bloc.
+
+    ``os.replace`` est atomique sur un même système de fichiers : un lecteur voit
+    l'ancien contenu OU le nouveau, jamais un fichier à moitié écrit. Sur une
+    exception, le temporaire est retiré et ``path`` garde son contenu précédent.
+
+    Le nom du temporaire porte le pid et un uuid : deux écritures simultanées ne
+    doivent pas se marcher dessus dans le temporaire non plus. Il commence par un
+    point pour rester invisible d'un listage de la mémoire de conversation.
+    """
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        yield tmp
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Écrit ``text`` dans ``path`` sans jamais exposer d'état intermédiaire.
+
+    ``Path.write_text`` tronque le fichier PUIS écrit : un process interrompu
+    entre les deux — ou un lecteur qui passe pendant — trouve un JSON coupé au
+    milieu, donc une conversation illisible. Le ``fsync`` avant renommage évite
+    en plus qu'un crash machine ne laisse un fichier renommé mais vide.
+    """
+    with atomic_write_to(path) as tmp, open(tmp, "w", encoding="utf-8") as fichier:
+        fichier.write(text)
+        fichier.flush()
+        os.fsync(fichier.fileno())
+
+
+# -- verrou par conversation --------------------------------------------------
+
+
+class _ConversationLock:
+    """Exclusion mutuelle sur une conversation, entre threads ET entre process.
+
+    Deux étages, parce qu'aucun des deux ne suffit :
+
+    - ``threading.RLock`` sérialise les threads de travail d'un même process
+      (l'API en a 40 par défaut), mais ne voit rien des autres process ;
+    - ``flock`` sérialise les process (``uvicorn --workers N``), mais est attaché
+      à l'*open file description* : un second ``open`` du même fichier dans le
+      même process bloquerait sur lui-même. D'où le comptage de réentrance —
+      ``record_turn`` appelle ``_save``, qui prend le même verrou.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._local = threading.RLock()
+        self._depth = 0
+        self._fd = -1
+
+    def acquire(self, *, blocking: bool = True) -> bool:
+        if not self._local.acquire(blocking=blocking):
+            return False
+        if self._depth > 0:  # déjà tenu par CE thread : réentrance
+            self._depth += 1
+            return True
+        try:
+            fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        except FileNotFoundError:  # premier verrou de ce workspace
+            make_private_dir(self.path.parent)
+            fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BaseException as echec:
+            os.close(fd)
+            self._local.release()
+            # `flock` non bloquant refusé : le verrou est tenu par un AUTRE
+            # process, ce n'est pas une erreur. Tout le reste remonte — mais
+            # seulement après avoir rendu le descripteur et le verrou de thread,
+            # sinon le process se bloquerait sur lui-même à l'appel suivant.
+            if blocking or not isinstance(echec, OSError):
+                raise
+            return False
+        self._fd = fd
+        self._depth = 1
+        return True
+
+    def release(self) -> None:
+        self._depth -= 1
+        if self._depth == 0:
+            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            os.close(self._fd)
+            self._fd = -1
+        self._local.release()
+
+
+# Un verrou par conversation, pas un verrou global : deux utilisateurs sur deux
+# fils différents ne doivent pas s'attendre. Références faibles pour que le
+# dictionnaire ne grossisse pas d'une entrée par conversation jamais rouverte —
+# un thread qui tient (ou attend) un verrou en garde une référence forte.
+_locks: weakref.WeakValueDictionary[str, _ConversationLock] = weakref.WeakValueDictionary()
+_locks_guard = threading.Lock()
+
+
+def _lock_of(conversation_dir: Path) -> _ConversationLock:
+    dossier = Path(conversation_dir)
+    path = dossier.parent / LOCKS_DIR / f"{dossier.name}.lock"
+    cle = str(path.absolute())
+    with _locks_guard:
+        verrou = _locks.get(cle)
+        if verrou is None:
+            verrou = _ConversationLock(path)
+            _locks[cle] = verrou
+        return verrou
+
+
+@contextlib.contextmanager
+def conversation_lock(conversation_dir: Path, *, blocking: bool = True) -> Iterator[bool]:
+    """Sérialise les écritures du dossier d'UNE conversation.
+
+    Le dossier — et non l'identifiant — est la clé : ``ConversationStore`` et
+    ``ConversationWorkspace`` écrivent dans le même dossier par conversation et
+    doivent donc prendre le même verrou.
+
+    Cède ``True`` si le verrou est tenu. ``blocking=False`` cède ``False`` sans
+    attendre quand il est déjà pris ailleurs : c'est ce qui permet de *constater*
+    l'exclusion dans un test, sans attente arbitraire.
+    """
+    verrou = _lock_of(conversation_dir)
+    if not verrou.acquire(blocking=blocking):
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        verrou.release()
 
 
 class WorkspaceArtifact(BaseModel):
@@ -116,7 +266,7 @@ class ConversationWorkspace:
     ) -> None:
         """Mémorise le tour courant (question + action) pour comprendre le suivant."""
         make_private_dir(self.dir)
-        self.context = ConversationContext(
+        contexte = ConversationContext(
             last_question=question,
             last_capability=capability,
             last_source=source,
@@ -124,7 +274,9 @@ class ConversationWorkspace:
             last_dataset=dataset,
             last_features=features or {},
         )
-        self._context_path().write_text(self.context.model_dump_json(indent=2), encoding="utf-8")
+        with conversation_lock(self.dir):
+            self.context = contexte
+            write_text_atomic(self._context_path(), contexte.model_dump_json(indent=2))
 
     def describe_context(self) -> str | None:
         """Contexte du tour précédent pour le planificateur (résolution des ajustements)."""
@@ -165,21 +317,56 @@ class ConversationWorkspace:
 
     def _save_manifest(self) -> None:
         payload = {"artifacts": [a.model_dump() for a in self.artifacts]}
-        self._manifest_path().write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        write_text_atomic(self._manifest_path(), json.dumps(payload, ensure_ascii=False, indent=2))
+
+    def _claim_artifact_name(self, taken: set[str]) -> tuple[str, Path]:
+        """Réserve le premier ``resultat_N`` libre, en créant son CSV vide.
+
+        Le nom était calculé par ``f"resultat_{len(self.artifacts) + 1}"`` sur
+        l'état lu au DÉBUT du tour : deux tours partis du même état écrivaient
+        tous les deux ``resultat_1.csv``, le second écrasant le premier. La
+        réservation se fait donc maintenant sur le disque, au moment d'écrire :
+        ``O_CREAT | O_EXCL`` échoue si le fichier existe déjà, et cet échec est
+        indivisible — c'est le noyau qui arbitre, pas un compteur lu à distance.
+
+        La convention de nom ne change pas (``resultat_1``, ``resultat_2``…) :
+        les workspaces déjà sur disque restent lisibles, et le nom réservé reste
+        celui de la source éphémère et de la table DuckDB.
+        """
+        numero = 1
+        while True:
+            name = f"resultat_{numero}"
+            path = self.dir / f"{name}.csv"
+            if name not in taken:
+                try:
+                    os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+                except FileExistsError:
+                    pass  # CSV présent sans entrée au manifeste : nom déjà pris
+                else:
+                    return name, path
+            numero += 1
 
     def save_table(self, columns: list[str], rows: list[list], question: str) -> WorkspaceArtifact:
         """Écrit un tableau en CSV, l'ajoute au manifeste et le renvoie."""
         make_private_dir(self.dir)
-        name = f"resultat_{len(self.artifacts) + 1}"
-        file = f"{name}.csv"
-        pd.DataFrame(rows, columns=columns).to_csv(self.dir / file, index=False)
-        artifact = WorkspaceArtifact(
-            name=name, file=file, columns=list(columns), row_count=len(rows), question=question
-        )
-        self.artifacts.append(artifact)
-        self._save_manifest()
+        table = pd.DataFrame(rows, columns=columns)
+        with conversation_lock(self.dir):
+            # le manifeste est relu ici, et pas au début du tour : un tour
+            # concurrent a pu en ajouter une entrée entre-temps, et l'écraser
+            # ferait disparaître son tableau du manifeste alors que le CSV existe.
+            persistes = self._load()
+            name, path = self._claim_artifact_name({a.name for a in persistes})
+            with atomic_write_to(path) as tmp:
+                table.to_csv(tmp, index=False)
+            artifact = WorkspaceArtifact(
+                name=name,
+                file=path.name,
+                columns=list(columns),
+                row_count=len(rows),
+                question=question,
+            )
+            self.artifacts = [*persistes, artifact]
+            self._save_manifest()
         return artifact
 
     # -- réexposition ---------------------------------------------------------
