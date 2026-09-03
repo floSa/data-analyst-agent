@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     # DAA_WORKSPACE_DIR pour pointer un volume dédié en production.
     workspace_dir: Path = Path("var/workspaces")
 
+    # --- Ce qui entre dans le contexte du modèle (docs/AUDIT-2026-09.md §3.4) ---
+    # Les tableaux intermédiaires d'une conversation sont réinjectés à chaque
+    # tour sur TROIS axes : prompt du planificateur, montages de la sandbox,
+    # catalogue effectif. Sans plafond, la liste grandit indéfiniment (mesuré :
+    # 100 montages `--volume` et ~13 000 caractères de catalogue à 100 tours).
+    # Fenêtre glissante : on réinjecte les N plus récents. 0 = pas de fenêtre.
+    # Les objets évincés RESTENT sur le disque : on plafonne ce qu'on injecte,
+    # pas ce qu'on conserve.
+    context_artifact_window: int = 8
+
     # --- Authentification (login + mot de passe, session côté serveur) ---
     # Magasin de comptes : logins et empreintes argon2id. NON VERSIONNÉ, écrit
     # en 0600, peuplé uniquement par scripts/manage_users.py — il n'y a ni

@@ -12,6 +12,13 @@ JSON. Aux tours suivants, ces tableaux sont réexposés :
 
 Le nom d'un objet (``resultat_1``, ``resultat_2``…) est aussi le nom de la
 source éphémère et de la table DuckDB correspondante (via le nom de fichier).
+
+Cette réexposition est **plafonnée** : ``artifacts`` est ce que porte le disque,
+``injected`` ce qui entre réellement dans le contexte du tour (cf.
+:mod:`data_analyst_agent.orchestrator.context_budget`). Les trois usages
+ci-dessus lisent ``injected``, et le même ``injected`` : décrire au
+planificateur un tableau qui n'est pas monté dans la sandbox — ou l'inverse —
+produirait des erreurs incompréhensibles.
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from data_analyst_agent.agents.retrieval.catalog import FileSource
+from data_analyst_agent.orchestrator.context_budget import ContextLimits, ContextTrim
 
 # Un dossier de conversation contient les questions de l'utilisateur et les
 # données qu'il a fait remonter : seul le compte du service a à les lire.
@@ -319,10 +327,41 @@ class ConversationWorkspace:
     MANIFEST = "manifest.json"
     CONTEXT = "context.json"
 
-    def __init__(self, base_dir: Path, conversation_id: str) -> None:
+    def __init__(
+        self, base_dir: Path, conversation_id: str, *, limits: ContextLimits | None = None
+    ) -> None:
         self.dir = Path(base_dir) / safe_dir_name(conversation_id)
+        self.limits = limits or ContextLimits()
         self.artifacts: list[WorkspaceArtifact] = self._load()
         self.context: ConversationContext = self._load_context()
+        # `artifacts` est le disque, `injected` est le contexte : la fenêtre
+        # sépare les deux, et `trim` dit ce qu'elle a écarté.
+        self.injected: list[WorkspaceArtifact] = []
+        self.trim: ContextTrim = ContextTrim()
+        self._apply_limits()
+
+    # -- plafond du contexte --------------------------------------------------
+
+    def _apply_limits(self) -> None:
+        """Recalcule ``injected`` et ``trim`` à partir de ``artifacts``.
+
+        Appelé à l'ouverture ET après chaque ``save_table`` : un tableau produit
+        au tour courant doit entrer dans la fenêtre (c'est le plus récent, donc
+        le plus susceptible d'être désigné par « ces lignes »), et l'éviction
+        qu'il provoque doit être visible tout de suite.
+        """
+        fenetre = self.limits.artifact_window
+        total = len(self.artifacts)
+        if fenetre <= 0 or total <= fenetre:
+            self.injected = list(self.artifacts)
+            self.trim = ContextTrim(total=total, kept=total)
+            return
+        self.injected = self.artifacts[-fenetre:]
+        self.trim = ContextTrim(
+            total=total,
+            kept=len(self.injected),
+            cause=f"fenêtre DAA_CONTEXT_ARTIFACT_WINDOW={fenetre}",
+        )
 
     # -- persistance ----------------------------------------------------------
 
@@ -450,6 +489,7 @@ class ConversationWorkspace:
             )
             self.artifacts = [*persistes, artifact]
             self._save_manifest()
+            self._apply_limits()
         return artifact
 
     # -- réexposition ---------------------------------------------------------
@@ -458,38 +498,48 @@ class ConversationWorkspace:
         return self.dir / artifact.file
 
     def as_sources(self) -> list[FileSource]:
-        """Les objets mémorisés vus comme des sources fichier interrogeables."""
+        """Les objets RÉINJECTÉS vus comme des sources fichier interrogeables."""
         return [
             FileSource(
                 name=a.name,
                 description=f"Tableau intermédiaire ({a.row_count} lignes) issu de : {a.question}",
                 path=self.path_of(a),
             )
-            for a in self.artifacts
+            for a in self.injected
         ]
 
     def sandbox_files(self) -> dict[Path, str]:
-        """Mapping chemin hôte -> nom sous /data/ pour monter dans la sandbox."""
-        return {self.path_of(a): a.file for a in self.artifacts}
+        """Mapping chemin hôte -> nom sous /data/ des objets RÉINJECTÉS."""
+        return {self.path_of(a): a.file for a in self.injected}
 
     def describe(self) -> str | None:
-        """Description des objets intermédiaires pour le prompt du planificateur."""
-        if not self.artifacts:
-            return None
-        lines = [
-            f"- {a.name} ({a.row_count} lignes ; colonnes : {', '.join(a.columns)})"
-            f" — produit par : « {a.question} »"
-            for a in self.artifacts
-        ]
-        latest = self.artifacts[-1].name
-        return (
-            "Objets intermédiaires déjà produits dans CETTE conversation "
-            "(interrogeables comme des sources par leur nom, ou réutilisables tels "
-            "quels pour une prédiction) :\n"
-            + "\n".join(lines)
-            + f"\nLe plus récent est '{latest}'. Une référence comme « ces lignes », "
-            "« ces fleurs », « le tableau précédent » ou « ce résultat » désigne en "
-            "général ce dernier : choisis-le comme `source`. Pour PRÉDIRE sur un tel "
-            "tableau (« prédis ces lignes »), utilise fetch_then_predict avec ce tableau "
-            "comme `source`."
-        )
+        """Description des objets RÉINJECTÉS pour le prompt du planificateur.
+
+        L'éviction y est dite explicitement : sans cela le planificateur
+        désignerait comme source un tableau qui n'est plus au catalogue effectif
+        ni monté dans la sandbox, et l'utilisateur lirait « source introuvable »
+        sans pouvoir comprendre pourquoi.
+        """
+        blocs = []
+        if self.injected:
+            lines = [
+                f"- {a.name} ({a.row_count} lignes ; colonnes : {', '.join(a.columns)})"
+                f" — produit par : « {a.question} »"
+                for a in self.injected
+            ]
+            latest = self.injected[-1].name
+            blocs.append(
+                "Objets intermédiaires déjà produits dans CETTE conversation "
+                "(interrogeables comme des sources par leur nom, ou réutilisables tels "
+                "quels pour une prédiction) :\n"
+                + "\n".join(lines)
+                + f"\nLe plus récent est '{latest}'. Une référence comme « ces lignes », "
+                "« ces fleurs », « le tableau précédent » ou « ce résultat » désigne en "
+                "général ce dernier : choisis-le comme `source`. Pour PRÉDIRE sur un tel "
+                "tableau (« prédis ces lignes »), utilise fetch_then_predict avec ce tableau "
+                "comme `source`."
+            )
+        avis = self.trim.planner_notice()
+        if avis:
+            blocs.append(avis)
+        return "\n\n".join(blocs) or None

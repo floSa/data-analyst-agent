@@ -716,6 +716,47 @@ def test_code_genere_accede_aux_objets_intermediaires(tmp_path: Path, registry: 
     assert "resultat_1.csv" in analysis_prompt
 
 
+def test_le_plafond_de_contexte_vaut_pour_le_planificateur_ET_la_sandbox(
+    tmp_path: Path, registry: Registry
+):
+    """La fenêtre s'applique aux trois axes du MÊME tour, ou pas du tout.
+
+    Un objet décrit au planificateur mais absent des montages — ou l'inverse —
+    donnerait au mieux un « source introuvable », au pire un `FileNotFoundError`
+    au milieu du code généré.
+    """
+    ws = ConversationWorkspace(tmp_path, "cfen")
+    for tour in range(1, 6):
+        ws.save_table(["a"], [[tour]], f"tableau du tour {tour}")
+
+    sandbox = ScriptedSandbox([SandboxResult(status="ok", stdout="ok\n", results=[])])
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="iris"))])
+        .script(ANALYSIS, [text("```python\nprint('ok')\n```")])
+        .script(SYNTHESIS, [text("Analyse faite.")])
+    )
+    orchestrator = orchestrator_with(
+        llm,
+        catalog=Catalog(sources=[FileSource(name="iris", path=REPO / "sources" / "iris.csv")]),
+        registry=registry,
+        settings=make_settings(workspace_dir=tmp_path, context_artifact_window=2),
+        sandbox=sandbox,
+    )
+    orchestrator.ask("analyse", conversation_id="cfen")
+
+    planificateur = llm.systems_for(PLANNER)[0]
+    analyse = llm.systems_for(ANALYSIS)[0] + llm.prompts_for(ANALYSIS)[0]
+    for evince in ("resultat_1", "resultat_2", "resultat_3"):
+        assert evince not in planificateur
+        assert evince not in analyse
+    for garde in ("resultat_4", "resultat_5"):
+        assert garde in planificateur
+        assert f"{garde}.csv" in analyse
+    # l'éviction est dite au planificateur, pour qu'il ne propose pas l'invisible
+    assert "3 tableau(x) plus ancien(s)" in planificateur
+
+
 # --- analyze ------------------------------------------------------------------
 
 

@@ -40,6 +40,7 @@ from data_analyst_agent.agents.retrieval.catalog import (
 from data_analyst_agent.agents.retrieval.sql import QueryResult
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
+from data_analyst_agent.orchestrator.context_budget import ContextLimits
 from data_analyst_agent.orchestrator.plan import Plan, build_planner
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
@@ -131,6 +132,8 @@ class Orchestrator:
             registry if registry is not None else Registry.load(self.settings.models_registry_path)
         )
         self._sandbox_override = sandbox
+        # plafond de ce qu'un tour réinjecte dans le contexte du modèle
+        self.limits = ContextLimits.from_settings(self.settings)
         self.graph = self._build_graph()
 
     # -- API ----------------------------------------------------------------
@@ -157,7 +160,9 @@ class Orchestrator:
         # persistés et réexposés aux tours suivants (cf. workspace.py)
         racine = workspace_root if workspace_root is not None else self.settings.workspace_dir
         workspace = (
-            ConversationWorkspace(racine, conversation_id) if conversation_id is not None else None
+            ConversationWorkspace(racine, conversation_id, limits=self.limits)
+            if conversation_id is not None
+            else None
         )
         state: OrchestratorState = self.graph.invoke(
             {
@@ -265,9 +270,14 @@ class Orchestrator:
     # -- nœuds ----------------------------------------------------------------
 
     def _effective_catalog(self, state: OrchestratorState) -> Catalog:
-        """Catalogue du tour : sources déclarées + objets intermédiaires de la conversation."""
+        """Catalogue du tour : sources déclarées + objets intermédiaires RÉINJECTÉS.
+
+        ``as_sources()`` ne rend que la fenêtre : un objet évincé n'est pas
+        interrogeable ce tour-ci, exactement comme il n'est ni décrit au
+        planificateur ni monté dans la sandbox.
+        """
         workspace = state.get("workspace")
-        if workspace is None or not workspace.artifacts:
+        if workspace is None or not workspace.injected:
             return self.catalog
         return Catalog(sources=[*self.catalog.sources, *workspace.as_sources()])
 
@@ -459,9 +469,9 @@ class Orchestrator:
             and not plan.features
             and plan.dataset in SCHEMAS
             and workspace is not None
-            and workspace.artifacts
+            and workspace.injected
         ):
-            latest = workspace.artifacts[-1]
+            latest = workspace.injected[-1]
             needed = set(get_schema(plan.dataset).model_fields)
             if needed <= {c.lower() for c in latest.columns}:
                 plan.capability = "fetch_then_predict"
@@ -503,13 +513,13 @@ class Orchestrator:
     ) -> str:
         """Ajoute les CSV mémorisés aux fichiers montés et les décrit au code généré."""
         workspace = state.get("workspace")
-        if workspace is None or not workspace.artifacts:
+        if workspace is None or not workspace.injected:
             return data_context
         for host_path, name in workspace.sandbox_files().items():
             data_files.setdefault(host_path, name)
         lines = [
             f"- /data/{a.file} ({a.row_count} lignes ; colonnes : {', '.join(a.columns)})"
-            for a in workspace.artifacts
+            for a in workspace.injected
         ]
         extra = "Objets intermédiaires de la conversation (réutilisables) :\n" + "\n".join(lines)
         return f"{data_context}\n\n{extra}" if data_context else extra
