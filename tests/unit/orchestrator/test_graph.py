@@ -10,6 +10,7 @@ from pathlib import Path
 import joblib
 import pytest
 from pydantic_ai import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelHTTPError
 
 from data_analyst_agent.agents.inference.predict import InferenceOutcome, Prediction
 from data_analyst_agent.agents.inference.registry import Registry
@@ -832,6 +833,87 @@ def test_le_budget_borne_le_prompt_reellement_envoye(
     assert plan.prompt_tokens <= budget
     assert estimate_tokens(llm.systems_for(PLANNER)[0], "combien de lignes ?") <= budget
     assert "DAA_CONTEXT_TOKEN_BUDGET=1000" in plan.truncation
+
+
+def test_ce_que_le_serveur_dit_avoir_evalue_est_trace(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Le budget est une prévision ; `prompt_eval_count` est une mesure. On garde les deux."""
+    _llm, answer = _tour_de_requete(tmp_path, mini_csv, registry, tableaux=2)
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.prompt_tokens > 0
+    assert plan.server_prompt_tokens > 0
+    assert plan.truncated is False  # aucun débordement : les deux comptes concordent
+
+
+def test_debordement_constate_cote_serveur_remonte_a_l_utilisateur(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Le serveur a tronqué sans le dire : on le constate et on le dit.
+
+    Reproduit sans serveur le plafonnement mesuré contre gemma4:e4b : un premier
+    tour relève ce que le modèle dit avoir évalué, le second déclare cette
+    valeur comme fenêtre — le modèle rend alors tout juste de quoi la remplir,
+    pour un prompt plus long qu'elle. C'est exactement le constat qui a valu la
+    réponse « Je » à un prompt de 36 262 tokens sur une fenêtre de 32 768.
+    """
+    _llm, temoin = _tour_de_requete(tmp_path / "a", mini_csv, registry, tableaux=2)
+    fenetre = next(s for s in temoin.trace if s.node == "plan").server_prompt_tokens
+
+    _llm, answer = _tour_de_requete(
+        tmp_path / "b", mini_csv, registry, tableaux=2, context_model_window=fenetre
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.prompt_tokens > fenetre  # on a envoyé plus que la fenêtre
+    assert plan.truncated is True
+    assert "Contexte tronqué par le serveur" in plan.truncation
+    assert "la fenêtre du modèle est pleine" in plan.truncation
+    assert "Contexte tronqué par le serveur" in answer.answer
+
+
+def test_le_refus_explicite_du_serveur_est_dit_en_clair(
+    tmp_path: Path, mini_csv: Path, registry: Registry, monkeypatch
+):
+    """vLLM rejette là où Ollama tronque : le refus ne doit pas finir en ModelHTTPError."""
+
+    class _PlannerRefuse:
+        def run_sync(self, *args, **kwargs):
+            raise ModelHTTPError(
+                400,
+                "vllm",
+                body="This model's maximum context length is 32768 tokens. However, "
+                "you requested 41234 tokens. Please reduce the length of the messages.",
+            )
+
+    monkeypatch.setattr(
+        "data_analyst_agent.orchestrator.graph.planner_agent",
+        lambda *args, **kwargs: _PlannerRefuse(),
+    )
+    _llm, answer = _tour_de_requete(tmp_path, mini_csv, registry, tableaux=1)
+    assert answer.error == "le contexte envoyé au modèle dépasse sa fenêtre"
+    assert "ModelHTTPError" not in answer.answer
+    assert "Contexte refusé par le serveur" in answer.answer
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.truncated is True
+    assert "41234" in plan.detail  # le corps de l'erreur reste dans la trace
+
+
+def test_une_autre_erreur_du_planificateur_reste_generique(
+    tmp_path: Path, mini_csv: Path, registry: Registry, monkeypatch
+):
+    """On ne transforme pas toute panne en dépassement de contexte."""
+
+    class _PlannerCasse:
+        def run_sync(self, *args, **kwargs):
+            raise ModelHTTPError(503, "vllm", body="service unavailable")
+
+    monkeypatch.setattr(
+        "data_analyst_agent.orchestrator.graph.planner_agent",
+        lambda *args, **kwargs: _PlannerCasse(),
+    )
+    _llm, answer = _tour_de_requete(tmp_path, mini_csv, registry, tableaux=1)
+    assert "Contexte refusé" not in answer.answer
+    assert "ModelHTTPError" in answer.error
 
 
 # --- analyze ------------------------------------------------------------------

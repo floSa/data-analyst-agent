@@ -20,6 +20,7 @@ l'historique de la conversation, que le fil affiche intégralement.
 from __future__ import annotations
 
 import math
+import re
 
 from pydantic import BaseModel
 
@@ -88,12 +89,18 @@ class ContextLimits(BaseModel):
     # Plafond en tokens du prompt du planificateur, décompté avant l'appel.
     # 0 désactive le budget — la fenêtre reste alors le seul plafond.
     token_budget: int = 8000
+    # Fenêtre réellement servie par le serveur (0 = inconnue) et rapport
+    # plancher du filet : tous deux servent à CONSTATER, jamais à couper.
+    model_window: int = 32768
+    overflow_ratio: float = 0.4
 
     @classmethod
     def from_settings(cls, settings: Settings) -> ContextLimits:
         return cls(
             artifact_window=settings.context_artifact_window,
             token_budget=settings.context_token_budget,
+            model_window=settings.context_model_window,
+            overflow_ratio=settings.context_overflow_ratio,
         )
 
 
@@ -151,3 +158,114 @@ class ContextTrim(BaseModel):
             f"{self.dropped} tableau(x) plus ancien(s) de cette conversation ne sont PLUS "
             "accessibles (hors de la fenêtre de contexte) : ne les propose pas comme source."
         )
+
+
+# -- débordement constaté côté serveur ----------------------------------------
+
+# Une fenêtre est « pleine » un peu avant son compte exact : Ollama rend 32 767
+# pour 32 768 servis. On ne cherche pas l'égalité, on cherche le plafonnement.
+PART_DE_FENETRE_PLEINE = 0.99
+
+# Sous cet écart absolu, le filet du rapport ne se déclenche pas : sur de tout
+# petits prompts, un rapport bas ne prouve rien.
+ECART_MINIMAL_TOKENS = 1024
+
+
+class ContextOverflow(BaseModel):
+    """Un débordement **constaté** : ce qu'on a envoyé, ce que le serveur a lu."""
+
+    estimated: int  # notre estimation, avant l'appel
+    server: int  # ce que le serveur dit avoir évalué (`prompt_eval_count`)
+    certain: bool  # plafonnement sur la fenêtre déclarée, ou simple soupçon
+
+    def message(self) -> str:
+        constat = (
+            f"Contexte tronqué par le serveur : ~{self.estimated} tokens envoyés, "
+            f"{self.server} seulement évalués"
+        )
+        if self.certain:
+            return (
+                f"{constat} — la fenêtre du modèle est pleine, la fin du prompt n'a pas "
+                "été lue. Baisse DAA_CONTEXT_TOKEN_BUDGET, ou sers le modèle avec une "
+                "fenêtre plus large."
+            )
+        return (
+            f"{constat} — l'écart est trop grand pour être une imprécision d'estimation. "
+            "La réponse peut être dégradée."
+        )
+
+
+def detect_overflow(
+    estimated: int, server: int | None, limits: ContextLimits
+) -> ContextOverflow | None:
+    """Constate côté serveur ce que le budget calculé en amont n'a pas su prévoir.
+
+    Le budget est une prévision ; ``prompt_eval_count`` est une mesure. Les deux
+    sont nécessaires, parce qu'un serveur peut tronquer sans rien dire — mesuré
+    contre ``gemma4:e4b`` : 36 262 tokens envoyés, 32 767 évalués, aucune
+    erreur, réponse « Je ».
+
+    Deux indices, dans cet ordre :
+
+    1. **Le plafonnement** — le serveur dit avoir évalué de quoi remplir sa
+       fenêtre déclarée, alors qu'on lui a envoyé davantage. C'est une preuve.
+       Un rapport ne suffirait pas : dans le cas mesuré ci-dessus, le serveur a
+       évalué 90 % de notre estimation, exactement ce que rend un appel SAIN.
+    2. **L'écart grossier** — filet pour la fenêtre inconnue
+       (``context_model_window = 0``) ou mal déclarée. Le rapport retenu est très
+       en dessous de ce que l'imprécision du compteur peut expliquer.
+    """
+    if server is None or server <= 0 or estimated <= 0:
+        return None
+    fenetre = limits.model_window
+    if fenetre > 0 and estimated > fenetre and server >= fenetre * PART_DE_FENETRE_PLEINE:
+        return ContextOverflow(estimated=estimated, server=server, certain=True)
+    ecart = estimated - server
+    if ecart >= ECART_MINIMAL_TOKENS and server < estimated * limits.overflow_ratio:
+        return ContextOverflow(estimated=estimated, server=server, certain=False)
+    return None
+
+
+# -- refus explicite (vLLM) ---------------------------------------------------
+
+# Là où Ollama tronque en silence, vLLM répond par une erreur HTTP : un 400 dont
+# le corps dit « This model's maximum context length is N tokens. However, you
+# requested M tokens ». Le code doit tenir LES DEUX comportements — c'est le
+# prérequis de la migration (audit §7, tâches 8-9).
+STATUTS_REFUS = frozenset({400, 413, 422})
+MOTIFS_REFUS = re.compile(
+    r"maximum context length"
+    r"|context[ _]length"
+    r"|context window"
+    r"|context_length_exceeded"
+    r"|reduce the length"
+    r"|prompt is too long",
+    re.IGNORECASE,
+)
+
+CONTEXT_REFUSAL_ERROR = "le contexte envoyé au modèle dépasse sa fenêtre"
+CONTEXT_REFUSAL_MESSAGE = (
+    "Contexte refusé par le serveur : la requête dépasse la fenêtre du modèle, et le "
+    "serveur l'a rejetée au lieu de la tronquer. Baisse DAA_CONTEXT_TOKEN_BUDGET ou "
+    "DAA_CONTEXT_ARTIFACT_WINDOW, ou sers le modèle avec une fenêtre plus large."
+)
+
+
+def is_context_refusal(exc: BaseException) -> bool:
+    """Reconnaît le refus explicite d'un serveur dont la fenêtre est dépassée.
+
+    **Non validé contre un vrai vLLM**, et volontairement : le banc d'essai de
+    la migration est une autre tâche (audit §7, 8-9), et le simuler à la légère
+    donnerait une fausse assurance. Ce qui est tenu ici, c'est que le refus ne se
+    perde plus dans un « Je n'ai pas pu répondre : ModelHTTPError: … » que
+    personne ne saurait relier à la longueur du prompt. Le jour où le banc
+    tourne, c'est cette fonction qu'il faut confronter au corps d'erreur réel.
+
+    Le statut, quand l'exception en porte un, doit être un refus de requête :
+    une panne serveur (500) qui mentionnerait « context » n'est pas un
+    dépassement de fenêtre.
+    """
+    statut = getattr(exc, "status_code", None)
+    if statut is not None and statut not in STATUTS_REFUS:
+        return False
+    return bool(MOTIFS_REFUS.search(f"{exc} {getattr(exc, 'body', '') or ''}"))

@@ -41,9 +41,13 @@ from data_analyst_agent.agents.retrieval.sql import QueryResult
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
 from data_analyst_agent.orchestrator.context_budget import (
+    CONTEXT_REFUSAL_ERROR,
+    CONTEXT_REFUSAL_MESSAGE,
     ContextLimits,
     ContextTrim,
+    detect_overflow,
     estimate_tokens,
+    is_context_refusal,
 )
 from data_analyst_agent.orchestrator.plan import (
     PLANNER_SYSTEM_PROMPT,
@@ -76,6 +80,7 @@ class TraceStep(BaseModel):
     detail: str = ""
     duration_ms: int = 0
     prompt_tokens: int | None = None  # estimation locale, décomptée AVANT l'appel
+    server_prompt_tokens: int | None = None  # ce que le serveur dit avoir évalué
     truncated: bool = False
     truncation: str = ""  # en clair : ce qui a été coupé, et par quel réglage
 
@@ -295,6 +300,23 @@ class Orchestrator:
             except Exception as exc:
                 duration = int((time.monotonic() - start) * 1000)
                 logger.exception("nœud %s : échec après %d ms", name, duration)
+                if is_context_refusal(exc):
+                    # Là où Ollama tronque en silence, vLLM rejette. Sans ce
+                    # branchement, le refus arriverait à l'utilisateur sous la
+                    # forme « ModelHTTPError: … », que rien ne relie à la
+                    # longueur du prompt — donc rien à faire pour s'en sortir.
+                    return {
+                        "error": CONTEXT_REFUSAL_ERROR,
+                        "trace": [
+                            TraceStep(
+                                node=name,
+                                detail=f"refus du serveur : {exc}",
+                                duration_ms=duration,
+                                truncated=True,
+                                truncation=CONTEXT_REFUSAL_MESSAGE,
+                            )
+                        ],
+                    }
                 return {
                     "error": f"{type(exc).__name__}: {exc}",
                     "trace": [TraceStep(node=name, detail=f"échec : {exc}", duration_ms=duration)],
@@ -450,8 +472,9 @@ class Orchestrator:
         )
         mesures["prompt_tokens"] = estimate_tokens(system_prompt, state["question"])
         planner = planner_agent(system_prompt)
+        serveur: int | None = None
         try:
-            plan = planner.run_sync(state["question"], model=self.model).output
+            resultat = planner.run_sync(state["question"], model=self.model)
         except UnexpectedModelBehavior:
             # le LLM n'a pas su produire un Plan structuré (retries épuisés). Si on
             # a un tour précédent, on suppose un AJUSTEMENT et on reprend sa
@@ -467,6 +490,18 @@ class Orchestrator:
                     **mesures,
                 )
             plan = fallback
+        else:
+            plan = resultat.output
+            # le budget est une prévision, `prompt_eval_count` est une mesure :
+            # c'est elle qui prouve qu'un serveur a tronqué sans le dire.
+            serveur = resultat.usage.input_tokens
+            debordement = detect_overflow(mesures["prompt_tokens"], serveur, self.limits)
+            if debordement is not None:
+                mesures["truncated"] = True
+                mesures["truncation"] = " ".join(
+                    avis for avis in (mesures["truncation"], debordement.message()) if avis
+                )
+        mesures["server_prompt_tokens"] = serveur
         if state.get("source_name"):
             plan.source = state["source_name"]
         if plan.capability == "fetch_then_predict" and not self._effective_catalog(state).sources:

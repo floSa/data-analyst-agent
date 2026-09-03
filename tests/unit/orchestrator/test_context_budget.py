@@ -9,11 +9,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic_ai.exceptions import ModelHTTPError
+
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.context_budget import (
     ContextLimits,
     ContextTrim,
+    detect_overflow,
     estimate_tokens,
+    is_context_refusal,
 )
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import docker_run_command
@@ -210,3 +214,93 @@ def test_budget_confortable_ne_coupe_rien(tmp_path: Path):
 def test_limits_lues_des_reglages_pour_le_budget():
     settings = Settings(_env_file=None, context_token_budget=1234)
     assert ContextLimits.from_settings(settings).token_budget == 1234
+
+
+# --- débordement constaté côté serveur ---------------------------------------
+
+# Les chiffres de ces cas viennent tous d'une mesure réelle contre gemma4:e4b,
+# servi avec OLLAMA_CONTEXT_LENGTH=32768 : les tests, eux, n'appellent rien.
+LIMITES = ContextLimits(model_window=32768, overflow_ratio=0.4)
+
+
+def test_plafonnement_sur_la_fenetre_est_une_preuve():
+    """36 262 envoyés, 32 767 évalués, aucune erreur, réponse « Je »."""
+    debordement = detect_overflow(estimated=36262, server=32767, limits=LIMITES)
+    assert debordement is not None
+    assert debordement.certain is True
+    assert "36262 tokens envoyés, 32767 seulement évalués" in debordement.message()
+    assert "DAA_CONTEXT_TOKEN_BUDGET" in debordement.message()
+
+
+def test_un_rapport_seul_ne_verrait_pas_ce_cas():
+    """Le cas mesuré rend 0,90 — exactement ce que rend un appel SAIN.
+
+    C'est la raison d'être de la fenêtre déclarée : sans elle, aucun seuil de
+    rapport ne sépare le débordement de l'imprécision du compteur.
+    """
+    assert LIMITES.overflow_ratio < 32767 / 36262
+    aveugle = ContextLimits(model_window=0, overflow_ratio=0.4)
+    assert detect_overflow(estimated=36262, server=32767, limits=aveugle) is None
+
+
+def test_ecart_grossier_detecte_meme_sans_fenetre_declaree():
+    """Le cas de l'audit : 134 748 envoyés, 32 767 évalués."""
+    aveugle = ContextLimits(model_window=0, overflow_ratio=0.4)
+    debordement = detect_overflow(estimated=134748, server=32767, limits=aveugle)
+    assert debordement is not None
+    assert debordement.certain is False
+    assert "trop grand pour être une imprécision" in debordement.message()
+
+
+def test_appel_sain_ne_declenche_rien():
+    """Mesuré : 1 443 estimés pour 1 234 réellement évalués (le compteur surestime)."""
+    assert detect_overflow(estimated=1443, server=1234, limits=LIMITES) is None
+    assert detect_overflow(estimated=10062, server=9979, limits=LIMITES) is None
+
+
+def test_pas_de_faux_positif_sur_un_petit_prompt():
+    """Un rapport bas sur quelques centaines de tokens ne prouve rien."""
+    assert detect_overflow(estimated=300, server=50, limits=LIMITES) is None
+
+
+def test_serveur_muet_ne_conclut_rien():
+    assert detect_overflow(estimated=5000, server=None, limits=LIMITES) is None
+    assert detect_overflow(estimated=5000, server=0, limits=LIMITES) is None
+    assert detect_overflow(estimated=0, server=100, limits=LIMITES) is None
+
+
+def test_limits_lues_des_reglages_pour_la_detection():
+    settings = Settings(_env_file=None, context_model_window=8192, context_overflow_ratio=0.6)
+    limites = ContextLimits.from_settings(settings)
+    assert limites.model_window == 8192
+    assert limites.overflow_ratio == 0.6
+
+
+# --- refus explicite (vLLM) ---------------------------------------------------
+
+VLLM_400 = (
+    "This model's maximum context length is 32768 tokens. However, you requested "
+    "41234 tokens. Please reduce the length of the messages."
+)
+
+
+def test_refus_de_vllm_reconnu():
+    assert is_context_refusal(ModelHTTPError(400, "vllm", body=VLLM_400)) is True
+
+
+def test_refus_reconnu_sans_statut():
+    """Un client qui remonte le message sans code HTTP reste reconnaissable."""
+    assert is_context_refusal(RuntimeError(VLLM_400)) is True
+
+
+def test_panne_serveur_n_est_pas_un_depassement():
+    """Un 500 qui mentionnerait « context » n'est pas un refus de fenêtre."""
+    assert is_context_refusal(ModelHTTPError(500, "vllm", body="context: internal error")) is False
+
+
+def test_autre_refus_400_non_confondu():
+    assert is_context_refusal(ModelHTTPError(400, "vllm", body="unknown model")) is False
+
+
+def test_erreur_ordinaire_non_confondue():
+    assert is_context_refusal(ValueError("colonne inconnue")) is False

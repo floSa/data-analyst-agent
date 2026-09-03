@@ -65,6 +65,17 @@ class Settings(BaseSettings):
     # couvre que le planificateur, les autres agents ajoutent leurs propres tours.
     # 0 désactive le budget.
     context_token_budget: int = 8000
+    # Fenêtre de contexte RÉELLEMENT servie par le serveur (Ollama :
+    # `OLLAMA_CONTEXT_LENGTH`, 32768 sur le service central — et non les 131 072
+    # que déclare gemma4). Elle ne règle rien côté client : elle sert à
+    # CONSTATER un débordement, en confrontant `prompt_eval_count` à ce qu'on a
+    # envoyé. 0 = fenêtre inconnue, la détection se rabat sur l'écart grossier.
+    context_model_window: int = 32768
+    # Filet quand la fenêtre est inconnue ou mal déclarée : on signale si le
+    # serveur dit avoir évalué moins de cette fraction de notre estimation.
+    # 0,4 est très en dessous de ce que l'imprécision du compteur peut
+    # expliquer (mesurée, elle ne descend jamais sous 0,85).
+    context_overflow_ratio: float = 0.4
 
     # --- Authentification (login + mot de passe, session côté serveur) ---
     # Magasin de comptes : logins et empreintes argon2id. NON VERSIONNÉ, écrit
