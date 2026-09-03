@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>data-analyst-agent</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { margin: 0; display: flex; height: 100vh; overflow: hidden; }
+  /* barre latérale : nouvelle conversation + fils précédents */
+  #barre { width: 16rem; flex: none; display: flex; flex-direction: column;
+           gap: .5rem; padding: 1rem .75rem; border-right: 1px solid #6b728055;
+           background: #6b728011; overflow-y: auto; }
+  #nouvelle { width: 100%; }
+  #fils { display: flex; flex-direction: column; gap: .15rem; }
+  .fil { display: flex; align-items: center; gap: .25rem; border-radius: .4rem; }
+  .fil:hover, .fil.actif { background: #2563eb22; }
+  .fil-titre { flex: 1; min-width: 0; padding: .45rem .5rem; background: none;
+               border: 0; color: inherit; font-size: .85rem; text-align: left;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+               cursor: pointer; }
+  .fil-action { flex: none; padding: .25rem .35rem; background: none; border: 0;
+                color: inherit; opacity: 0; cursor: pointer; font-size: .8rem; }
+  .fil:hover .fil-action, .fil:focus-within .fil-action { opacity: .7; }
+  .fil-action:hover { opacity: 1; }
+  .vide { font-size: .8rem; opacity: .6; padding: .5rem; }
+  /* colonne de chat */
+  #colonne { flex: 1; display: flex; flex-direction: column; min-width: 0;
+             max-width: 860px; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.2rem; }
+  #journal { flex: 1; overflow-y: auto; display: flex; flex-direction: column;
+             gap: .75rem; margin-bottom: 1rem; }
+  .message { padding: .6rem .9rem; border-radius: .6rem; white-space: pre-wrap;
+             max-width: 80%; }
+  .utilisateur { background: #2563eb22; align-self: flex-end; }
+  .agent { background: #6b728022; align-self: flex-start; }
+  .agent { white-space: normal; }
+  .agent p { margin: .35rem 0; }
+  .agent p:first-child { margin-top: 0; }
+  .agent p:last-child { margin-bottom: 0; }
+  .agent ul { margin: .35rem 0; padding-left: 1.2rem; }
+  .agent li { margin: .1rem 0; }
+  .agent h4 { margin: .6rem 0 .25rem; font-size: 1rem; }
+  .agent code { background: #6b728033; padding: .05rem .25rem;
+                border-radius: .25rem; font-size: .9em; }
+  .agent img { max-width: 100%; border-radius: .4rem; margin-top: .5rem; }
+  .agent table { border-collapse: collapse; margin-top: .5rem; font-size: .85rem; }
+  .agent td, .agent th { border: 1px solid #6b7280; padding: .2rem .5rem; }
+  form { display: flex; gap: .5rem; }
+  input[type=text] { flex: 1; padding: .6rem; border-radius: .4rem; border: 1px solid #6b7280; }
+  button { padding: .6rem 1.2rem; border-radius: .4rem; border: 0;
+           background: #2563eb; color: white; cursor: pointer; }
+  button:disabled { opacity: .5; }
+  .erreur { color: #dc2626; }
+  .reflexion { display: flex; align-items: center; gap: .5rem;
+               font-style: italic; opacity: .8; }
+  .roue { width: 1.1em; height: 1.1em; border-radius: 50%;
+          border: 2px solid #6b7280; border-top-color: transparent;
+          animation: rotation .8s linear infinite; flex: none; }
+  @keyframes rotation { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<nav id="barre">
+  <button id="nouvelle" type="button">+ Nouvelle conversation</button>
+  <div id="fils"></div>
+</nav>
+<main id="colonne">
+  <h1>data-analyst-agent</h1>
+  <div id="journal"></div>
+  <form id="formulaire">
+    <input type="text" id="message" autocomplete="off"
+           placeholder="Pose ta question sur les données...">
+    <button type="submit" id="envoyer">Envoyer</button>
+  </form>
+</main>
+<script>
+const journal = document.getElementById("journal");
+const formulaire = document.getElementById("formulaire");
+const champ = document.getElementById("message");
+const bouton = document.getElementById("envoyer");
+const fils = document.getElementById("fils");
+// null = conversation neuve : le serveur lui attribuera un id au 1er message.
+let conversationId = null;
+
+function bulle(classe) {
+  const div = document.createElement("div");
+  div.className = "message " + classe;
+  journal.appendChild(div);
+  return div;
+}
+
+function rendreTable(bloc, data) {
+  const table = document.createElement("table");
+  const entete = table.insertRow();
+  data.columns.forEach(c => {
+    const th = document.createElement("th");
+    th.textContent = c;
+    entete.appendChild(th);
+  });
+  data.rows.slice(0, 20).forEach(ligne => {
+    const tr = table.insertRow();
+    ligne.forEach(v => { tr.insertCell().textContent = v === null ? "" : v; });
+  });
+  bloc.appendChild(table);
+}
+
+// Même rendu pour un tour qui arrive et pour un tour relu d'une conversation
+// rouverte. Les paramètres sont explicites À DESSEIN : les deux sources ne
+// portent pas le même nom de champ (`answer` pour /chat, `content` pour un
+// message relu de /conversations). Prendre l'objet entier faisait lire un
+// `corps.answer` inexistant à la relecture — toutes les réponses rouvertes
+// s'affichaient « (pas de réponse) », tableaux corrects à côté.
+function rendreReponse(bloc, texte, artefacts, erreur) {
+  bloc.classList.remove("reflexion");
+  bloc.innerHTML = enHtml(texte || "(pas de réponse)");
+  if (erreur) {
+    const p = document.createElement("p");
+    p.className = "erreur";
+    p.textContent = erreur;
+    bloc.appendChild(p);
+  }
+  for (const artefact of artefacts || []) {
+    if (artefact.mime === "image/png") {
+      const img = document.createElement("img");
+      img.src = "data:image/png;base64," + artefact.data;
+      bloc.appendChild(img);
+    } else if (artefact.mime === "application/json") {
+      try { rendreTable(bloc, JSON.parse(artefact.data)); } catch (e) {}
+    }
+  }
+}
+
+// --- markdown minimal -------------------------------------------------------
+// Le LLM répond en markdown (**gras**, puces, `code`) et on n'a droit à aucune
+// bibliothèque externe (on-prem, réseau coupé, zéro CDN). D'où ce rendu à la
+// main, volontairement réduit à ce que le modèle produit vraiment.
+//
+// SÉCURITÉ : on échappe TOUT d'abord, puis on ne réintroduit que nos propres
+// balises. Le texte vient d'un LLM, lui-même nourri de données : une réponse
+// contenant "<img onerror=...>" doit s'afficher, jamais s'exécuter.
+
+function echapper(texte) {
+  return texte.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function enligne(texte) {
+  return texte
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+}
+
+function enHtml(texte) {
+  const sortie = [];
+  let liste = false;
+  for (const ligne of echapper(texte).split("\n")) {
+    const puce = ligne.match(/^\s*[*-]\s+(.*)$/);
+    if (puce) {
+      if (!liste) { sortie.push("<ul>"); liste = true; }
+      sortie.push("<li>" + enligne(puce[1]) + "</li>");
+      continue;
+    }
+    if (liste) { sortie.push("</ul>"); liste = false; }
+    const titre = ligne.match(/^#{1,6}\s+(.*)$/);
+    if (titre) { sortie.push("<h4>" + enligne(titre[1]) + "</h4>"); continue; }
+    if (ligne.trim()) sortie.push("<p>" + enligne(ligne) + "</p>");
+  }
+  if (liste) sortie.push("</ul>");
+  return sortie.join("");
+}
+
+function defiler() { journal.scrollTop = journal.scrollHeight; }
+
+async function rafraichirFils() {
+  const reponse = await fetch("/conversations");
+  const liste = await reponse.json();
+  fils.textContent = "";
+  if (!liste.length) {
+    const vide = document.createElement("p");
+    vide.className = "vide";
+    vide.textContent = "Aucune conversation.";
+    fils.appendChild(vide);
+    return;
+  }
+  for (const resume of liste) {
+    const ligne = document.createElement("div");
+    ligne.className = "fil" + (resume.id === conversationId ? " actif" : "");
+
+    const titre = document.createElement("button");
+    titre.type = "button";
+    titre.className = "fil-titre";
+    titre.textContent = resume.title;
+    titre.title = resume.title;
+    titre.addEventListener("click", () => ouvrir(resume.id));
+
+    const dupliquer = document.createElement("button");
+    dupliquer.type = "button";
+    dupliquer.className = "fil-action";
+    dupliquer.textContent = "⧉";
+    dupliquer.title = "Dupliquer";
+    dupliquer.addEventListener("click", async () => {
+      const reponse = await fetch("/conversations/" + resume.id + "/duplicate",
+                                 {method: "POST"});
+      if (reponse.ok) { ouvrir((await reponse.json()).id); }
+    });
+
+    const supprimer = document.createElement("button");
+    supprimer.type = "button";
+    supprimer.className = "fil-action";
+    supprimer.textContent = "✕";
+    supprimer.title = "Supprimer";
+    supprimer.addEventListener("click", async () => {
+      if (!confirm("Supprimer « " + resume.title + " » ?")) return;
+      await fetch("/conversations/" + resume.id, {method: "DELETE"});
+      if (resume.id === conversationId) nouvelleConversation();
+      else rafraichirFils();
+    });
+
+    ligne.append(titre, dupliquer, supprimer);
+    fils.appendChild(ligne);
+  }
+}
+
+async function ouvrir(id) {
+  const reponse = await fetch("/conversations/" + id);
+  if (!reponse.ok) { rafraichirFils(); return; }
+  const conversation = await reponse.json();
+  conversationId = conversation.id;
+  journal.textContent = "";
+  for (const message of conversation.messages) {
+    if (message.role === "user") bulle("utilisateur").textContent = message.content;
+    else rendreReponse(bulle("agent"), message.content, message.artifacts, message.error);
+  }
+  await rafraichirFils();
+  defiler();
+  champ.focus();
+}
+
+function nouvelleConversation() {
+  conversationId = null;
+  journal.textContent = "";
+  rafraichirFils();
+  champ.focus();
+}
+
+document.getElementById("nouvelle").addEventListener("click", nouvelleConversation);
+
+formulaire.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const texte = champ.value.trim();
+  if (!texte) return;
+  bulle("utilisateur").textContent = texte;
+  champ.value = "";
+  bouton.disabled = true;
+  const attente = bulle("agent");
+  attente.classList.add("reflexion");
+  attente.innerHTML = `<span class="roue"></span><span>L'agent réfléchit…</span>`;
+  defiler();
+  try {
+    const reponse = await fetch("/chat", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({message: texte, conversation_id: conversationId}),
+    });
+    const corps = await reponse.json();
+    const nouveau = corps.conversation_id && corps.conversation_id !== conversationId;
+    conversationId = corps.conversation_id || conversationId;
+    rendreReponse(attente, corps.answer, corps.artifacts, corps.error);
+    // 1er message : le fil vient d'être créé et titré côté serveur.
+    if (nouveau) rafraichirFils();
+  } catch (erreur) {
+    attente.classList.remove("reflexion");
+    attente.textContent = "Erreur réseau : " + erreur;
+    attente.classList.add("erreur");
+  } finally {
+    bouton.disabled = false;
+    champ.focus();
+    defiler();
+  }
+});
+
+rafraichirFils();
+</script>
+</body>
+</html>

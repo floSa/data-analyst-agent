@@ -330,13 +330,13 @@ def test_page_de_chat_porte_la_barre_laterale(client: TestClient):
 
 
 def test_javascript_de_la_page_est_syntaxiquement_valide():
-    """Garde-fou : la page est une chaîne Python, un échappement raté casse tout le script."""
+    """Garde-fou : une erreur de syntaxe casse tout le script, sans bruit côté serveur."""
     esprima = pytest.importorskip("esprima")
     import re
 
-    from data_analyst_agent.api.app import CHAT_PAGE
+    from data_analyst_agent.api import pages
 
-    script = re.search(r"<script>(.*)</script>", CHAT_PAGE, re.S).group(1)
+    script = re.search(r"<script>(.*)</script>", pages.gabarit(pages.CHAT), re.S).group(1)
     esprima.parseScript(script)
 
 
