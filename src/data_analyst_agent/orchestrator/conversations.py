@@ -96,8 +96,17 @@ class ConversationStore:
 
     # -- lecture --------------------------------------------------------------
 
-    def load(self, conversation_id: str) -> Conversation | None:
-        path = self._transcript_path(conversation_id)
+    def _read(self, path: Path) -> Conversation | None:
+        """Relit une transcription depuis son CHEMIN, sans repasser par l'id.
+
+        ``list`` parcourt des dossiers : leur nom est l'image du nom réel par
+        ``safe_dir_name``, et cette image ne se ré-encode pas en elle-même. Lui
+        redemander ``load(dossier.name)`` marchait tant que l'assainissement
+        était idempotent sur son propre résultat ; il ne l'est plus depuis qu'il
+        est injectif, et ne doit pas l'être — c'est le prix de l'absence de
+        collisions. L'id réel se lit du fichier, il n'a jamais eu à se déduire
+        du nom de dossier.
+        """
         if not path.exists():
             return None
         try:
@@ -107,15 +116,16 @@ class ConversationStore:
             # préfère un fil vide à une page de chat inutilisable.
             return None
 
+    def load(self, conversation_id: str) -> Conversation | None:
+        return self._read(self._transcript_path(conversation_id))
+
     def list(self) -> list[ConversationSummary]:
         """Les fils du plus récemment utilisé au plus ancien."""
         if not self.base_dir.exists():
             return []
         resumes = []
         for dossier in self.base_dir.iterdir():
-            if not (dossier / self.TRANSCRIPT).exists():
-                continue
-            conversation = self.load(dossier.name)
+            conversation = self._read(dossier / self.TRANSCRIPT)
             if conversation is None:
                 continue
             resumes.append(

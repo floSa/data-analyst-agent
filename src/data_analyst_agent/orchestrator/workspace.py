@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
-import re
+import string
 import threading
 import uuid
 import weakref
@@ -238,14 +239,78 @@ class ConversationContext(BaseModel):
     last_features: dict = Field(default_factory=dict)
 
 
+# -- nom de dossier -----------------------------------------------------------
+
+# Les seuls caractères repris tels quels. `~` en est volontairement exclu : il
+# sert de marque d'échappement, il doit donc s'échapper lui-même.
+CARACTERES_SURS = frozenset(string.ascii_letters + string.digits + "_-")
+ECHAPPEMENT = "~"
+
+# Image réservée du nom vide. Aucun nom non vide ne la produit : dans un nom
+# encodé, un `~` est TOUJOURS suivi de deux chiffres hexadécimaux.
+NOM_VIDE = "~vide"
+
+# Un composant de chemin est borné par le système de fichiers (255 octets sur
+# ext4 et xfs) et l'échappement peut quadrupler la longueur d'un nom unicode.
+# Au-delà, on se replie sur un préfixe lisible suivi de l'empreinte du nom
+# COMPLET — le marqueur `~~` n'est pas produisible autrement, l'empreinte
+# porte l'identité, l'injectivité tient.
+LONGUEUR_MAX = 120
+MARQUEUR_REPLI = "~~"
+EMPREINTE_CHARS = 32
+
+
 def safe_dir_name(name: str) -> str:
-    """Nom de dossier sûr à partir d'un conversation_id arbitraire.
+    """Nom de dossier sûr **et injectif** pour un identifiant arbitraire.
+
+    Chaque octet UTF-8 hors ``[0-9A-Za-z_-]`` est échappé en ``~XX``. Deux
+    conséquences, et c'est tout l'intérêt :
+
+    - **aucune traversée de chemin** : le résultat ne contient ni ``/`` (encodé
+      ``~2f``) ni ``.`` (encodé ``~2e``), donc ni ``..`` ni un chemin absolu ;
+    - **aucune collision** : l'encodage est réversible, donc deux identifiants
+      distincts donnent deux dossiers distincts.
+
+    Le nettoyage précédent (« tout caractère hors classe devient ``_`` ») tenait
+    le premier point mais pas le second : ``a/b``, ``a.b`` et ``a b`` tombaient
+    tous sur ``a_b``. Tant que la clé était un identifiant de conversation,
+    c'était un défaut — deux fils pouvaient partager une mémoire. Depuis qu'un
+    **login** entre dans le chemin, c'en serait un de cloisonnement : deux
+    comptes dont les logins ne diffèrent que par la ponctuation liraient et
+    écriraient les conversations l'un de l'autre.
+
+    Les identifiants déjà sur disque (uuid hexadécimaux, noms de démonstration
+    en ``[a-z0-9-]``) ne contiennent que des caractères sûrs : ils traversent
+    l'encodage inchangés, et rien n'est à migrer de ce côté.
 
     Partagé avec :mod:`data_analyst_agent.orchestrator.conversations` : les deux
     modules écrivent dans le MÊME dossier par conversation, il doit être calculé
     de la même façon des deux côtés.
     """
-    return re.sub(r"[^0-9A-Za-z_-]+", "_", name).strip("_") or "conversation"
+    if not name:
+        return NOM_VIDE
+    encode = "".join(
+        caractere
+        if caractere in CARACTERES_SURS
+        else "".join(f"{ECHAPPEMENT}{octet:02x}" for octet in caractere.encode("utf-8"))
+        for caractere in name
+    )
+    if len(encode) <= LONGUEUR_MAX:
+        return encode
+    empreinte = hashlib.sha256(name.encode("utf-8")).hexdigest()[:EMPREINTE_CHARS]
+    garde = LONGUEUR_MAX - len(MARQUEUR_REPLI) - EMPREINTE_CHARS
+    return f"{encode[:garde]}{MARQUEUR_REPLI}{empreinte}"
+
+
+def user_dir(base_dir: Path, login: str) -> Path:
+    """Racine d'un utilisateur : ``workspace_dir/<login>/``.
+
+    Toute la mémoire d'un compte vit là-dessous — transcriptions, CSV, manifeste,
+    contexte — **et ses verrous** : ``resource_lock`` range son ``.locks/`` à
+    côté de la ressource, donc sous la racine de l'utilisateur. Le cloisonnement
+    est ainsi structurel et non un filtre qu'une route pourrait oublier.
+    """
+    return Path(base_dir) / safe_dir_name(login)
 
 
 class ConversationWorkspace:
