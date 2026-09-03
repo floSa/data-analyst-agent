@@ -133,6 +133,65 @@ def test_la_fixture_disolation_vide_le_cache_de_get_settings():
     assert get_settings() is not premier
 
 
+# -- moteur LLM : le nom du moteur sort de la configuration --------------------
+
+
+def test_url_du_moteur_par_defaut():
+    assert make_settings().llm_base_url == "http://localhost:11434/v1"
+
+
+def test_ancienne_variable_du_moteur_toujours_honoree(monkeypatch):
+    """Un `.env` en service porte DAA_OLLAMA_BASE_URL : le renommage ne doit pas
+    couper l'instance qui tourne."""
+    monkeypatch.setenv("DAA_OLLAMA_BASE_URL", "http://central:11434/v1")
+
+    with pytest.deprecated_call():
+        settings = Settings(_env_file=None)
+
+    assert settings.llm_base_url == "http://central:11434/v1"
+
+
+def test_ancienne_variable_signalee_dans_les_logs(monkeypatch, caplog):
+    """Les DeprecationWarning sont muettes par défaut : c'est le log que
+    l'exploitant verra, et c'est lui qui doit migrer son fichier."""
+    monkeypatch.setenv("DAA_OLLAMA_BASE_URL", "http://central:11434/v1")
+
+    with caplog.at_level("WARNING"), pytest.deprecated_call():
+        Settings(_env_file=None)
+
+    assert "DAA_LLM_BASE_URL" in caplog.text
+
+
+def test_nouvelle_variable_prime_sur_lancienne(monkeypatch):
+    """Un réglage posé sciemment ne se fait pas reprendre par une variable oubliée."""
+    monkeypatch.setenv("DAA_OLLAMA_BASE_URL", "http://ancien:11434/v1")
+    monkeypatch.setenv("DAA_LLM_BASE_URL", "http://vllm:8000/v1")
+
+    with pytest.deprecated_call():
+        settings = Settings(_env_file=None)
+
+    assert settings.llm_base_url == "http://vllm:8000/v1"
+
+
+def test_aucun_avertissement_sans_lancienne_variable(monkeypatch, recwarn):
+    monkeypatch.delenv("DAA_OLLAMA_BASE_URL", raising=False)
+
+    assert Settings(_env_file=None).ollama_base_url is None
+    assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+
+
+def test_defauts_dappel_llm_bornent_lattente(monkeypatch):
+    """600 s x 3 essais, c'est ~30 min de thread retenu par un appel bloque."""
+    for variable in ("DAA_LLM_TIMEOUT", "DAA_LLM_MAX_RETRIES", "DAA_LLM_API_KEY"):
+        monkeypatch.delenv(variable, raising=False)
+
+    settings = make_settings()
+
+    assert 0 < settings.llm_timeout <= 300
+    assert settings.llm_max_retries <= 2
+    assert settings.llm_api_key == ""  # aucune authentification exigee par defaut
+
+
 # -- authentification ---------------------------------------------------------
 
 

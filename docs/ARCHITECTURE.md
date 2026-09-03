@@ -29,7 +29,7 @@ flowchart TB
     subgraph app["data-analyst-agent"]
         API["API FastAPI<br/>POST /chat · /conversations · GET /health"]
         ORCH["Orchestrateur LangGraph<br/>plan → route → capacité → synthèse"]
-        LLM["Client LLM mutualisé<br/>PydanticAI → Ollama"]
+        LLM["Client LLM mutualisé<br/>PydanticAI → OpenAI-compatible"]
 
         subgraph caps["Capacités"]
             RET["① Récupération<br/>catalogue + text-to-SQL à tools"]
@@ -183,8 +183,14 @@ CSV, sans laisser de données orphelines.
 
 ### 4.3 `llm.py` + `config.py` — LLM mutualisé et réglages
 
-`build_model()` fabrique l'unique modèle PydanticAI, pointé sur l'endpoint
-OpenAI-compatible d'Ollama, température 0 par défaut. `Settings`
+`build_model()` fabrique l'unique modèle PydanticAI, pointé sur un endpoint
+**OpenAI-compatible**, température 0 par défaut. Le moteur n'est pas nommé :
+`/v1/chat/completions` est servi aussi bien par Ollama (en service) que par vLLM
+(la cible, [VLLM.md](VLLM.md)) — passer de l'un à l'autre ne change que
+`DAA_LLM_BASE_URL`. Le client HTTP est construit explicitement pour porter la
+clé d'API (`DAA_LLM_API_KEY`, exigée par un vLLM lancé avec `--api-key`), le
+délai et le nombre de réessais : laissés aux défauts du SDK OpenAI (600 s,
+2 réessais), un appel bloqué retenait un thread ~30 min. `Settings`
 (pydantic-settings) centralise tous les réglages, surchargeables par variables
 d'environnement `DAA_*` ou `.env` (tableau complet en §7).
 
@@ -291,9 +297,13 @@ tests/
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `DAA_OLLAMA_BASE_URL` | `http://localhost:11434/v1` | endpoint OpenAI-compatible d'Ollama |
+| `DAA_LLM_BASE_URL` | `http://localhost:11434/v1` | endpoint OpenAI-compatible du serveur LLM (Ollama ou vLLM) |
+| `DAA_OLLAMA_BASE_URL` | — | **déprécié** : ancien nom du précédent, encore honoré (avertissement au démarrage) |
+| `DAA_LLM_API_KEY` | *(vide)* | clé envoyée en `Authorization` ; exigée par un vLLM lancé avec `--api-key` |
 | `DAA_LLM_MODEL` | `qwen3-coder:30b` | le modèle mutualisé |
 | `DAA_LLM_TEMPERATURE` | `0.0` | déterminisme des générations |
+| `DAA_LLM_TIMEOUT` | `120.0` s | délai d'un appel LLM |
+| `DAA_LLM_MAX_RETRIES` | `2` | réessais du SDK sur le transitoire (429, 5xx, coupure) |
 | `DAA_CATALOG_PATH` | `sources/catalogue.yaml` | catalogue des sources |
 | `DAA_RETRIEVAL_MAX_ROWS` | `200` | lignes max renvoyées par requête |
 | `DAA_RETRIEVAL_REQUEST_LIMIT` | `10` | allers-retours LLM max (anti-boucle) |

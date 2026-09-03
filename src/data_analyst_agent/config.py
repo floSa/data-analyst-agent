@@ -1,13 +1,24 @@
 """Configuration de l'application (pydantic-settings, préfixe d'environnement DAA_)."""
 
+import logging
 import os
+import warnings
 from functools import lru_cache
 from pathlib import Path
 
 from dotenv import dotenv_values
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENV_FILE = ".env"
+
+logger = logging.getLogger("data_analyst_agent.config")
+
+# Ancien nom du champ d'URL, du temps où le moteur s'appelait dans la
+# configuration. Conservé en lecture seule : un `.env` en service ne doit pas
+# cesser de marcher parce qu'on a renommé une variable.
+URL_MOTEUR_DEPRECIEE = "DAA_OLLAMA_BASE_URL"
+URL_MOTEUR = "DAA_LLM_BASE_URL"
 
 
 class Settings(BaseSettings):
@@ -16,12 +27,30 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DAA_", env_file=ENV_FILE, extra="ignore")
 
     # --- LLM mutualisé (docs/CADRAGE.md §5) ---
-    # Un seul modèle langage pour tout le système. Qwen3-Coder n'existe qu'en
-    # 30B-A3B (MoE, ~19 Go en Q4) : tient entièrement sur la L4 24 Go de prod,
-    # tourne en répartition GPU+RAM sur la machine de dev.
-    ollama_base_url: str = "http://localhost:11434/v1"
+    # Un seul modèle langage pour tout le système.
+    #
+    # Le MOTEUR n'est plus nommé ici : l'application ne parle que
+    # /v1/chat/completions, qu'Ollama comme vLLM servent. Changer de moteur,
+    # c'est changer cette URL — et rien d'autre côté code (audit §4.1).
+    llm_base_url: str = "http://localhost:11434/v1"
+    # Ancien nom, gardé pour ne pas casser les `.env` déjà en service. Renseigné,
+    # il alimente `llm_base_url` et se signale comme déprécié ; à retirer une
+    # fois les fichiers d'environnement migrés.
+    ollama_base_url: str | None = None
+    # Clé d'API. Inutile avec Ollama, EXIGÉE par un vLLM lancé avec `--api-key` :
+    # il rejette alors toute requête sans en-tête `Authorization`. Vide = pas
+    # d'authentification (le SDK OpenAI pose sa clé factice, qu'il exige non
+    # nulle même quand le serveur s'en moque).
+    llm_api_key: str = ""
     llm_model: str = "qwen3-coder:30b"
     llm_temperature: float = 0.0
+    # Délai d'un appel LLM et nombre de réessais. Les défauts du SDK OpenAI
+    # (600 s, 2 réessais) n'étaient pas une décision : un appel bloqué retenait
+    # un thread du pool jusqu'à ~30 min, trois essais compris. 120 s ramène ce
+    # pire cas à 6 min. Le réessai ne concerne que le transitoire (429, 5xx,
+    # coupure) : un refus de contexte (400) n'est jamais rejoué.
+    llm_timeout: float = 120.0
+    llm_max_retries: int = 2
 
     # --- Agent Récupération (docs/CADRAGE.md §7-①) ---
     catalog_path: Path = Path("sources/catalogue.yaml")
@@ -110,6 +139,35 @@ class Settings(BaseSettings):
     # Marge accordée au conteneur pour interrompre proprement le kernel avant
     # que l'hôte ne le tue (timeout dur = exec_timeout + kill_grace).
     sandbox_kill_grace: float = 10.0
+
+    @model_validator(mode="after")
+    def _reprendre_url_du_moteur_depreciee(self) -> "Settings":
+        """Fait vivre l'ancien nom d'URL, en disant qu'il est déprécié.
+
+        Le nouveau nom l'emporte s'il est renseigné explicitement : on ne veut
+        pas qu'une variable oubliée dans un `.env` reprenne la main sur un
+        réglage posé sciemment.
+
+        Deux canaux, et c'est voulu : ``warnings`` pour le développeur et les
+        tests, un log pour l'exploitant — les DeprecationWarning sont muettes
+        par défaut, et c'est précisément lui qui doit migrer son fichier.
+        """
+        if self.ollama_base_url is None:
+            return self
+        if "llm_base_url" in self.model_fields_set:
+            message = (
+                f"{URL_MOTEUR_DEPRECIEE} est dépréciée et IGNORÉE ici : "
+                f"{URL_MOTEUR} est renseignée et l'emporte. Retirez l'ancienne."
+            )
+        else:
+            self.llm_base_url = self.ollama_base_url
+            message = (
+                f"{URL_MOTEUR_DEPRECIEE} est dépréciée : renommez-la {URL_MOTEUR}. "
+                "Sa valeur est reprise pour cette exécution."
+            )
+        warnings.warn(message, DeprecationWarning, stacklevel=2)
+        logger.warning(message)
+        return self
 
 
 def export_env_file(env_file: str | Path = ENV_FILE) -> None:

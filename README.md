@@ -41,7 +41,7 @@ Le fonctionnement détaillé (schéma fonctionnel du graphe, séquences, durciss
 
 ## Démarrage
 
-Prérequis : [uv](https://docs.astral.sh/uv/) (Python 3.12 géré automatiquement), **Docker** (sandbox d'exécution + tests d'intégration), et [Ollama](https://ollama.com) avec `qwen3-coder:30b` pour l'usage réel.
+Prérequis : [uv](https://docs.astral.sh/uv/) (Python 3.12 géré automatiquement), **Docker** (sandbox d'exécution + tests d'intégration), et un serveur LLM à endpoint OpenAI-compatible pour l'usage réel — [Ollama](https://ollama.com) aujourd'hui, [vLLM](https://docs.vllm.ai) sans changer une ligne de code ([docs/VLLM.md](docs/VLLM.md)).
 
 ```bash
 uv sync                                              # environnement + dépendances
@@ -65,7 +65,7 @@ L'image de la sandbox se construit une fois : `docker build -t data-analyst-agen
 
 ## Configuration
 
-Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), URL Ollama (`DAA_OLLAMA_BASE_URL`), quotas sandbox, chemins du catalogue et du registre, durées de session et seuils de verrouillage (`DAA_SESSION_*`, `DAA_LOGIN_*`) — tableau complet dans [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md). Les sources de données se déclarent dans `sources/catalogue.yaml` (livré avec deux sources : `titanic` et `iris`).
+Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), serveur LLM (`DAA_LLM_BASE_URL`, `DAA_LLM_API_KEY`, `DAA_LLM_TIMEOUT`, `DAA_LLM_MAX_RETRIES`), quotas sandbox, chemins du catalogue et du registre, durées de session et seuils de verrouillage (`DAA_SESSION_*`, `DAA_LOGIN_*`) — tableau complet dans [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md). Les sources de données se déclarent dans `sources/catalogue.yaml` (livré avec deux sources : `titanic` et `iris`).
 
 ### Sources livrées
 
