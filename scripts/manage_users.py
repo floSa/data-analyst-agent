@@ -26,7 +26,12 @@ import getpass
 import sys
 from pathlib import Path
 
-from data_analyst_agent.auth.accounts import PASSWORD_MIN_CHARS, AccountError, AccountStore
+from data_analyst_agent.auth.accounts import (
+    PASSWORD_MIN_CHARS,
+    AccountError,
+    AccountStore,
+    normalize_login,
+)
 from data_analyst_agent.auth.sessions import SessionStore
 from data_analyst_agent.config import Settings, get_settings
 
@@ -127,6 +132,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if getattr(args, "login", None) is not None:
+        # Le magasin normaliserait de son côté, mais pas `revoke_login` : les
+        # sessions sont indexées sur la forme canonique du compte, et
+        # `disable alice` doit fermer les onglets de `Alice`.
+        args.login = normalize_login(args.login)
     settings = get_settings()
     store = AccountStore(args.accounts or settings.auth_accounts_path)
     action = COMMANDES[args.commande][0]

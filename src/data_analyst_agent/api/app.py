@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 import data_analyst_agent
 from data_analyst_agent.api import pages
-from data_analyst_agent.auth.accounts import AccountStore
+from data_analyst_agent.auth.accounts import AccountStore, normalize_login
 from data_analyst_agent.auth.current_user import CurrentUser, current_user
 from data_analyst_agent.auth.sessions import TOKEN_BYTES, Session, SessionStore
 from data_analyst_agent.auth.throttle import LoginThrottle
@@ -197,6 +197,10 @@ def create_app(
         csrf: Annotated[str, Form()] = "",
     ) -> Response:
         adresse = request.client.host if request.client else "inconnue"
+        # Forme canonique dès la porte : sans ça, l'anti-force brute compterait
+        # `alice`, `Alice` et ` alice ` sur trois compteurs distincts, et le
+        # verrouillage se contournerait en changeant la casse.
+        login = normalize_login(login)
         cookie = request.cookies.get(reglages.csrf_cookie_name, "")
         if not cookie or not secrets.compare_digest(csrf, cookie):
             return page_de_connexion(ECHEC_FORMULAIRE, 403)
