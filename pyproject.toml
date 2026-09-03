@@ -5,6 +5,10 @@ description = "Agent conversationnel sur données (on-premise) : requêtes SQL, 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    # Hachage des mots de passe en argon2id : lent et à mémoire dure, là où un
+    # sha256 s'essaie par milliards par seconde sur un GPU. Implémentation de
+    # référence (liaison sur libargon2), pas de réécriture maison.
+    "argon2-cffi>=25.1.0",
     "duckdb>=1.5.4",
     "fastapi>=0.139.0",
     "joblib>=1.5.3",
@@ -15,6 +19,9 @@ dependencies = [
     "pydantic>=2.13.4",
     "pydantic-ai-slim[openai]>=2.7.0",
     "pydantic-settings>=2.14.2",
+    # Lecture des formulaires (multipart/urlencoded) par FastAPI : la page de
+    # connexion est un formulaire HTML ordinaire, sans une ligne de JavaScript.
+    "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
     "scikit-learn>=1.9.0",
     "sqlalchemy>=2.0.51",

@@ -80,25 +80,31 @@ def atomic_write_to(path: Path) -> Iterator[Path]:
         raise
 
 
-def write_text_atomic(path: Path, text: str) -> None:
+def write_text_atomic(path: Path, text: str, *, mode: int | None = None) -> None:
     """Écrit ``text`` dans ``path`` sans jamais exposer d'état intermédiaire.
 
     ``Path.write_text`` tronque le fichier PUIS écrit : un process interrompu
     entre les deux — ou un lecteur qui passe pendant — trouve un JSON coupé au
     milieu, donc une conversation illisible. Le ``fsync`` avant renommage évite
     en plus qu'un crash machine ne laisse un fichier renommé mais vide.
+
+    ``mode`` est appliqué au TEMPORAIRE, avant le renommage : le fichier publié
+    n'a jamais, même brièvement, les droits de l'umask. C'est ce que réclame le
+    magasin de comptes (empreintes de mots de passe, 0600).
     """
     with atomic_write_to(path) as tmp, open(tmp, "w", encoding="utf-8") as fichier:
         fichier.write(text)
         fichier.flush()
+        if mode is not None:
+            os.fchmod(fichier.fileno(), mode)
         os.fsync(fichier.fileno())
 
 
 # -- verrou par conversation --------------------------------------------------
 
 
-class _ConversationLock:
-    """Exclusion mutuelle sur une conversation, entre threads ET entre process.
+class _ResourceLock:
+    """Exclusion mutuelle sur une ressource, entre threads ET entre process.
 
     Deux étages, parce qu'aucun des deux ne suffit :
 
@@ -152,39 +158,41 @@ class _ConversationLock:
         self._local.release()
 
 
-# Un verrou par conversation, pas un verrou global : deux utilisateurs sur deux
+# Un verrou par ressource, pas un verrou global : deux utilisateurs sur deux
 # fils différents ne doivent pas s'attendre. Références faibles pour que le
 # dictionnaire ne grossisse pas d'une entrée par conversation jamais rouverte —
 # un thread qui tient (ou attend) un verrou en garde une référence forte.
-_locks: weakref.WeakValueDictionary[str, _ConversationLock] = weakref.WeakValueDictionary()
+_locks: weakref.WeakValueDictionary[str, _ResourceLock] = weakref.WeakValueDictionary()
 _locks_guard = threading.Lock()
 
 
-def _lock_of(conversation_dir: Path) -> _ConversationLock:
-    dossier = Path(conversation_dir)
+def _lock_of(resource: Path) -> _ResourceLock:
+    dossier = Path(resource)
     path = dossier.parent / LOCKS_DIR / f"{dossier.name}.lock"
     cle = str(path.absolute())
     with _locks_guard:
         verrou = _locks.get(cle)
         if verrou is None:
-            verrou = _ConversationLock(path)
+            verrou = _ResourceLock(path)
             _locks[cle] = verrou
         return verrou
 
 
 @contextlib.contextmanager
-def conversation_lock(conversation_dir: Path, *, blocking: bool = True) -> Iterator[bool]:
-    """Sérialise les écritures du dossier d'UNE conversation.
+def resource_lock(path: Path, *, blocking: bool = True) -> Iterator[bool]:
+    """Sérialise les écritures d'UNE ressource, entre threads ET entre process.
 
-    Le dossier — et non l'identifiant — est la clé : ``ConversationStore`` et
-    ``ConversationWorkspace`` écrivent dans le même dossier par conversation et
-    doivent donc prendre le même verrou.
+    La ressource est désignée par son chemin : un dossier (celui d'une
+    conversation) ou un fichier (le magasin de comptes, celui des sessions). Le
+    verrou lui-même est un fichier vide rangé dans ``.locks/`` À CÔTÉ de la
+    ressource — jamais dedans : un ``rmtree`` du dossier verrouillé ne doit pas
+    emporter le verrou qui le sérialise.
 
     Cède ``True`` si le verrou est tenu. ``blocking=False`` cède ``False`` sans
     attendre quand il est déjà pris ailleurs : c'est ce qui permet de *constater*
     l'exclusion dans un test, sans attente arbitraire.
     """
-    verrou = _lock_of(conversation_dir)
+    verrou = _lock_of(path)
     if not verrou.acquire(blocking=blocking):
         yield False
         return
@@ -192,6 +200,16 @@ def conversation_lock(conversation_dir: Path, *, blocking: bool = True) -> Itera
         yield True
     finally:
         verrou.release()
+
+
+def conversation_lock(conversation_dir: Path, *, blocking: bool = True):
+    """Verrou d'une conversation : ``resource_lock`` sur son DOSSIER.
+
+    Le dossier — et non l'identifiant — est la clé : ``ConversationStore`` et
+    ``ConversationWorkspace`` écrivent dans le même dossier par conversation et
+    doivent donc prendre le même verrou.
+    """
+    return resource_lock(conversation_dir, blocking=blocking)
 
 
 class WorkspaceArtifact(BaseModel):

@@ -22,6 +22,12 @@ coverage.xml
 # Secrets / config locale
 .env
 
+# Magasin de comptes : logins et empreintes de mots de passe. Le défaut est
+# sous var/ (déjà ignoré), mais la règle est explicite pour que le fichier
+# reste hors du dépôt même si DAA_AUTH_ACCOUNTS_PATH le déplace. Forme du
+# fichier : users.example.yaml, lui versionné.
+users.yaml
+
 # État d'exécution local (workspaces des conversations)
 var/
 

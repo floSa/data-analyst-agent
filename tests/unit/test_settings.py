@@ -131,3 +131,30 @@ def test_la_fixture_disolation_vide_le_cache_de_get_settings():
     next(fixture)
 
     assert get_settings() is not premier
+
+
+# -- authentification ---------------------------------------------------------
+
+
+def test_defauts_dauthentification_sont_surs(monkeypatch):
+    """Les défauts doivent être ceux d'un service exposé, pas ceux d'un poste de dev."""
+    for variable in ("DAA_SESSION_COOKIE_SECURE", "DAA_AUTH_ACCOUNTS_PATH", "DAA_AUTH_STATE_DIR"):
+        monkeypatch.delenv(variable, raising=False)
+
+    settings = make_settings()
+
+    assert settings.session_cookie_secure is True  # cookie de session en HTTPS seulement
+    assert settings.session_idle_timeout > 0  # une session inactive finit par se fermer
+    assert settings.session_absolute_timeout > settings.session_idle_timeout
+    assert settings.login_max_failures >= 3  # la force brute est plafonnée
+    assert settings.login_lockout_seconds > 0
+    assert settings.auth_accounts_path == Path("var/users.yaml")  # sous var/, non versionné
+    assert settings.auth_state_dir == Path("var/auth")
+
+
+def test_secure_du_cookie_desactivable_pour_le_dev_local(monkeypatch):
+    """Le développement local se fait en http : le cookie doit pouvoir suivre,
+    par réglage explicite et jamais par défaut."""
+    monkeypatch.setenv("DAA_SESSION_COOKIE_SECURE", "false")
+
+    assert Settings(_env_file=None).session_cookie_secure is False

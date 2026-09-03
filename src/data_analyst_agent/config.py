@@ -47,6 +47,27 @@ class Settings(BaseSettings):
     # DAA_WORKSPACE_DIR pour pointer un volume dédié en production.
     workspace_dir: Path = Path("var/workspaces")
 
+    # --- Authentification (login + mot de passe, session côté serveur) ---
+    # Magasin de comptes : logins et empreintes argon2id. NON VERSIONNÉ, écrit
+    # en 0600, peuplé uniquement par scripts/manage_users.py — il n'y a ni
+    # inscription ouverte ni compte par défaut. Cf. users.example.yaml.
+    auth_accounts_path: Path = Path("var/users.yaml")
+    # État d'authentification : sessions ouvertes et compteurs d'échecs.
+    auth_state_dir: Path = Path("var/auth")
+    session_cookie_name: str = "daa_session"
+    csrf_cookie_name: str = "daa_csrf"
+    # Inactivité : ferme un poste laissé ouvert (1 h). Durée absolue : borne une
+    # session qu'un onglet maintiendrait vivante indéfiniment (12 h).
+    session_idle_timeout: float = 3600.0
+    session_absolute_timeout: float = 43200.0
+    # Défaut SÛR : le cookie de session ne part que sur HTTPS. À passer à false
+    # UNIQUEMENT pour un développement local en http, jamais en service.
+    session_cookie_secure: bool = True
+    # Anti-force brute : au-delà de N échecs, verrouillage temporisé, compté par
+    # compte ET par adresse.
+    login_max_failures: int = 5
+    login_lockout_seconds: float = 300.0
+
     # --- Sandbox d'exécution (docs/CADRAGE.md §6) ---
     # Commande docker ; surchargez p. ex. avec '["wsl", "docker"]' depuis Windows.
     sandbox_docker_cmd: list[str] = ["docker"]
