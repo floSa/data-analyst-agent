@@ -40,8 +40,17 @@ from data_analyst_agent.agents.retrieval.catalog import (
 from data_analyst_agent.agents.retrieval.sql import QueryResult
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
-from data_analyst_agent.orchestrator.context_budget import ContextLimits
-from data_analyst_agent.orchestrator.plan import Plan, build_planner
+from data_analyst_agent.orchestrator.context_budget import (
+    ContextLimits,
+    ContextTrim,
+    estimate_tokens,
+)
+from data_analyst_agent.orchestrator.plan import (
+    PLANNER_SYSTEM_PROMPT,
+    Plan,
+    planner_agent,
+    planner_system_prompt,
+)
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
 
@@ -56,9 +65,19 @@ obtenues sans en inventer ; si une figure a été produite, mentionne-la
 
 
 class TraceStep(BaseModel):
+    """Ce qu'a fait un nœud — et ce qui a été coupé de ce qu'il a envoyé.
+
+    Rien ne comptait les tokens ni n'enregistrait de troncature : un utilisateur
+    voyait la qualité s'effondrer sans qu'aucun message ne l'explique. Les trois
+    derniers champs existent pour que ce ne soit plus jamais silencieux.
+    """
+
     node: str
     detail: str = ""
     duration_ms: int = 0
+    prompt_tokens: int | None = None  # estimation locale, décomptée AVANT l'appel
+    truncated: bool = False
+    truncation: str = ""  # en clair : ce qui a été coupé, et par quel réglage
 
 
 class PendingInference(BaseModel):
@@ -192,13 +211,33 @@ class Orchestrator:
                 features=dict(inference.features) if aboutie else None,
             )
         return ChatAnswer(
-            answer=state.get("answer", ""),
+            answer=self._with_context_notices(state.get("answer", ""), state.get("trace", [])),
             artifacts=state.get("artifacts", []),
             plan=state.get("plan"),
             error=state.get("error"),
             trace=state.get("trace", []),
             pending=state.get("pending_out"),
         )
+
+    @staticmethod
+    def _with_context_notices(answer: str, trace: list[TraceStep]) -> str:
+        """Ajoute à la réponse ce qui a été coupé du contexte, s'il y a eu coupe.
+
+        Dans la RÉPONSE, et pas seulement dans la trace : la trace est un outil
+        de mise au point, elle n'est pas dépliée par défaut. Quelqu'un qui perd
+        du contexte doit l'apprendre de l'application — sinon il ne peut que le
+        déduire de la qualité des réponses, ce qui est précisément le défaut
+        relevé par l'audit (§3.5).
+
+        Un avis identique rendu par deux nœuds n'est écrit qu'une fois.
+        """
+        avis: list[str] = []
+        for step in trace:
+            if step.truncation and step.truncation not in avis:
+                avis.append(step.truncation)
+        if not avis:
+            return answer
+        return "\n\n".join([answer, *avis]) if answer else "\n\n".join(avis)
 
     # -- construction du graphe ----------------------------------------------
 
@@ -351,12 +390,16 @@ class Orchestrator:
             "change complètement de sujet, ignore ce contexte."
         )
 
-    def _clarify(self, plan: Plan, question: str, start: float) -> dict:
-        """Court-circuite vers une question de clarification (réponse propre, pas d'erreur)."""
+    def _clarify(self, plan: Plan, question: str, start: float, **mesures) -> dict:
+        """Court-circuite vers une question de clarification (réponse propre, pas d'erreur).
+
+        ``mesures`` porte ce qui a été mesuré du prompt de ce tour : une
+        clarification n'annule pas une troncature, elle doit la dire aussi.
+        """
         return {
             "plan": plan,
             "clarification": question,
-            "trace": [self._step("plan", "clarification demandée", start)],
+            "trace": [self._step("plan", "clarification demandée", start, **mesures)],
         }
 
     @staticmethod
@@ -373,19 +416,40 @@ class Orchestrator:
     def _plan_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         pending = state.get("pending_in")
-        # les objets intermédiaires de la conversation sont décrits en plus des
-        # sources déclarées, pour que « prédis ces lignes » les désigne
         sources_description = self.catalog.describe()
         workspace = state.get("workspace")
+        datasets_description = self._datasets_description()
+        pending_context = self._pending_context(pending)
+        history_context = workspace.describe_context() if workspace is not None else None
+        # Budget décompté AVANT l'appel. Tout ce qui précède est incompressible
+        # ici : le gabarit, le catalogue déclaré, les modèles, le tour
+        # précédent, la question. Le seul poste qui cède est le catalogue des
+        # objets intermédiaires, et il cède par les plus ANCIENS. (Le gabarit est
+        # pesé avec ses marqueurs `{sources}`/`{datasets}` : quelques caractères
+        # de trop, du bon côté.)
+        fixe = estimate_tokens(
+            PLANNER_SYSTEM_PROMPT,
+            sources_description,
+            datasets_description,
+            history_context,
+            pending_context,
+            state["question"],
+        )
+        trim = workspace.fit_to_budget(fixe) if workspace is not None else ContextTrim()
+        mesures: dict = {"truncated": trim.truncated, "truncation": trim.message()}
+        # les objets intermédiaires RETENUS sont décrits en plus des sources
+        # déclarées, pour que « prédis ces lignes » les désigne
         workspace_description = workspace.describe() if workspace is not None else None
         if workspace_description:
             sources_description = f"{sources_description}\n\n{workspace_description}"
-        planner = build_planner(
+        system_prompt = planner_system_prompt(
             sources_description,
-            self._datasets_description(),
-            pending_context=self._pending_context(pending),
-            history_context=(workspace.describe_context() if workspace is not None else None),
+            datasets_description,
+            pending_context=pending_context,
+            history_context=history_context,
         )
+        mesures["prompt_tokens"] = estimate_tokens(system_prompt, state["question"])
+        planner = planner_agent(system_prompt)
         try:
             plan = planner.run_sync(state["question"], model=self.model).output
         except UnexpectedModelBehavior:
@@ -400,6 +464,7 @@ class Orchestrator:
                     "faire — interroger une source (titanic, iris…), une analyse ou une "
                     "visualisation, ou une prédiction — et sur quelles données ?",
                     start,
+                    **mesures,
                 )
             plan = fallback
         if state.get("source_name"):
@@ -438,6 +503,7 @@ class Orchestrator:
                     f"La source « {plan.source} » est introuvable. Sur quelle source "
                     f"veux-tu travailler : {names} ?",
                     start,
+                    **mesures,
                 )
             plan.source = resolved
         # ambiguïté de source : la capacité interroge une source, aucune n'est
@@ -449,7 +515,9 @@ class Orchestrator:
             and len(self.catalog.sources) > 1
         ):
             names = ", ".join(s.name for s in self.catalog.sources)
-            return self._clarify(plan, f"Sur quelle source veux-tu travailler : {names} ?", start)
+            return self._clarify(
+                plan, f"Sur quelle source veux-tu travailler : {names} ?", start, **mesures
+            )
         # modèle de prédiction manquant : repli auto s'il n'y en a qu'un, sinon
         # on demande lequel plutôt que de propager un KeyError ('' -> inconnu).
         if plan.capability in self._PREDICT_CAPABILITIES and not plan.dataset:
@@ -458,7 +526,9 @@ class Orchestrator:
                 plan.dataset = datasets[0]
             elif len(datasets) > 1:
                 names = ", ".join(datasets)
-                return self._clarify(plan, f"Sur quel modèle veux-tu prédire : {names} ?", start)
+                return self._clarify(
+                    plan, f"Sur quel modèle veux-tu prédire : {names} ?", start, **mesures
+                )
         # « prédis ces lignes » : le LLM route parfois en 'predict' sans features
         # au lieu de fetch_then_predict. Si le dernier tableau mémorisé fournit
         # exactement les features du modèle, on chaîne dessus plutôt que de
@@ -480,7 +550,7 @@ class Orchestrator:
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         return {
             "plan": plan,
-            "trace": [self._step("plan", detail, start)],
+            "trace": [self._step("plan", detail, start, **mesures)],
         }
 
     def _retrieval_node(self, state: OrchestratorState) -> dict:
@@ -845,7 +915,10 @@ class Orchestrator:
         return " ".join(parts)
 
     @staticmethod
-    def _step(node: str, detail: str, start: float) -> TraceStep:
+    def _step(node: str, detail: str, start: float, **mesures) -> TraceStep:
         return TraceStep(
-            node=node, detail=detail, duration_ms=int((time.monotonic() - start) * 1000)
+            node=node,
+            detail=detail,
+            duration_ms=int((time.monotonic() - start) * 1000),
+            **mesures,
         )

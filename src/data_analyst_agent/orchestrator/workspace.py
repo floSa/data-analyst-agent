@@ -39,7 +39,11 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from data_analyst_agent.agents.retrieval.catalog import FileSource
-from data_analyst_agent.orchestrator.context_budget import ContextLimits, ContextTrim
+from data_analyst_agent.orchestrator.context_budget import (
+    ContextLimits,
+    ContextTrim,
+    estimate_tokens,
+)
 
 # Un dossier de conversation contient les questions de l'utilisateur et les
 # données qu'il a fait remonter : seul le compte du service a à les lire.
@@ -332,6 +336,11 @@ class ConversationWorkspace:
     ) -> None:
         self.dir = Path(base_dir) / safe_dir_name(conversation_id)
         self.limits = limits or ContextLimits()
+        # Resserrement décidé par le budget de tokens du tour (None = pas encore
+        # décompté). Retenu, et non recalculé : `save_table` réapplique la
+        # fenêtre en cours de tour, elle ne doit pas rouvrir ce que le budget a
+        # fermé — les montages de la sandbox déborderaient du budget du prompt.
+        self._budget_cap: int | None = None
         self.artifacts: list[WorkspaceArtifact] = self._load()
         self.context: ConversationContext = self._load_context()
         # `artifacts` est le disque, `injected` est le contexte : la fenêtre
@@ -352,16 +361,45 @@ class ConversationWorkspace:
         """
         fenetre = self.limits.artifact_window
         total = len(self.artifacts)
-        if fenetre <= 0 or total <= fenetre:
-            self.injected = list(self.artifacts)
-            self.trim = ContextTrim(total=total, kept=total)
-            return
-        self.injected = self.artifacts[-fenetre:]
-        self.trim = ContextTrim(
-            total=total,
-            kept=len(self.injected),
-            cause=f"fenêtre DAA_CONTEXT_ARTIFACT_WINDOW={fenetre}",
-        )
+        limite, cause = total, ""
+        if 0 < fenetre < limite:
+            limite = fenetre
+            cause = f"fenêtre DAA_CONTEXT_ARTIFACT_WINDOW={fenetre}"
+        if self._budget_cap is not None and self._budget_cap < limite:
+            limite = self._budget_cap
+            cause = f"budget DAA_CONTEXT_TOKEN_BUDGET={self.limits.token_budget} tokens"
+        self.injected = self.artifacts[-limite:] if limite else []
+        self.trim = ContextTrim(total=total, kept=len(self.injected), cause=cause)
+
+    def fit_to_budget(self, overhead_tokens: int) -> ContextTrim:
+        """Resserre la fenêtre pour que le prompt du tour tienne dans le budget.
+
+        ``overhead_tokens`` est ce que pèse le RESTE du prompt : le gabarit, les
+        sources déclarées, les modèles de prédiction, le contexte du tour
+        précédent, la question. Rien de tout cela n'est compressible ici ; ce
+        qui reste est pour le catalogue d'objets intermédiaires, et les plus
+        ANCIENS partent d'abord.
+
+        C'est ce qui distingue une dégradation délibérée d'un débordement subi :
+        au retour, on sait exactement ce qui a été retiré et pourquoi, et on
+        peut le dire — cf. :meth:`ContextTrim.message`.
+        """
+        budget = self.limits.token_budget
+        if budget <= 0:
+            return self.trim
+        cap = len(self.injected)
+        while cap > 0 and overhead_tokens + estimate_tokens(self.describe()) > budget:
+            cap -= 1
+            self._budget_cap = cap
+            self._apply_limits()
+        if overhead_tokens + estimate_tokens(self.describe()) > budget:
+            self.trim = self.trim.model_copy(
+                update={
+                    "over_budget": True,
+                    "cause": f"budget DAA_CONTEXT_TOKEN_BUDGET={budget} tokens",
+                }
+            )
+        return self.trim
 
     # -- persistance ----------------------------------------------------------
 

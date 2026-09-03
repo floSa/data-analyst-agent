@@ -45,14 +45,22 @@ def estimate_tokens(*parts: str | None) -> int:
     prête pas le sien, et en embarquer un ferait dépendre le plafond du modèle
     servi. On compte donc des caractères.
 
-    **De quel côté cette estimation se trompe :** elle **surestime**. À 3
-    caractères par token, elle rend ~1,2 à 1,4 fois le compte réel d'un
-    tokeniseur SentencePiece sur nos prompts (mesuré contre ``gemma4:e4b``, cf.
-    la synthèse de la tâche). C'est le sens d'erreur voulu : un compteur qui
-    surestime coupe **trop tôt**, ce qui dégrade un peu la mémoire ; un compteur
-    qui sous-estime laisse passer le débordement, c'est-à-dire exactement le
-    défaut qu'on corrige. Ne pas « recaler » cette constante vers le haut sans
-    remesurer : ce serait échanger une marge de sécurité contre quelques tokens.
+    **De quel côté cette estimation se trompe :** elle **surestime**, toujours.
+    Mesurée contre le tokeniseur réel de ``gemma4:e4b`` (``prompt_eval_count``)
+    sur des prompts de planificateur de 3 712 à 108 762 caractères, elle rend
+    1,01 à 1,17 fois le compte du serveur, et jamais moins de 1,00 :
+
+        car.   estimé   réel   estimé/réel
+        3712     1246   1081         1,153
+        4303     1443   1234         1,169
+       10609     3545   3326         1,066
+       30162    10062   9979         1,008
+
+    C'est le sens d'erreur voulu : un compteur qui surestime coupe **trop tôt**,
+    ce qui dégrade un peu la mémoire ; un compteur qui sous-estime laisse passer
+    le débordement, c'est-à-dire exactement le défaut qu'on corrige. Ne pas
+    remonter cette constante vers 4 sans remesurer : ce serait échanger une
+    marge de sécurité contre quelques tokens.
 
     Les fragments vides ne comptent pas — ils ne deviennent pas un message.
     """
@@ -77,10 +85,16 @@ class ContextLimits(BaseModel):
     # Nombre d'objets intermédiaires réinjectés, les plus récents d'abord.
     # 0 désactive la fenêtre — le budget de tokens reste alors le seul plafond.
     artifact_window: int = 8
+    # Plafond en tokens du prompt du planificateur, décompté avant l'appel.
+    # 0 désactive le budget — la fenêtre reste alors le seul plafond.
+    token_budget: int = 8000
 
     @classmethod
     def from_settings(cls, settings: Settings) -> ContextLimits:
-        return cls(artifact_window=settings.context_artifact_window)
+        return cls(
+            artifact_window=settings.context_artifact_window,
+            token_budget=settings.context_token_budget,
+        )
 
 
 class ContextTrim(BaseModel):
@@ -95,6 +109,10 @@ class ContextTrim(BaseModel):
     total: int = 0  # objets présents sur le disque de la conversation
     kept: int = 0  # objets effectivement réinjectés dans le contexte
     cause: str = ""  # le réglage qui a coupé, nommé en clair ("" si rien n'a été coupé)
+    # Le prompt dépasse le budget même une fois TOUS les objets retirés : ce
+    # n'est plus la mémoire de conversation qu'il faut couper, et le dire est
+    # tout ce que cette couche peut faire.
+    over_budget: bool = False
 
     @property
     def dropped(self) -> int:
@@ -102,17 +120,23 @@ class ContextTrim(BaseModel):
 
     @property
     def truncated(self) -> bool:
-        return self.dropped > 0
+        return self.dropped > 0 or self.over_budget
 
     def message(self) -> str:
         """Ce que lit l'utilisateur quand du contexte a été coupé ("" sinon)."""
-        if not self.truncated:
-            return ""
-        return (
-            f"Contexte tronqué : {self.dropped} des {self.total} tableaux intermédiaires "
-            f"de cette conversation ne sont plus transmis au modèle ({self.cause}). "
-            "Ils restent enregistrés — le fil, lui, reste complet."
-        )
+        parts = []
+        if self.dropped > 0:
+            parts.append(
+                f"Contexte tronqué : {self.dropped} des {self.total} tableaux intermédiaires "
+                f"de cette conversation ne sont plus transmis au modèle ({self.cause}). "
+                "Ils restent enregistrés — le fil, lui, reste complet."
+            )
+        if self.over_budget:
+            parts.append(
+                f"Le prompt dépasse le budget ({self.cause}) même sans aucun tableau "
+                "intermédiaire : la réponse peut être dégradée."
+            )
+        return " ".join(parts)
 
     def planner_notice(self) -> str:
         """Ce qu'on dit au planificateur : ne propose pas ce qu'il ne voit plus.

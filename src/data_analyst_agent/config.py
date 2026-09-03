@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     # Les objets évincés RESTENT sur le disque : on plafonne ce qu'on injecte,
     # pas ce qu'on conserve.
     context_artifact_window: int = 8
+    # Budget de tokens du prompt du planificateur, décompté AVANT l'appel. Il
+    # borne ce que la fenêtre seule ne borne pas : un catalogue déclaré volumineux
+    # ou une question très longue. Au dépassement, les objets intermédiaires les
+    # plus ANCIENS sont retirés jusqu'à ce que ça tienne — la dégradation est
+    # ordonnée, jamais subie. À tenir NETTEMENT sous la fenêtre du serveur
+    # (`OLLAMA_CONTEXT_LENGTH`, 32768 sur le service central) : le budget ne
+    # couvre que le planificateur, les autres agents ajoutent leurs propres tours.
+    # 0 désactive le budget.
+    context_token_budget: int = 8000
 
     # --- Authentification (login + mot de passe, session côté serveur) ---
     # Magasin de comptes : logins et empreintes argon2id. NON VERSIONNÉ, écrit

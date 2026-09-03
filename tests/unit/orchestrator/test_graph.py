@@ -15,6 +15,7 @@ from data_analyst_agent.agents.inference.predict import InferenceOutcome, Predic
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
 from data_analyst_agent.config import Settings
+from data_analyst_agent.orchestrator.context_budget import estimate_tokens
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
@@ -537,7 +538,7 @@ def test_ajustement_flou_reprend_la_derniere_action(
             raise UnexpectedModelBehavior("Exceeded maximum output retries (1)")
 
     monkeypatch.setattr(
-        "data_analyst_agent.orchestrator.graph.build_planner",
+        "data_analyst_agent.orchestrator.graph.planner_agent",
         lambda *args, **kwargs: _PlannerQuiEchoue(),
     )
     sandbox = ScriptedSandbox(
@@ -755,6 +756,82 @@ def test_le_plafond_de_contexte_vaut_pour_le_planificateur_ET_la_sandbox(
         assert f"{garde}.csv" in analyse
     # l'éviction est dite au planificateur, pour qu'il ne propose pas l'invisible
     assert "3 tableau(x) plus ancien(s)" in planificateur
+
+
+def _tour_de_requete(tmp_path: Path, mini_csv: Path, registry: Registry, tableaux: int, **reglages):
+    """Un tour `query` dans une conversation qui a déjà produit ``tableaux`` tableaux."""
+    ws = ConversationWorkspace(tmp_path, "ctronc")
+    for tour in range(1, tableaux + 1):
+        ws.save_table(["a"], [[tour]], f"tableau du tour {tour}")
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [tool_call("run_sql", {"query": "SELECT count(*) AS n FROM mini"}), text("4.")],
+        )
+    )
+    orchestrator = orchestrator_with(
+        llm,
+        catalog=Catalog(sources=[FileSource(name="mini", path=mini_csv)]),
+        registry=registry,
+        settings=make_settings(workspace_dir=tmp_path, **reglages),
+    )
+    return llm, orchestrator.ask("combien de lignes ?", conversation_id="ctronc")
+
+
+def test_la_troncature_est_dite_dans_la_trace_ET_dans_la_reponse(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Le défaut corrigé : la perte de contexte était totalement silencieuse."""
+    _llm, answer = _tour_de_requete(
+        tmp_path, mini_csv, registry, tableaux=5, context_artifact_window=2
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.truncated is True
+    assert "3 des 5 tableaux" in plan.truncation
+    assert "DAA_CONTEXT_ARTIFACT_WINDOW=2" in plan.truncation
+    # et surtout : l'utilisateur le lit, sans avoir à déplier la trace
+    assert "3 des 5 tableaux" in answer.answer
+    # l'avis s'ajoute à la réponse, il ne la remplace pas
+    assert answer.answer.startswith("4.\n\nContexte tronqué :")
+
+
+def test_aucune_mention_quand_rien_n_est_coupe(tmp_path: Path, mini_csv: Path, registry: Registry):
+    _llm, answer = _tour_de_requete(
+        tmp_path, mini_csv, registry, tableaux=2, context_artifact_window=8
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.truncated is False
+    assert plan.truncation == ""
+    assert "Contexte tronqué" not in answer.answer
+
+
+def test_le_prompt_est_pese_avant_l_appel(tmp_path: Path, mini_csv: Path, registry: Registry):
+    """La trace porte ce qu'on a envoyé : rien ne comptait les tokens jusqu'ici."""
+    llm, answer = _tour_de_requete(tmp_path, mini_csv, registry, tableaux=3)
+    plan = next(step for step in answer.trace if step.node == "plan")
+    envoye = estimate_tokens(llm.systems_for(PLANNER)[0], "combien de lignes ?")
+    assert plan.prompt_tokens == envoye
+
+
+def test_le_budget_borne_le_prompt_reellement_envoye(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Le budget se décompte sur le prompt réel, et il est tenu."""
+    budget = 1000
+    llm, answer = _tour_de_requete(
+        tmp_path,
+        mini_csv,
+        registry,
+        tableaux=20,
+        context_artifact_window=0,  # la fenêtre est désactivée : seul le budget coupe
+        context_token_budget=budget,
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.prompt_tokens <= budget
+    assert estimate_tokens(llm.systems_for(PLANNER)[0], "combien de lignes ?") <= budget
+    assert "DAA_CONTEXT_TOKEN_BUDGET=1000" in plan.truncation
 
 
 # --- analyze ------------------------------------------------------------------
@@ -1144,7 +1221,7 @@ def test_planificateur_illisible_repond_proprement(registry: Registry, monkeypat
             raise UnexpectedModelBehavior("Exceeded maximum output retries (1)")
 
     monkeypatch.setattr(
-        "data_analyst_agent.orchestrator.graph.build_planner",
+        "data_analyst_agent.orchestrator.graph.planner_agent",
         lambda *args, **kwargs: _PlannerQuiEchoue(),
     )
     orchestrator = orchestrator_with(ScriptedLLM(), registry=registry)

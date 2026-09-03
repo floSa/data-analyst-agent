@@ -19,9 +19,11 @@ from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import docker_run_command
 
 
-def memoire(tmp_path: Path, tours: int, fenetre: int = 8) -> ConversationWorkspace:
+def memoire(
+    tmp_path: Path, tours: int, fenetre: int = 8, budget: int = 8000
+) -> ConversationWorkspace:
     """Une conversation de ``tours`` tours, chacun ayant produit un tableau."""
-    limites = ContextLimits(artifact_window=fenetre)
+    limites = ContextLimits(artifact_window=fenetre, token_budget=budget)
     ws = ConversationWorkspace(tmp_path, "conv", limits=limites)
     for tour in range(1, tours + 1):
         ws.save_table(["a", "b"], [[tour, tour * 2]], f"question du tour {tour}")
@@ -95,7 +97,7 @@ def test_fenetre_a_zero_desactive_le_plafond(tmp_path: Path):
 
 def test_un_nouveau_tableau_entre_dans_la_fenetre_et_en_chasse_un(tmp_path: Path):
     """« ces lignes » désigne le tableau du tour courant : il doit être injecté."""
-    limites = ContextLimits(artifact_window=3)
+    limites = ContextLimits(artifact_window=3, token_budget=8000)
     ws = memoire(tmp_path, tours=3, fenetre=3)
     ws = ConversationWorkspace(tmp_path, "conv", limits=limites)
     nouveau = ws.save_table(["a"], [[9]], "le tour courant")
@@ -147,3 +149,64 @@ def test_estimation_ignore_les_fragments_vides():
 
 def test_trim_vide_par_defaut():
     assert ContextTrim().truncated is False
+
+
+# --- budget de tokens, décompté avant l'appel ---------------------------------
+
+
+def test_le_budget_retire_les_plus_anciens_d_abord(tmp_path: Path):
+    """La dégradation est ordonnée : c'est l'ancien qui part, pas le tour courant."""
+    ws = memoire(tmp_path, tours=10, fenetre=0, budget=400)
+    trim = ws.fit_to_budget(overhead_tokens=100)
+    assert 0 < trim.kept < 10
+    # ce qui reste est la QUEUE de la liste : les plus récents
+    assert [a.name for a in ws.injected] == [a.name for a in ws.artifacts[-trim.kept :]]
+    assert "DAA_CONTEXT_TOKEN_BUDGET=400" in trim.message()
+
+
+def test_le_budget_est_respecte_apres_resserrement(tmp_path: Path):
+    ws = memoire(tmp_path, tours=40, fenetre=0, budget=400)
+    ws.fit_to_budget(overhead_tokens=120)
+    assert 120 + estimate_tokens(ws.describe()) <= 400
+
+
+def test_le_budget_ne_rouvre_pas_ce_qu_il_a_ferme(tmp_path: Path):
+    """`save_table` réapplique la fenêtre en cours de tour : elle doit rester fermée.
+
+    Sinon les montages de la sandbox déborderaient du budget décompté pour le
+    prompt, et les trois axes cesseraient d'être d'accord.
+    """
+    ws = memoire(tmp_path, tours=10, fenetre=0, budget=400)
+    retenus = ws.fit_to_budget(overhead_tokens=100).kept
+    ws.save_table(["a"], [[99]], "le tour courant")
+    assert len(ws.injected) == retenus
+    assert len(ws.sandbox_files()) == retenus
+    assert ws.injected[-1].question == "le tour courant"
+
+
+def test_prompt_trop_gros_meme_sans_aucun_objet(tmp_path: Path):
+    """Le budget est crevé par le reste du prompt : plus rien à couper ici, on le dit."""
+    ws = memoire(tmp_path, tours=5, fenetre=8, budget=200)
+    trim = ws.fit_to_budget(overhead_tokens=5000)
+    assert ws.injected == []
+    assert trim.over_budget is True
+    assert trim.truncated is True
+    assert "même sans aucun tableau intermédiaire" in trim.message()
+
+
+def test_budget_a_zero_desactive_le_decompte(tmp_path: Path):
+    ws = memoire(tmp_path, tours=5, fenetre=8, budget=0)
+    trim = ws.fit_to_budget(overhead_tokens=10**6)
+    assert len(ws.injected) == 5
+    assert trim.truncated is False
+
+
+def test_budget_confortable_ne_coupe_rien(tmp_path: Path):
+    ws = memoire(tmp_path, tours=5, fenetre=8, budget=8000)
+    assert ws.fit_to_budget(overhead_tokens=900).truncated is False
+    assert len(ws.injected) == 5
+
+
+def test_limits_lues_des_reglages_pour_le_budget():
+    settings = Settings(_env_file=None, context_token_budget=1234)
+    assert ContextLimits.from_settings(settings).token_budget == 1234

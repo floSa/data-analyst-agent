@@ -68,18 +68,22 @@ class Plan(BaseModel):
     reason: str = ""
 
 
-def build_planner(
+def planner_system_prompt(
     sources_description: str,
     datasets_description: str,
     pending_context: str | None = None,
     history_context: str | None = None,
-) -> Agent[None, Plan]:
-    """Agent planificateur avec sortie structurée Plan.
+) -> str:
+    """Compose le prompt système du planificateur.
 
     ``pending_context`` (multi-tours) : décrit une prédiction en attente de
     features — le message courant est probablement un complément d'information.
     ``history_context`` : décrit le tour précédent (question + action) pour
     qu'un ajustement (« mets des couleurs plus vives ») soit rattaché à lui.
+
+    Composé à part de l'agent parce que l'orchestrateur doit pouvoir le **peser
+    avant de l'envoyer** : un budget de tokens se décompte sur le prompt réel,
+    pas sur une estimation de ce qu'il contiendra.
     """
     system_prompt = PLANNER_SYSTEM_PROMPT.format(
         sources=sources_description, datasets=datasets_description
@@ -87,4 +91,9 @@ def build_planner(
     for extra in (history_context, pending_context):
         if extra:
             system_prompt = f"{system_prompt}\n{extra}"
+    return system_prompt
+
+
+def planner_agent(system_prompt: str) -> Agent[None, Plan]:
+    """Agent planificateur à sortie structurée Plan, pour un prompt déjà composé."""
     return Agent(output_type=Plan, system_prompt=system_prompt)
