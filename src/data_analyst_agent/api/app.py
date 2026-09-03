@@ -9,6 +9,13 @@ Les conversations sont persistées sur disque (cf. ``orchestrator/conversations`
 et listées dans la barre latérale : on peut en ouvrir une ancienne et reprendre
 où on en était, la dupliquer ou la supprimer.
 
+**Chacun ne voit que ses fils.** Le magasin est ouvert POUR l'utilisateur de la
+session, sa racine est celle de cet utilisateur, et aucune route ne dispose d'un
+magasin qui verrait plus loin. Le fil d'un autre compte répond donc **404 et non
+403** — un 403 confirmerait son existence, et cette fuite est gratuite à éviter.
+Cela vaut aussi pour le ``conversation_id`` que ``POST /chat`` accepte du client :
+il ne désigne jamais que le dossier de l'appelant.
+
 **Toutes les routes exigent une session**, sauf ``/health`` — une sonde de
 disponibilité n'a pas de session, et lui refuser l'accès ferait passer le
 service pour tombé. Une requête sans session reçoit 401 sur l'API et la page de
@@ -60,10 +67,19 @@ ECHEC_VERROUILLE = "Trop de tentatives. Réessayez dans quelques minutes."
 ECHEC_FORMULAIRE = "Formulaire expiré. Recommencez."
 
 
+# L'utilisateur de la session, tel que posé par le middleware. Toute route qui
+# touche à des conversations le déclare : c'est ce qui lui donne SON magasin.
+Utilisateur = Annotated[CurrentUser, Depends(current_user)]
+
+
 class ChatRequest(BaseModel):
     message: str
     source: str | None = None  # force une source du catalogue (sinon le planificateur choisit)
     conversation_id: str | None = None  # multi-tours : renvoyer l'id reçu dans la réponse
+    # Pas de champ `owner`, et il ne faut pas en ajouter : le propriétaire vient
+    # de la session, jamais du corps de la requête. Un champ inconnu envoyé par
+    # un client est ignoré par pydantic, et le magasin réécrit de toute façon
+    # l'`owner` de ce qu'il persiste.
 
 
 def create_app(
@@ -79,9 +95,6 @@ def create_app(
     app.state.orchestrator_factory = orchestrator_factory or Orchestrator
     app.state.settings = settings or get_settings()
     reglages: Settings = app.state.settings
-    # les conversations vivent sur disque : elles survivent au rechargement de la
-    # page comme au redémarrage du serveur.
-    app.state.store = ConversationStore(reglages.workspace_dir)
     app.state.accounts = AccountStore(reglages.auth_accounts_path)
     app.state.sessions = SessionStore(
         reglages.auth_state_dir,
@@ -99,8 +112,17 @@ def create_app(
             app.state.orchestrator = app.state.orchestrator_factory()
         return app.state.orchestrator
 
-    def store() -> ConversationStore:
-        return app.state.store
+    def store(utilisateur: CurrentUser) -> ConversationStore:
+        """Le magasin DE cet utilisateur — il n'en existe pas d'autre sorte.
+
+        Fabriqué par requête, et non gardé dans ``app.state`` : un magasin
+        partagé serait forcément le magasin de tout le monde, et c'est
+        exactement ce que l'audit §2.3 a mesuré. L'objet ne porte qu'un chemin
+        et un login, le fabriquer ne coûte rien. Les conversations, elles,
+        vivent sur disque : elles survivent au rechargement de la page comme au
+        redémarrage du serveur.
+        """
+        return ConversationStore(reglages.workspace_dir, utilisateur.login)
 
     # -- cookies --------------------------------------------------------------
 
@@ -235,7 +257,7 @@ def create_app(
         return reponse
 
     @app.get("/me", response_model=CurrentUser)
-    def qui_suis_je(utilisateur: Annotated[CurrentUser, Depends(current_user)]) -> CurrentUser:
+    def qui_suis_je(utilisateur: Utilisateur) -> CurrentUser:
         """L'utilisateur de la session en cours, pour un client d'API."""
         return utilisateur
 
@@ -246,18 +268,31 @@ def create_app(
         return {"status": "ok", "version": data_analyst_agent.__version__}
 
     @app.post("/chat", response_model=ChatAnswer)
-    def chat(request: ChatRequest) -> ChatAnswer:
+    def chat(request: ChatRequest, utilisateur: Utilisateur) -> ChatAnswer:
+        """Un tour de conversation, dans le dossier de l'utilisateur de la session.
+
+        L'``conversation_id`` du client est honoré — ``scripts/live_scenarios.py``
+        mène ses tours sous un id qu'il a choisi — mais il est résolu SOUS la
+        racine de l'appelant. Reprendre l'id du fil d'un autre compte n'y écrit
+        donc rien : c'est un fil neuf, vide, chez soi. La propriété est vérifiée
+        avant la moindre écriture parce qu'elle est vérifiée par le chemin
+        lui-même.
+        """
+        magasin = store(utilisateur)
         existante = (
-            store().load(request.conversation_id) if request.conversation_id is not None else None
+            magasin.load(request.conversation_id) if request.conversation_id is not None else None
         )
-        conversation = existante or store().create(request.conversation_id)
+        conversation = existante or magasin.create(request.conversation_id)
         answer = get_orchestrator().ask(
             request.message,
             source=request.source,
             pending=conversation.pending,
             conversation_id=conversation.id,
+            # la MÊME racine que celle où le magasin écrit la transcription :
+            # les tableaux intermédiaires du fil doivent atterrir à côté d'elle.
+            workspace_root=magasin.base_dir,
         )
-        store().record_turn(
+        magasin.record_turn(
             conversation.id,
             question=request.message,
             answer=answer.answer,
@@ -269,30 +304,30 @@ def create_app(
         return answer
 
     @app.get("/conversations", response_model=list[ConversationSummary])
-    def lister_conversations() -> list[ConversationSummary]:
-        return store().list()
+    def lister_conversations(utilisateur: Utilisateur) -> list[ConversationSummary]:
+        return store(utilisateur).list()
 
     @app.get("/conversations/{conversation_id}", response_model=Conversation)
-    def ouvrir_conversation(conversation_id: str) -> Conversation:
-        conversation = store().load(conversation_id)
+    def ouvrir_conversation(conversation_id: str, utilisateur: Utilisateur) -> Conversation:
+        conversation = store(utilisateur).load(conversation_id)
         if conversation is None:
             raise HTTPException(status_code=404, detail="conversation inconnue")
         return conversation
 
     @app.post("/conversations/{conversation_id}/duplicate", response_model=Conversation)
-    def dupliquer_conversation(conversation_id: str) -> Conversation:
-        copie = store().duplicate(conversation_id)
+    def dupliquer_conversation(conversation_id: str, utilisateur: Utilisateur) -> Conversation:
+        copie = store(utilisateur).duplicate(conversation_id)
         if copie is None:
             raise HTTPException(status_code=404, detail="conversation inconnue")
         return copie
 
     @app.delete("/conversations/{conversation_id}", status_code=204)
-    def supprimer_conversation(conversation_id: str) -> None:
-        if not store().delete(conversation_id):
+    def supprimer_conversation(conversation_id: str, utilisateur: Utilisateur) -> None:
+        if not store(utilisateur).delete(conversation_id):
             raise HTTPException(status_code=404, detail="conversation inconnue")
 
     @app.get("/", response_class=HTMLResponse)
-    def index(utilisateur: Annotated[CurrentUser, Depends(current_user)]) -> str:
+    def index(utilisateur: Utilisateur) -> str:
         return pages.render(
             pages.CHAT, login=utilisateur.login, cookie_csrf=reglages.csrf_cookie_name
         )

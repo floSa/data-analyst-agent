@@ -26,7 +26,9 @@ from helpers.auth import (
 
 
 class FakeOrchestrator:
-    def ask(self, question, source=None, pending=None, conversation_id=None) -> ChatAnswer:
+    def ask(
+        self, question, source=None, pending=None, conversation_id=None, workspace_root=None
+    ) -> ChatAnswer:
         return ChatAnswer(answer="Il y a 3 femmes.")
 
 

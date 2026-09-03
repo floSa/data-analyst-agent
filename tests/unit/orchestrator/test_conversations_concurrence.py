@@ -38,10 +38,13 @@ from data_analyst_agent.orchestrator.workspace import (
 # indue ou un interblocage la dépasse.
 BORNE = 30.0
 
+# Un magasin est ouvert POUR quelqu'un : il n'existe pas de magasin anonyme.
+PROPRIETAIRE = "alice"
+
 
 @pytest.fixture
 def store(tmp_path) -> ConversationStore:
-    return ConversationStore(tmp_path / "workspaces")
+    return ConversationStore(tmp_path / "workspaces", PROPRIETAIRE)
 
 
 def _en_parallele(taches: list, attendus: int = 0) -> list:

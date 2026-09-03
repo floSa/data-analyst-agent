@@ -46,7 +46,9 @@ HACHEUR_RAPIDE = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
 
 
 class FakeOrchestrator:
-    def ask(self, question, source=None, pending=None, conversation_id=None) -> ChatAnswer:
+    def ask(
+        self, question, source=None, pending=None, conversation_id=None, workspace_root=None
+    ) -> ChatAnswer:
         return ChatAnswer(
             answer="Il y a 891 passagers.",
             artifacts=[MimeOutput(mime="application/json", data=TABLE_JSON)],
@@ -107,7 +109,7 @@ def connexion(page, base_url: str) -> None:
 def app_url(tmp_path: Path):
     """Un uvicorn réel, sur un magasin de conversations pré-rempli."""
     settings = _reglages(tmp_path, "workspaces")
-    store = ConversationStore(settings.workspace_dir)
+    store = ConversationStore(settings.workspace_dir, LOGIN)
     conversation = store.create()
     store.record_turn(
         conversation.id,
@@ -212,7 +214,7 @@ def test_dupliquer_une_conversation_lajoute_et_louvre(page, app_url: str):
 def url_markdown(tmp_path: Path):
     """Un fil dont la réponse est du markdown, comme le LLM en produit vraiment."""
     settings = _reglages(tmp_path, "md")
-    store = ConversationStore(settings.workspace_dir)
+    store = ConversationStore(settings.workspace_dir, LOGIN)
     c = store.create()
     store.record_turn(
         c.id,
@@ -250,7 +252,7 @@ def test_html_dans_la_reponse_est_echappe_pas_execute(page, tmp_path: Path):
     """Le texte vient d'un LLM nourri de données : du HTML doit s'AFFICHER, jamais
     s'exécuter. Le rendu markdown ne doit pas ouvrir une porte d'injection."""
     settings = _reglages(tmp_path, "xss")
-    store = ConversationStore(settings.workspace_dir)
+    store = ConversationStore(settings.workspace_dir, LOGIN)
     c = store.create()
     store.record_turn(
         c.id,

@@ -1,5 +1,7 @@
 """Tests de l'API FastAPI (orchestrateur doublé + un flux réel scripté)."""
 
+from pathlib import Path
+
 import joblib
 import pytest
 from fastapi.testclient import TestClient
@@ -30,11 +32,20 @@ class FakeOrchestrator:
     def __init__(self, answer: ChatAnswer) -> None:
         self.answer = answer
         self.calls: list[tuple[str, str | None, object]] = []
+        # la racine reçue au dernier appel : c'est elle qui doit être celle de
+        # l'utilisateur de la session, et pas la racine commune.
+        self.workspace_roots: list[Path | None] = []
 
     def ask(
-        self, question: str, source: str | None = None, pending=None, conversation_id=None
+        self,
+        question: str,
+        source: str | None = None,
+        pending=None,
+        conversation_id=None,
+        workspace_root: Path | None = None,
     ) -> ChatAnswer:
         self.calls.append((question, source, pending))
+        self.workspace_roots.append(workspace_root)
         return self.answer
 
 

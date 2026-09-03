@@ -141,13 +141,23 @@ class Orchestrator:
         source: str | None = None,
         pending: PendingInference | None = None,
         conversation_id: str | None = None,
+        workspace_root: Path | None = None,
     ) -> ChatAnswer:
+        """Répond à une question, dans la mémoire de ``conversation_id`` s'il y en a une.
+
+        ``workspace_root`` est la racine sous laquelle vit cette conversation.
+        L'API y passe ``ConversationStore.base_dir``, la racine de l'utilisateur
+        de la session : la transcription et les tableaux intermédiaires d'un
+        même fil doivent atterrir dans le MÊME dossier, et le seul moyen d'en
+        être sûr est que les deux couches lisent la même valeur plutôt que de
+        la recalculer chacune de son côté. À défaut, on retombe sur
+        ``workspace_dir`` — le cas des appels directs, hors session.
+        """
         # mémoire de conversation : les tableaux intermédiaires produits sont
         # persistés et réexposés aux tours suivants (cf. workspace.py)
+        racine = workspace_root if workspace_root is not None else self.settings.workspace_dir
         workspace = (
-            ConversationWorkspace(self.settings.workspace_dir, conversation_id)
-            if conversation_id is not None
-            else None
+            ConversationWorkspace(racine, conversation_id) if conversation_id is not None else None
         )
         state: OrchestratorState = self.graph.invoke(
             {
