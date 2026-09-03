@@ -916,6 +916,41 @@ def test_une_autre_erreur_du_planificateur_reste_generique(
     assert "ModelHTTPError" in answer.error
 
 
+def test_prompt_plus_long_que_la_fenetre_du_serveur_est_dit_avant_l_appel(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Sans ce constat, un débordement massif ne laisse qu'un « je n'ai pas compris ».
+
+    Mesuré contre gemma4:e4b, plafonds désactivés : à 48 350 tokens envoyés pour
+    une fenêtre de 32 768, le modèle ne rend plus de sortie structurée, le
+    planificateur retombe sur son repli, et rien ne reliait ce repli à la
+    longueur du prompt. Ici la fenêtre déclarée est minuscule, pour constater le
+    même enchaînement sans serveur.
+    """
+    _llm, answer = _tour_de_requete(
+        tmp_path, mini_csv, registry, tableaux=2, context_model_window=200
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.truncated is True
+    assert "pour une fenêtre de 200" in plan.truncation
+    assert "pour une fenêtre de 200" in answer.answer
+
+
+def test_les_constats_de_troncature_se_cumulent(tmp_path: Path, mini_csv: Path, registry: Registry):
+    """Éviction d'objets ET prompt plus long que la fenêtre : les deux se disent."""
+    _llm, answer = _tour_de_requete(
+        tmp_path,
+        mini_csv,
+        registry,
+        tableaux=5,
+        context_artifact_window=2,
+        context_model_window=200,
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert "3 des 5 tableaux" in plan.truncation
+    assert "pour une fenêtre de 200" in plan.truncation
+
+
 # --- analyze ------------------------------------------------------------------
 
 

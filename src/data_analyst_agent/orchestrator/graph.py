@@ -47,6 +47,7 @@ from data_analyst_agent.orchestrator.context_budget import (
     ContextTrim,
     detect_overflow,
     estimate_tokens,
+    exceeds_model_window,
     is_context_refusal,
 )
 from data_analyst_agent.orchestrator.plan import (
@@ -412,6 +413,18 @@ class Orchestrator:
             "change complètement de sujet, ignore ce contexte."
         )
 
+    @staticmethod
+    def _ajoute_avis(mesures: dict, avis: str) -> None:
+        """Cumule un constat de troncature dans les mesures du tour.
+
+        Ils se cumulent bel et bien : un tour peut avoir évincé des objets ET
+        dépasser la fenêtre du serveur, et l'utilisateur a besoin des deux.
+        """
+        if not avis:
+            return
+        mesures["truncated"] = True
+        mesures["truncation"] = " ".join(a for a in (mesures["truncation"], avis) if a)
+
     def _clarify(self, plan: Plan, question: str, start: float, **mesures) -> dict:
         """Court-circuite vers une question de clarification (réponse propre, pas d'erreur).
 
@@ -471,6 +484,9 @@ class Orchestrator:
             history_context=history_context,
         )
         mesures["prompt_tokens"] = estimate_tokens(system_prompt, state["question"])
+        # dernier constat avant l'envoi : au-delà de la fenêtre du serveur, un
+        # échec de sortie structurée ne laissera RIEN à mesurer au retour.
+        self._ajoute_avis(mesures, exceeds_model_window(mesures["prompt_tokens"], self.limits))
         planner = planner_agent(system_prompt)
         serveur: int | None = None
         try:
@@ -497,10 +513,7 @@ class Orchestrator:
             serveur = resultat.usage.input_tokens
             debordement = detect_overflow(mesures["prompt_tokens"], serveur, self.limits)
             if debordement is not None:
-                mesures["truncated"] = True
-                mesures["truncation"] = " ".join(
-                    avis for avis in (mesures["truncation"], debordement.message()) if avis
-                )
+                self._ajoute_avis(mesures, debordement.message())
         mesures["server_prompt_tokens"] = serveur
         if state.get("source_name"):
             plan.source = state["source_name"]

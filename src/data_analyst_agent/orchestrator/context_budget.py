@@ -195,6 +195,29 @@ class ContextOverflow(BaseModel):
         )
 
 
+def exceeds_model_window(estimated: int, limits: ContextLimits) -> str:
+    """Le prompt dépasse-t-il, à lui seul, la fenêtre déclarée du serveur ?
+
+    Constat fait **avant** l'appel, et c'est tout l'intérêt : quand le
+    débordement est tel que le modèle ne rend plus de sortie exploitable, il n'y
+    a pas de ``prompt_eval_count`` à lire au retour — l'appel a échoué autrement.
+
+    Mesuré contre ``gemma4:e4b`` (fenêtre servie 32 768), plafonds désactivés :
+    48 350 tokens envoyés, plus aucune sortie structurée, le planificateur
+    retombe sur son repli et l'utilisateur lit « Je n'ai pas bien compris ta
+    demande ». Rien ne reliait ce message à la longueur du prompt.
+
+    Rend le constat en clair, ou "" s'il n'y a rien à dire.
+    """
+    if limits.model_window <= 0 or estimated <= limits.model_window:
+        return ""
+    return (
+        f"Contexte trop long : ~{estimated} tokens envoyés pour une fenêtre de "
+        f"{limits.model_window}. Le serveur va en ignorer une partie, ou refuser la "
+        "requête. Baisse DAA_CONTEXT_TOKEN_BUDGET ou DAA_CONTEXT_ARTIFACT_WINDOW."
+    )
+
+
 def detect_overflow(
     estimated: int, server: int | None, limits: ContextLimits
 ) -> ContextOverflow | None:

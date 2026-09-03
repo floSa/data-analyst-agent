@@ -17,6 +17,7 @@ from data_analyst_agent.orchestrator.context_budget import (
     ContextTrim,
     detect_overflow,
     estimate_tokens,
+    exceeds_model_window,
     is_context_refusal,
 )
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
@@ -304,3 +305,22 @@ def test_autre_refus_400_non_confondu():
 
 def test_erreur_ordinaire_non_confondue():
     assert is_context_refusal(ValueError("colonne inconnue")) is False
+
+
+# --- dépassement constaté AVANT l'appel ---------------------------------------
+
+
+def test_prompt_plus_long_que_la_fenetre_est_dit_avant_l_appel():
+    """Le cas où il n'y aura RIEN à mesurer au retour : la sortie structurée échoue."""
+    avis = exceeds_model_window(48350, LIMITES)
+    assert "~48350 tokens envoyés pour une fenêtre de 32768" in avis
+    assert "DAA_CONTEXT_TOKEN_BUDGET" in avis
+
+
+def test_prompt_qui_tient_ne_dit_rien():
+    assert exceeds_model_window(1790, LIMITES) == ""
+    assert exceeds_model_window(32768, LIMITES) == ""
+
+
+def test_fenetre_inconnue_ne_conclut_rien():
+    assert exceeds_model_window(48350, ContextLimits(model_window=0)) == ""
