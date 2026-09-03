@@ -22,7 +22,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from data_analyst_agent.orchestrator.graph import PendingInference
-from data_analyst_agent.orchestrator.workspace import safe_dir_name
+from data_analyst_agent.orchestrator.workspace import make_private_dir, safe_dir_name
 from data_analyst_agent.sandbox.client import MimeOutput
 
 TITLE_MAX_CHARS = 60
@@ -128,7 +128,7 @@ class ConversationStore:
 
     def _save(self, conversation: Conversation) -> Conversation:
         dossier = self.dir_of(conversation.id)
-        dossier.mkdir(parents=True, exist_ok=True)
+        make_private_dir(dossier)
         (dossier / self.TRANSCRIPT).write_text(
             conversation.model_dump_json(indent=2), encoding="utf-8"
         )

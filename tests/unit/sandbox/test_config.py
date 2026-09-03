@@ -1,6 +1,7 @@
 """Tests des réglages (pydantic-settings)."""
 
 import os
+from pathlib import Path
 
 from data_analyst_agent.config import Settings, export_env_file, get_settings
 
@@ -51,3 +52,25 @@ def test_export_env_file_ne_recouvre_pas_lenvironnement_reel(tmp_path, monkeypat
     export_env_file(env)
 
     assert os.environ["DAA_PG_PORT"] == "6543"
+
+
+def test_workspace_dir_par_defaut_sous_le_projet(monkeypatch):
+    """Pas dans /tmp : purgé périodiquement (10 jours sur la machine de dev) et
+    lisible par tout compte local, alors qu'on y écrit les questions des
+    utilisateurs et les données qu'ils font remonter."""
+    # export_env_file (appelée par get_settings) a pu publier le .env du poste
+    # dans l'environnement du process : le défaut ne se lit qu'à vide.
+    monkeypatch.delenv("DAA_WORKSPACE_DIR", raising=False)
+
+    defaut = make_settings().workspace_dir
+
+    assert defaut == Path("var/workspaces")
+    assert not defaut.is_absolute()  # relatif au projet, comme catalog_path
+
+
+def test_daa_workspace_dir_prime_sur_le_defaut(monkeypatch, tmp_path):
+    """L'instance en service pointe un volume dédié : changer le défaut ne doit
+    pas reprendre la main sur la variable d'environnement."""
+    monkeypatch.setenv("DAA_WORKSPACE_DIR", str(tmp_path / "persist"))
+
+    assert Settings(_env_file=None).workspace_dir == tmp_path / "persist"

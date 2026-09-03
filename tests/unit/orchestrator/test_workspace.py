@@ -1,5 +1,6 @@
 """Mémoire de conversation : persistance CSV et réexposition des objets."""
 
+import stat
 from pathlib import Path
 
 from data_analyst_agent.agents.retrieval.catalog import FileSource, open_source
@@ -78,3 +79,27 @@ def test_contexte_conversationnel_persiste(tmp_path: Path):
     # le code n'est repris que pour la même source
     assert reloaded.last_code_for("iris") == "import matplotlib"
     assert reloaded.last_code_for("titanic") is None
+
+
+def test_dossiers_crees_en_0700_parents_compris(tmp_path: Path):
+    """Sans mode explicite, l'umask donnait 0o775 : tout compte local lisait
+    les transcriptions et les CSV de tout le monde. ``mkdir(parents=True)``
+    n'applique pas le mode aux parents, d'où la création segment par segment."""
+    base = tmp_path / "var" / "workspaces"
+    ws = ConversationWorkspace(base, "conv-privee")
+
+    ws.save_table(["a"], [[1]], "q")
+
+    assert oct(stat.S_IMODE(ws.dir.stat().st_mode)) == "0o700"
+    assert oct(stat.S_IMODE(base.stat().st_mode)) == "0o700"
+    assert oct(stat.S_IMODE(base.parent.stat().st_mode)) == "0o700"
+
+
+def test_un_dossier_deja_present_garde_ses_droits(tmp_path: Path):
+    """Un volume monté avec ses propres droits ne doit pas être re-chmodé."""
+    base = tmp_path / "monte"
+    base.mkdir(mode=0o750)
+
+    ConversationWorkspace(base, "c").save_table(["a"], [[1]], "q")
+
+    assert oct(stat.S_IMODE(base.stat().st_mode)) == "0o750"

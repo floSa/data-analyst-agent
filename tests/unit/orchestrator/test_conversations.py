@@ -1,5 +1,7 @@
 """Tests du magasin de conversations (transcription, reprise, duplication)."""
 
+import stat
+
 import pytest
 
 from data_analyst_agent.orchestrator.conversations import ConversationStore, _title_from
@@ -171,3 +173,15 @@ def test_id_arbitraire_retrouve_malgre_le_nom_de_dossier(store: ConversationStor
 
     assert [c.id for c in store.list()] == ["ma conv #1"]
     assert store.load("ma conv #1") is not None
+
+
+def test_dossier_de_conversation_cree_en_0700(tmp_path):
+    """Le transcript porte les questions de l'utilisateur : lui seul et le
+    service ont à le lire (mesuré 0o775 avant correctif)."""
+    store = ConversationStore(tmp_path / "var" / "workspaces")
+
+    conversation = store.create()
+
+    dossier = store.dir_of(conversation.id)
+    assert oct(stat.S_IMODE(dossier.stat().st_mode)) == "0o700"
+    assert oct(stat.S_IMODE(store.base_dir.stat().st_mode)) == "0o700"

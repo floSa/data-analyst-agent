@@ -25,6 +25,24 @@ from pydantic import BaseModel, Field
 
 from data_analyst_agent.agents.retrieval.catalog import FileSource
 
+# Un dossier de conversation contient les questions de l'utilisateur et les
+# données qu'il a fait remonter : seul le compte du service a à les lire.
+DIR_MODE = 0o700
+
+
+def make_private_dir(path: Path) -> None:
+    """Crée ``path`` (et ses parents manquants) en 0o700.
+
+    ``Path.mkdir(mode=…, parents=True)`` n'applique le mode qu'au dernier
+    segment : les parents créés au passage héritent de l'umask — mesuré 0o775,
+    donc lisibles par tout compte local. On les crée donc un par un. Les
+    dossiers déjà présents ne sont pas touchés : un volume monté avec ses
+    propres droits reste tel quel.
+    """
+    for dossier in reversed(path.parents):
+        dossier.mkdir(mode=DIR_MODE, exist_ok=True)
+    path.mkdir(mode=DIR_MODE, exist_ok=True)
+
 
 class WorkspaceArtifact(BaseModel):
     """Métadonnées d'un tableau intermédiaire persisté."""
@@ -97,7 +115,7 @@ class ConversationWorkspace:
         features: dict | None = None,
     ) -> None:
         """Mémorise le tour courant (question + action) pour comprendre le suivant."""
-        self.dir.mkdir(parents=True, exist_ok=True)
+        make_private_dir(self.dir)
         self.context = ConversationContext(
             last_question=question,
             last_capability=capability,
@@ -153,7 +171,7 @@ class ConversationWorkspace:
 
     def save_table(self, columns: list[str], rows: list[list], question: str) -> WorkspaceArtifact:
         """Écrit un tableau en CSV, l'ajoute au manifeste et le renvoie."""
-        self.dir.mkdir(parents=True, exist_ok=True)
+        make_private_dir(self.dir)
         name = f"resultat_{len(self.artifacts) + 1}"
         file = f"{name}.csv"
         pd.DataFrame(rows, columns=columns).to_csv(self.dir / file, index=False)

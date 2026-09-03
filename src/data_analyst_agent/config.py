@@ -1,7 +1,6 @@
 """Configuration de l'application (pydantic-settings, préfixe d'environnement DAA_)."""
 
 import os
-import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -42,7 +41,11 @@ class Settings(BaseSettings):
     # Chaque conversation persiste ses tableaux intermédiaires (CSV) sous un
     # sous-dossier de ce répertoire ; ils sont réexposés aux tours suivants
     # (sources éphémères, sandbox du code généré).
-    workspace_dir: Path = Path(tempfile.gettempdir()) / "daa-workspaces"
+    # Sous le projet, et non dans /tmp : le contenu de /tmp est purgé (10 jours
+    # sur la machine de dev) et lisible par tout compte local, alors qu'on y
+    # écrit les questions des utilisateurs et leurs données. Surchargeable par
+    # DAA_WORKSPACE_DIR pour pointer un volume dédié en production.
+    workspace_dir: Path = Path("var/workspaces")
 
     # --- Sandbox d'exécution (docs/CADRAGE.md §6) ---
     # Commande docker ; surchargez p. ex. avec '["wsl", "docker"]' depuis Windows.
