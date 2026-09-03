@@ -32,3 +32,8 @@ Thumbs.db
 
 # Consignes de contribution locales (non versionnées)
 CLAUDE.md
+
+# Dossier de travail de l'outillage local : arbres de travail jetables et
+# copies de fichiers du dépôt. Non ignoré, les linters y descendaient et
+# rapportaient des erreurs sur des fichiers qui n'existent pas ici.
+.claude/
