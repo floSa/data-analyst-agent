@@ -893,11 +893,20 @@ def test_le_prompt_est_pese_avant_l_appel(tmp_path: Path, mini_csv: Path, regist
     assert plan.prompt_tokens == envoye
 
 
+# Plancher incompressible du prompt du planificateur sur ce jeu de données :
+# gabarit + catalogue + le dictionnaire des features de `maxizoo_sales` (neuf
+# colonnes et leurs valeurs autorisées, ~420 tokens à elles seules). Le budget
+# ne coupe QUE le catalogue d'objets intermédiaires ; en dessous de ce plancher
+# il n'a plus rien à retirer. 1600 laisse au budget de quoi mordre sur les
+# tableaux sans être sous le plancher — cf. le test d'over_budget qui suit.
+BUDGET_AU_DESSUS_DU_PLANCHER = 1600
+
+
 def test_le_budget_borne_le_prompt_reellement_envoye(
     tmp_path: Path, mini_csv: Path, registry: Registry
 ):
     """Le budget se décompte sur le prompt réel, et il est tenu."""
-    budget = 1000
+    budget = BUDGET_AU_DESSUS_DU_PLANCHER
     llm, answer = _tour_de_requete(
         tmp_path,
         mini_csv,
@@ -909,7 +918,38 @@ def test_le_budget_borne_le_prompt_reellement_envoye(
     plan = next(step for step in answer.trace if step.node == "plan")
     assert plan.prompt_tokens <= budget
     assert estimate_tokens(llm.systems_for(PLANNER)[0], "combien de lignes ?") <= budget
-    assert "DAA_CONTEXT_TOKEN_BUDGET=1000" in plan.truncation
+    assert f"DAA_CONTEXT_TOKEN_BUDGET={budget}" in plan.truncation
+    # le budget a bel et bien mordu : des tableaux sont tombés, pas seulement
+    # un avis d'impuissance
+    assert plan.truncation.startswith("Contexte tronqué :")
+
+
+def test_un_budget_sous_le_plancher_est_dit_impuissant_au_lieu_de_mentir(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Sous le plancher, le budget ne PEUT pas être tenu — il faut le dire.
+
+    Le dictionnaire de features de `maxizoo_sales` est incompressible : le
+    budget ne coupe que les tableaux intermédiaires. Un budget réglé sous ce
+    plancher ne tient pas, et le taire laisserait croire à un prompt borné.
+    """
+    budget = 1000  # sous le plancher (~1250 tokens sans aucun tableau)
+    _llm, answer = _tour_de_requete(
+        tmp_path,
+        mini_csv,
+        registry,
+        tableaux=20,
+        context_artifact_window=0,
+        context_token_budget=budget,
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.prompt_tokens > budget  # le budget n'est pas tenu
+    assert plan.truncated is True
+    assert f"Le prompt dépasse le budget (budget DAA_CONTEXT_TOKEN_BUDGET={budget}" in (
+        plan.truncation
+    )
+    assert "même sans aucun tableau intermédiaire" in plan.truncation
+    assert "même sans aucun tableau intermédiaire" in answer.answer  # et l'utilisateur le lit
 
 
 def test_ce_que_le_serveur_dit_avoir_evalue_est_trace(

@@ -17,13 +17,13 @@ import pytest
 
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource, PostgresSource
-from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter
+from data_analyst_agent.agents.retrieval.duckdb_source import DuckDBAdapter
 from data_analyst_agent.agents.retrieval.sql import QueryError
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.sandbox.client import SandboxResult
-from helpers.doubles import FakeClassifier, ScriptedSandbox
+from helpers.doubles import FakeRegressor, ScriptedSandbox
 from helpers.scripted_llm import (
     ANALYSIS,
     PLANNER,
@@ -37,20 +37,18 @@ from helpers.scripted_llm import (
 
 REGISTRY_YAML = """
 models:
-  - dataset: titanic
-    task: classification
-    model_path: titanic.joblib
-    target: survived
-    labels:
-      "0": "n'a pas survécu"
-      "1": "a survécu"
+  - dataset: maxizoo_sales
+    task: regression
+    model_path: maxizoo_sales.joblib
+    target: quantity
+    unit: unités vendues
 """
 
 
 @pytest.fixture
 def registry(tmp_path: Path) -> Registry:
     (tmp_path / "registry.yaml").write_text(REGISTRY_YAML, encoding="utf-8")
-    joblib.dump(FakeClassifier(), tmp_path / "titanic.joblib")
+    joblib.dump(FakeRegressor(), tmp_path / "maxizoo_sales.joblib")
     return Registry.load(tmp_path / "registry.yaml")
 
 
@@ -61,11 +59,19 @@ def mini_csv(tmp_path: Path) -> Path:
     return csv
 
 
+# Le format exact des features de `maxizoo_sales` : le nœud fetch_then_predict
+# ne prédit que si le tableau récupéré les porte toutes.
+FEATURES_HEADER = (
+    "ligne_id,store_type,commodity_group,brand_type,base_price,"
+    "day_of_week,month,discount_rate,promo_type,temp_anomaly"
+)
+
+
 @pytest.fixture
-def passager_csv(tmp_path: Path) -> Path:
-    csv = tmp_path / "passagers.csv"
+def ventes_csv(tmp_path: Path) -> Path:
+    csv = tmp_path / "ventes.csv"
     csv.write_text(
-        "passenger_id,sex,pclass,age,sibsp,parch,fare,embarked\n1,female,1,28,0,0,80.0,S\n",
+        f"{FEATURES_HEADER}\n1,grand,Chien,nationale,49.90,5,11,0.30,produits,0.0\n",
         encoding="utf-8",
     )
     return csv
@@ -198,33 +204,33 @@ def test_le_noeud_danalyse_referme_la_base_avant_de_lancer_la_sandbox(
 
 
 def test_le_noeud_fetch_predict_referme_sa_source(
-    passager_csv: Path, registry: Registry, monkeypatch
+    ventes_csv: Path, registry: Registry, monkeypatch
 ):
-    espions = espionner_les_sources(monkeypatch, passager_csv)
+    espions = espionner_les_sources(monkeypatch, ventes_csv)
     llm = (
         ScriptedLLM()
         .script(
             PLANNER,
             [
                 plan_response(
-                    Plan(capability="fetch_then_predict", dataset="titanic", source="passagers")
+                    Plan(capability="fetch_then_predict", dataset="maxizoo_sales", source="ventes")
                 )
             ],
         )
         .script(
             RETRIEVAL,
             [
-                tool_call("run_sql", {"query": "SELECT * FROM passagers WHERE passenger_id = 1"}),
+                tool_call("run_sql", {"query": "SELECT * FROM ventes WHERE ligne_id = 1"}),
                 text("Une ligne."),
             ],
         )
     )
-    catalog = Catalog(sources=[FileSource(name="passagers", path=passager_csv)])
+    catalog = Catalog(sources=[FileSource(name="ventes", path=ventes_csv)])
     orchestrateur = Orchestrator(
         model=llm.model(), catalog=catalog, registry=registry, settings=make_settings()
     )
 
-    reponse = orchestrateur.ask("Prédis la survie du passager 1")
+    reponse = orchestrateur.ask("Prédis les ventes de la ligne 1")
 
     assert reponse.error is None
     assert [e.ferme for e in espions] == [True]
