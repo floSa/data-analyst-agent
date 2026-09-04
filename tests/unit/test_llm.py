@@ -6,6 +6,7 @@ d'API, délai, réessais — arrive bien jusqu'au client HTTP. C'est la conditio
 pour qu'une bascule Ollama → vLLM ne soit qu'une affaire de `.env`.
 """
 
+import pytest
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
@@ -31,7 +32,8 @@ def test_temperature_transmise():
 
 def test_ancienne_url_reprise_par_build_model():
     """Un `.env` en service porte encore DAA_OLLAMA_BASE_URL : il doit marcher."""
-    settings = make_settings(ollama_base_url="http://ancien:11434/v1")
+    with pytest.deprecated_call():
+        settings = make_settings(ollama_base_url="http://ancien:11434/v1")
     assert "ancien:11434" in str(build_model(settings).client.base_url)
 
 

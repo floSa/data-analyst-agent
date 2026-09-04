@@ -7,11 +7,13 @@ donneraient un « import file mismatch » à pytest.
 """
 
 import os
+import re
 from pathlib import Path
 
 import pytest
 
 import conftest
+from data_analyst_agent import config
 from data_analyst_agent.config import Settings, export_env_file, get_settings
 
 
@@ -63,15 +65,15 @@ def test_export_env_file_ne_recouvre_pas_lenvironnement_reel(tmp_path, monkeypat
     assert os.environ["DAA_PG_PORT"] == "6543"
 
 
-def test_workspace_dir_par_defaut_sous_le_projet(monkeypatch):
+def test_workspace_dir_par_defaut_sous_le_projet():
     """Pas dans /tmp : purgé périodiquement (10 jours sur la machine de dev) et
     lisible par tout compte local, alors qu'on y écrit les questions des
-    utilisateurs et les données qu'ils font remonter."""
-    # Un développeur peut avoir exporté la variable dans son shell : le défaut ne
-    # se lit qu'à vide. La fuite du `.env` dans os.environ, elle, est neutralisée
-    # en amont par la fixture d'isolation de tests/conftest.py.
-    monkeypatch.delenv("DAA_WORKSPACE_DIR", raising=False)
+    utilisateurs et les données qu'ils font remonter.
 
+    Un défaut ne se lit qu'à vide : ni le `.env` du poste ni une `DAA_*` exportée
+    dans le shell ne doivent être là. C'est la fixture d'isolation de
+    tests/conftest.py qui l'assure, et plus un `delenv` par test.
+    """
     defaut = make_settings().workspace_dir
 
     assert defaut == Path("var/workspaces")
@@ -97,7 +99,9 @@ def test_get_settings_publie_le_env_du_poste_dans_lenvironnement(tmp_path, monke
     """
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("DAA_WORKSPACE_DIR=/volume/du/poste\n", encoding="utf-8")
-    monkeypatch.delenv("DAA_WORKSPACE_DIR", raising=False)
+    # La fixture d'isolation pointe ENV_FILE sur un fichier inexistant : ce test-ci
+    # étudie justement le mécanisme, il repose donc la constante.
+    monkeypatch.setattr(config, "ENV_FILE", ".env")
     get_settings.cache_clear()
 
     get_settings()
@@ -120,6 +124,43 @@ def test_la_fixture_disolation_rend_lenvironnement_au_test_suivant():
 
     assert "DAA_TEMOIN_FUITE" not in os.environ
     assert "PATH" in os.environ
+
+
+def test_la_fixture_disolation_retire_le_env_du_poste_a_lentree(monkeypatch):
+    """Rendre l'environnement en sortie ne suffit pas : la fuite précède le
+    premier test. Importer ``api/app.py`` exécute son ``app = create_app()`` de
+    niveau module — donc get_settings() — dès la collecte ; l'état « avant » que
+    chaque test mémorise est donc déjà pollué. Il faut le retirer à l'entrée."""
+    monkeypatch.setenv("DAA_OLLAMA_BASE_URL", "http://poste:11434/v1")
+    fixture = conftest.environnement_isole.__wrapped__()
+
+    next(fixture)  # entrée : la variable du poste doit disparaître
+    retiree = "DAA_OLLAMA_BASE_URL" not in os.environ
+    with pytest.raises(StopIteration):
+        next(fixture)  # sortie : et revenir telle quelle
+
+    assert retiree
+    assert os.environ["DAA_OLLAMA_BASE_URL"] == "http://poste:11434/v1"
+
+
+def test_la_fixture_disolation_coupe_get_settings_du_fichier_du_poste():
+    """Retirer les variables ne suffit pas non plus : get_settings() relit le
+    `.env` à chaque appel et republierait la configuration du poste au beau
+    milieu du test. La fixture lui retire le fichier."""
+    assert not Path(conftest.ENV_FILE_NEUTRE).exists()
+
+    assert get_settings().workspace_dir == Path("var/workspaces")
+    assert "DAA_WORKSPACE_DIR" not in os.environ
+
+
+def test_aucune_depreciation_du_moteur_ne_traverse_la_suite(recwarn):
+    """Le `.env` du poste porte encore DAA_OLLAMA_BASE_URL. Tant qu'il fuitait,
+    la dépréciation criait à chaque Settings construit dans la suite — 242
+    avertissements sur un run complet, du bruit qui masquait les vrais."""
+    get_settings()
+
+    assert Settings(_env_file=None).ollama_base_url is None
+    assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
 
 
 def test_la_fixture_disolation_vide_le_cache_de_get_settings():
@@ -173,18 +214,13 @@ def test_nouvelle_variable_prime_sur_lancienne(monkeypatch):
     assert settings.llm_base_url == "http://vllm:8000/v1"
 
 
-def test_aucun_avertissement_sans_lancienne_variable(monkeypatch, recwarn):
-    monkeypatch.delenv("DAA_OLLAMA_BASE_URL", raising=False)
-
+def test_aucun_avertissement_sans_lancienne_variable(recwarn):
     assert Settings(_env_file=None).ollama_base_url is None
     assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
 
 
-def test_defauts_dappel_llm_bornent_lattente(monkeypatch):
+def test_defauts_dappel_llm_bornent_lattente():
     """600 s x 3 essais, c'est ~30 min de thread retenu par un appel bloque."""
-    for variable in ("DAA_LLM_TIMEOUT", "DAA_LLM_MAX_RETRIES", "DAA_LLM_API_KEY"):
-        monkeypatch.delenv(variable, raising=False)
-
     settings = make_settings()
 
     assert 0 < settings.llm_timeout <= 300
@@ -195,11 +231,8 @@ def test_defauts_dappel_llm_bornent_lattente(monkeypatch):
 # -- authentification ---------------------------------------------------------
 
 
-def test_defauts_dauthentification_sont_surs(monkeypatch):
+def test_defauts_dauthentification_sont_surs():
     """Les défauts doivent être ceux d'un service exposé, pas ceux d'un poste de dev."""
-    for variable in ("DAA_SESSION_COOKIE_SECURE", "DAA_AUTH_ACCOUNTS_PATH", "DAA_AUTH_STATE_DIR"):
-        monkeypatch.delenv(variable, raising=False)
-
     settings = make_settings()
 
     assert settings.session_cookie_secure is True  # cookie de session en HTTPS seulement
@@ -217,3 +250,22 @@ def test_secure_du_cookie_desactivable_pour_le_dev_local(monkeypatch):
     monkeypatch.setenv("DAA_SESSION_COOKIE_SECURE", "false")
 
     assert Settings(_env_file=None).session_cookie_secure is False
+
+
+# -- .env.example, la seule doc que l'exploitant a sous la main ----------------
+
+
+def test_chaque_reglage_est_documente_dans_env_example():
+    """Un réglage ajouté au code et nulle part ailleurs n'existe pour personne.
+
+    `.env.example` est le fichier qu'on copie pour configurer une instance : un
+    champ de `Settings` absent d'ici est un plafond, un délai ou un interrupteur
+    de sécurité que l'exploitant ne saura jamais qu'il pouvait régler. Ce test
+    est là parce que l'oubli est arrivé.
+    """
+    texte = (conftest.RACINE / ".env.example").read_text(encoding="utf-8")
+    cites = set(re.findall(r"DAA_[A-Z0-9_]+", texte))
+
+    attendus = {f"DAA_{nom.upper()}" for nom in Settings.model_fields}
+
+    assert not attendus - cites

@@ -10,6 +10,9 @@ from dotenv import dotenv_values
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Nom du fichier d'environnement, relu à CHAQUE lecture (jamais figé dans un
+# argument par défaut ni dans `model_config`) : c'est le seul point par lequel
+# la suite de tests peut se couper du `.env` du poste, cf. tests/conftest.py.
 ENV_FILE = ".env"
 
 logger = logging.getLogger("data_analyst_agent.config")
@@ -24,7 +27,11 @@ URL_MOTEUR = "DAA_LLM_BASE_URL"
 class Settings(BaseSettings):
     """Réglages globaux, surchargeables par variables d'environnement (``DAA_*``) ou ``.env``."""
 
-    model_config = SettingsConfigDict(env_prefix="DAA_", env_file=ENV_FILE, extra="ignore")
+    # Le `.env` n'est PAS déclaré ici : `get_settings()` est le seul point du
+    # code qui le lit, et il le passe explicitement. Une porte plutôt que deux —
+    # sinon `Settings()` lit le fichier du poste dans le dos de qui l'instancie,
+    # à commencer par la suite de tests.
+    model_config = SettingsConfigDict(env_prefix="DAA_", extra="ignore")
 
     # --- LLM mutualisé (docs/CADRAGE.md §5) ---
     # Un seul modèle langage pour tout le système.
@@ -127,6 +134,27 @@ class Settings(BaseSettings):
     login_max_failures: int = 5
     login_lockout_seconds: float = 300.0
 
+    # --- Surface HTTP exposée (docs/AUDIT-2026-09.md §6.3) ---
+    # Documentation interactive (/docs, /redoc, /openapi.json). ÉTEINTE par
+    # défaut : elle décrit la surface d'attaque à qui atteint le port, et ses
+    # trois pages chargent Swagger/ReDoc depuis un CDN — ce qu'un déploiement
+    # au réseau coupé ne peut de toute façon pas servir. À rallumer pour
+    # développer, jamais en service.
+    api_docs_enabled: bool = False
+    # Taille maximale du corps d'une requête, tous chemins confondus. Le plus
+    # gros corps légitime est un tour de chat ; 64 Kio laissent de la marge.
+    api_max_body_bytes: int = 65536
+    # Longueur maximale d'une question. `POST /chat` déclenche jusqu'à 11 appels
+    # LLM et un conteneur Docker : sans borne, c'est un amplificateur de charge
+    # gratuit. 4 000 caractères, c'est ~1 000 tokens — déjà large devant le
+    # budget de contexte du planificateur.
+    chat_message_max_chars: int = 4000
+    # Débit maximal de `POST /chat`, par compte et par fenêtre glissante. Un
+    # humain qui travaille pose quelques questions par minute ; 20 laissent
+    # passer une rafale sans laisser passer un script.
+    chat_rate_limit_requests: int = 20
+    chat_rate_limit_window: float = 60.0
+
     # --- Sandbox d'exécution (docs/CADRAGE.md §6) ---
     # Commande docker ; surchargez p. ex. avec '["wsl", "docker"]' depuis Windows.
     sandbox_docker_cmd: list[str] = ["docker"]
@@ -139,6 +167,18 @@ class Settings(BaseSettings):
     # Marge accordée au conteneur pour interrompre proprement le kernel avant
     # que l'hôte ne le tue (timeout dur = exec_timeout + kill_grace).
     sandbox_kill_grace: float = 10.0
+    # Conteneurs sandbox vivants EN MÊME TEMPS, tout le process confondu. Chaque
+    # analyse ouvre sa propre session, donc son propre conteneur, qui réserve
+    # `sandbox_mem_limit` : dix analyses simultanées, c'était dix conteneurs et
+    # dix gigaoctets, sans file d'attente (audit §2.3). Au-delà du plafond, une
+    # session attend son tour au lieu de s'ajouter. 4 x 1 Go tient sur une
+    # machine de développement ; à régler sur la RAM réellement disponible.
+    # 0 = pas de plafond (à ne poser qu'en connaissance de cause).
+    sandbox_max_sessions: int = 4
+    # Attente maximale d'une place. Passé ce délai, la demande est REFUSÉE plutôt
+    # que mise en attente indéfinie : un utilisateur préfère un refus net à un
+    # onglet qui tourne. Tenu sous le budget d'une requête HTTP.
+    sandbox_queue_timeout: float = 60.0
 
     @model_validator(mode="after")
     def _reprendre_url_du_moteur_depreciee(self) -> "Settings":
@@ -170,7 +210,7 @@ class Settings(BaseSettings):
         return self
 
 
-def export_env_file(env_file: str | Path = ENV_FILE) -> None:
+def export_env_file(env_file: str | Path | None = None) -> None:
     """Publie les variables du ``.env`` dans l'environnement du process.
 
     pydantic-settings lit le ``.env`` dans l'objet ``Settings``, mais **ne
@@ -181,14 +221,21 @@ def export_env_file(env_file: str | Path = ENV_FILE) -> None:
     sans effet et la source postgres échoue sur un ``${DAA_PG_PORT}`` littéral.
 
     L'environnement réel prime : on ne réécrit jamais une variable déjà posée.
+
+    ``env_file`` vaut ``ENV_FILE`` à défaut — résolu à l'appel, pas à la
+    définition, pour que le fichier reste substituable (tests).
     """
-    for cle, valeur in dotenv_values(env_file).items():
+    for cle, valeur in dotenv_values(ENV_FILE if env_file is None else env_file).items():
         if valeur is not None:
             os.environ.setdefault(cle, valeur)
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Instance partagée des réglages (cache process-wide)."""
+    """Instance partagée des réglages (cache process-wide).
+
+    Seul point du code qui lit le ``.env`` : d'abord vers ``os.environ`` (les
+    ``DAA_PG_*`` du DSN, que `Settings` ne porte pas), puis vers les champs.
+    """
     export_env_file()
-    return Settings()
+    return Settings(_env_file=ENV_FILE)

@@ -39,7 +39,7 @@ WHERE p.sex = 'female' AND c.level = 1
 @pytest.fixture(scope="module")
 def adapter():
     from sqlalchemy import create_engine
-    from testcontainers.postgres import PostgresContainer
+    from testcontainers.community.postgres import PostgresContainer
 
     with PostgresContainer("postgres:16-alpine", driver="pg8000") as container:
         engine = create_engine(container.get_connection_url())
