@@ -14,6 +14,20 @@ Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM 
 ![LangGraph](https://img.shields.io/badge/LangGraph-1.2-1C3C3C)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
 
+## Sommaire
+
+- [Architecture en un coup d'œil](#architecture-en-un-coup-dœil)
+- [Deux branches durables, aux exigences opposées](#deux-branches-durables-aux-exigences-opposées)
+- [Documentation](#documentation)
+- [Démarrage](#démarrage)
+- [Configuration](#configuration)
+- [API / Endpoints](#api--endpoints)
+- [Mémoire de conversation](#mémoire-de-conversation)
+- [Observabilité](#observabilité)
+- [Qualité](#qualité)
+- [Structure](#structure)
+- [Licences & composants](#licences--composants)
+
 ## Architecture en un coup d'œil
 
 ```mermaid
@@ -73,6 +87,7 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 | [docs/AUDIT-2026-09.md](docs/AUDIT-2026-09.md) | état des lieux mesuré et backlog priorisé (multi-utilisateurs, mémoire, moteur LLM, sécurité, qualité) |
 | [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
 | [docs/VLLM.md](docs/VLLM.md) | banc d'essai vLLM : le tool calling mesuré, ce qui casse sans les bonnes options, ce qui reste à vérifier |
+| [docs/axes-amelioration.md](docs/axes-amelioration.md) | dette technique et chantiers ouverts, ancrés `fichier:ligne`, avec un récapitulatif priorisé |
 
 ## Démarrage
 
@@ -362,10 +377,19 @@ L'arborescence détaillée, fichier par fichier, est dans [docs/CADRAGE.md §10]
 |---|---|---|
 | DuckDB | Moteur SQL analytique | MIT |
 | FastAPI | API | MIT |
+| uvicorn | Serveur ASGI | BSD-3-Clause |
 | LangGraph | Orchestration de l'agent | MIT |
 | Pydantic / pydantic-ai | Typage & agent LLM | MIT |
-| pandas | Manipulation de données | BSD-3-Clause |
+| pydantic-settings | Lecture des réglages `DAA_*` et du `.env` | MIT |
+| SQLAlchemy | Accès Postgres | MIT |
 | pg8000 | Driver PostgreSQL | BSD-3-Clause |
+| pandas | Manipulation de données | BSD-3-Clause |
+| scikit-learn | Modèles de prédiction | BSD-3-Clause |
 | joblib | Sérialisation des modèles | BSD-3-Clause |
-| Ollama | serveur du LLM mutualisé, local | MIT (Ollama) ; la licence du **modèle** dépend du modèle servi — `gemma4:e4b` sur le service en place `<à confirmer>` |
-| **Ce projet** | Code applicatif | MIT — Copyright (c) 2026 floSa `<à confirmer : aucun fichier LICENSE présent>` |
+| openpyxl | Lecture des classeurs Excel | MIT |
+| PyYAML | Catalogue de sources, registre de modèles, comptes | MIT |
+| argon2-cffi | Empreintes de mots de passe (argon2id) | MIT |
+| python-multipart | Lecture du formulaire de connexion | Apache-2.0 |
+| Ollama | Serveur du LLM mutualisé, local | MIT |
+| `gemma4:e4b` | Modèle servi par l'instance en place | Apache-2.0 — licence **déclarée par le modèle lui-même** (`POST /api/show`), à revérifier si le modèle servi change |
+| **Ce projet** | Code applicatif | MIT annoncé, **mais aucun fichier `LICENSE` n'est présent** et `pyproject.toml` ne déclare rien : l'annonce est donc sans portée juridique en l'état (cf. [axes-amelioration](docs/axes-amelioration.md)) |
