@@ -164,13 +164,24 @@ def assert_read_only(query: str) -> str:
 
 
 class DatabaseAdapter(Protocol):
-    """Contrat commun Postgres / DuckDB : ontologie + exécution lecture seule."""
+    """Contrat commun Postgres / DuckDB : ontologie, exécution lecture seule, fermeture.
+
+    ``close()`` fait partie du contrat, et pas d'un raffinement optionnel : un
+    adaptateur détient une ressource système — un pool de connexions Postgres,
+    une base DuckDB en mémoire — que le ramasse-miettes ne rend pas à temps.
+    ``open_source()`` est appelée à chaque exécution de nœud ; sans fermeture,
+    chaque question laisse derrière elle un pool de plus, jusqu'à remplir le
+    ``max_connections`` du serveur (audit §2.3). S'utilise sous
+    ``contextlib.closing``.
+    """
 
     dialect: str
 
     def schema(self) -> SchemaInfo: ...
 
     def run(self, query: str, max_rows: int = 200) -> QueryResult: ...
+
+    def close(self) -> None: ...
 
 
 class PostgresAdapter:
@@ -246,3 +257,12 @@ class PostgresAdapter:
         except SQLAlchemyError as exc:
             raise QueryError(str(exc.__cause__ or exc)) from exc
         return build_result(columns, [list(r) for r in raw_rows], max_rows)
+
+    def close(self) -> None:
+        """Rend au serveur les connexions du pool, tout de suite.
+
+        Un ``Engine`` abandonné garde ses connexions ouvertes jusqu'à ce que le
+        ramasse-miettes veuille bien le voir. ``dispose()`` est idempotent : une
+        double fermeture ne lève pas.
+        """
+        self.engine.dispose()

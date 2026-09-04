@@ -13,6 +13,8 @@ import operator
 import re
 import tempfile
 import time
+import uuid
+from contextlib import closing
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -60,6 +62,42 @@ from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
 
 logger = logging.getLogger("data_analyst_agent.orchestrator")
+
+# Ce que lit l'utilisateur quand un nœud tombe sur une exception inattendue.
+#
+# Le message brut ne peut PAS servir : `_guarded` mettait
+# `f"{type(exc).__name__}: {exc}"` dans `error`, et la synthèse l'affichait tel
+# quel. Mesuré sur un Postgres injoignable, l'utilisateur recevait
+# « InterfaceError: (pg8000.exceptions.InterfaceError) Can't create a connection
+# to host 127.0.0.1 and port 65432… » — l'hôte et le port de la base (audit
+# §5.1). Ce que ça lui apprend : rien. Ce que ça apprend à qui n'est pas censé
+# le savoir : la topologie interne.
+#
+# Un message par nœud, parce qu'un message unique ne dirait pas *ce qui* a
+# échoué, et que « la source n'a pas répondu » et « l'analyse n'a pas abouti »
+# n'appellent pas la même réaction. Formulés pour s'enchaîner après « Je n'ai
+# pas pu répondre : » (cf. `_synthesize_node`).
+ERREURS_UTILISATEUR = {
+    "plan": "je n'ai pas réussi à interpréter la demande",
+    "retrieval": "la source de données n'a pas pu être interrogée",
+    "analysis": "l'analyse n'a pas pu être menée",
+    "inference": "la prédiction n'a pas pu être lancée",
+    "fetch_predict": "les données de la prédiction n'ont pas pu être récupérées",
+    "synthesize": "la réponse n'a pas pu être composée",
+}
+ERREUR_UTILISATEUR_PAR_DEFAUT = "une étape interne a échoué"
+
+
+def reference_dincident() -> str:
+    """Un identifiant court, le même dans la réponse, la trace et les logs.
+
+    Sans lui, masquer le détail technique reviendrait à le perdre : l'utilisateur
+    dirait « ça n'a pas marché » et l'exploitant chercherait dans les logs de la
+    journée. Avec, il suffit de le citer. Huit hexadécimaux : assez pour ne pas
+    collisionner dans un journal, assez court pour être recopié à l'oral.
+    """
+    return uuid.uuid4().hex[:8]
+
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 Tu rédiges la réponse finale pour l'utilisateur, en français, à partir du
@@ -300,7 +338,10 @@ class Orchestrator:
                 update = fn(state)
             except Exception as exc:
                 duration = int((time.monotonic() - start) * 1000)
-                logger.exception("nœud %s : échec après %d ms", name, duration)
+                incident = reference_dincident()
+                logger.exception(
+                    "nœud %s : échec après %d ms (incident %s)", name, duration, incident
+                )
                 if is_context_refusal(exc):
                     # Là où Ollama tronque en silence, vLLM rejette. Sans ce
                     # branchement, le refus arriverait à l'utilisateur sous la
@@ -318,9 +359,20 @@ class Orchestrator:
                             )
                         ],
                     }
+                # Le type et le message de l'exception restent du côté trace et
+                # logs ; l'utilisateur reçoit une phrase et une référence.
                 return {
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "trace": [TraceStep(node=name, detail=f"échec : {exc}", duration_ms=duration)],
+                    "error": (
+                        f"{ERREURS_UTILISATEUR.get(name, ERREUR_UTILISATEUR_PAR_DEFAUT)} "
+                        f"(incident {incident})"
+                    ),
+                    "trace": [
+                        TraceStep(
+                            node=name,
+                            detail=f"incident {incident} — échec : {type(exc).__name__}: {exc}",
+                            duration_ms=duration,
+                        )
+                    ],
                 }
             duration = int((time.monotonic() - start) * 1000)
             details = "; ".join(step.detail for step in update.get("trace", []))
@@ -604,10 +656,14 @@ class Orchestrator:
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
-        adapter = open_source(self._resolve_source(plan, self._effective_catalog(state)))
-        outcome = run_retrieval(
-            state["question"], adapter=adapter, model=self.model, settings=self.settings
-        )
+        # `closing` et non un adaptateur gardé : un nœud est exécuté à chaque
+        # question, et un pool de connexions abandonné à chaque fois finit par
+        # remplir le `max_connections` du serveur (audit §2.3).
+        source = self._resolve_source(plan, self._effective_catalog(state))
+        with closing(open_source(source)) as adapter:
+            outcome = run_retrieval(
+                state["question"], adapter=adapter, model=self.model, settings=self.settings
+            )
         artifacts = [_table_artifact(outcome.result)] if outcome.result else []
         # mémorise le tableau produit pour le réutiliser aux tours suivants
         self._memorize(state, outcome.result)
@@ -652,17 +708,22 @@ class Orchestrator:
                 data_context = ""
             else:
                 # source SQL : matérialise chaque table en CSV pour la sandbox
-                adapter = open_source(source)
-                schema = adapter.schema()
-                data_files = {}
-                for table in schema.tables:
-                    result = adapter.run(
-                        f"SELECT * FROM {table.name}",
-                        max_rows=self.settings.analysis_table_max_rows,
-                    )
-                    csv_path = Path(tmp) / f"{table.name}.csv"
-                    pd.DataFrame(result.rows, columns=result.columns).to_csv(csv_path, index=False)
-                    data_files[csv_path] = f"{table.name}.csv"
+                with closing(open_source(source)) as adapter:
+                    schema = adapter.schema()
+                    data_files = {}
+                    for table in schema.tables:
+                        result = adapter.run(
+                            f"SELECT * FROM {table.name}",
+                            max_rows=self.settings.analysis_table_max_rows,
+                        )
+                        csv_path = Path(tmp) / f"{table.name}.csv"
+                        pd.DataFrame(result.rows, columns=result.columns).to_csv(
+                            csv_path, index=False
+                        )
+                        data_files[csv_path] = f"{table.name}.csv"
+                # La base est refermée AVANT l'analyse : le code généré tourne sur
+                # les CSV matérialisés, il n'a plus rien à demander à la source, et
+                # une analyse dure bien plus longtemps qu'une extraction.
                 data_context = schema.to_prompt()
             # objets intermédiaires de la conversation : montés aussi pour que le
             # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
@@ -735,14 +796,15 @@ class Orchestrator:
         """Chaînage ① -> ③ : récupère une ligne, la mappe sur les features, prédit."""
         start = time.monotonic()
         plan = state["plan"]
-        adapter = open_source(self._resolve_source(plan, self._effective_catalog(state)))
         data_question = plan.data_question or state["question"]
-        retrieval = run_retrieval(
-            data_question + self._expected_columns_hint(plan.dataset or ""),
-            adapter=adapter,
-            model=self.model,
-            settings=self.settings,
-        )
+        source = self._resolve_source(plan, self._effective_catalog(state))
+        with closing(open_source(source)) as adapter:
+            retrieval = run_retrieval(
+                data_question + self._expected_columns_hint(plan.dataset or ""),
+                adapter=adapter,
+                model=self.model,
+                settings=self.settings,
+            )
         if not retrieval.result or not retrieval.result.rows:
             return {
                 "retrieval": retrieval,

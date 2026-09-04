@@ -4,6 +4,9 @@ Le conteneur exécute ``image/bridge.py`` (kernel Jupyter) ; chaque échange est
 une ligne JSON (voir la docstring de bridge.py). Le durcissement est appliqué
 ici, au ``docker run`` : réseau coupé, mémoire/CPU/PIDs bornés, capabilities
 retirées, rootfs en lecture seule, tmpfs pour /tmp.
+
+Le nombre de conteneurs vivants **en même temps** est plafonné (``SandboxPlaces``) :
+borner la mémoire d'un conteneur ne sert à rien si rien ne borne leur nombre.
 """
 
 from __future__ import annotations
@@ -93,6 +96,61 @@ def ensure_image(settings: Settings | None = None) -> str:
     return settings.sandbox_image
 
 
+class SandboxPlaces:
+    """Plafond du nombre de conteneurs sandbox vivants simultanément.
+
+    Chaque analyse ouvre sa propre session, donc son propre conteneur, qui
+    réserve ``sandbox_mem_limit``. Dix analyses simultanées réservaient dix
+    gigaoctets sans que rien ne s'y oppose (audit §2.3) : les quotas *par*
+    conteneur ne disent rien de leur *nombre*.
+
+    Le sémaphore transforme le dépassement en attente, puis — au bout de
+    ``sandbox_queue_timeout`` — en refus explicite. Un refus est un résultat ;
+    une machine qui part en mémoire virtuelle n'en est pas un.
+
+    Portée process : c'est la mémoire de la machine qu'on protège, pas celle
+    d'une requête. Les workers uvicorn supplémentaires ont chacun le leur — le
+    plafond réel est donc ``sandbox_max_sessions x nombre de workers``, à ne pas
+    perdre de vue au moment de dimensionner.
+    """
+
+    def __init__(self, limite: int) -> None:
+        self.limite = limite
+        self._semaphore = threading.BoundedSemaphore(limite) if limite > 0 else None
+
+    def acquerir(self, timeout: float) -> None:
+        """Réserve une place, ou lève ``SandboxError`` si l'attente a expiré."""
+        if self._semaphore is None:
+            return
+        if not self._semaphore.acquire(timeout=timeout):
+            raise SandboxError(
+                f"toutes les sandboxes sont occupées ({self.limite} en parallèle) : "
+                f"pas de place libérée en {timeout:g} s"
+            )
+
+    def liberer(self) -> None:
+        if self._semaphore is not None:
+            self._semaphore.release()
+
+
+_places_partagees: SandboxPlaces | None = None
+_verrou_des_places = threading.Lock()
+
+
+def places_partagees(settings: Settings) -> SandboxPlaces:
+    """Le compteur de places du process, construit au premier besoin.
+
+    Refabriqué si le plafond configuré change — ce qui n'arrive qu'entre deux
+    tests, jamais en service : les réglages d'un process sont fixés au
+    démarrage. Un test qui veut son propre compteur passe le sien à la session.
+    """
+    global _places_partagees
+    with _verrou_des_places:
+        if _places_partagees is None or _places_partagees.limite != settings.sandbox_max_sessions:
+            _places_partagees = SandboxPlaces(settings.sandbox_max_sessions)
+        return _places_partagees
+
+
 class SandboxSession:
     """Une session = un conteneur éphémère + un kernel, plusieurs ``execute()``.
 
@@ -105,16 +163,26 @@ class SandboxSession:
         settings: Settings | None = None,
         mounts: dict[Path, str] | None = None,
         command: list[str] | None = None,
+        places: SandboxPlaces | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self._command = command or docker_run_command(self.settings, mounts)
         self._process: subprocess.Popen[str] | None = None
         self._messages: queue.Queue[dict | None] = queue.Queue()
         self._stderr_tail: deque[str] = deque(maxlen=200)
+        self._places = places or places_partagees(self.settings)
+        self._place_prise = False
 
     # -- cycle de vie ------------------------------------------------------
 
     def start(self) -> None:
+        # La place se prend AVANT le `docker run` : réserver après coup
+        # laisserait passer la pointe qu'on cherche justement à contenir. Une
+        # session déjà pourvue ne reprend pas de place — sinon un `start()`
+        # rejoué en retirerait une du compteur pour toujours.
+        if not self._place_prise:
+            self._places.acquerir(self.settings.sandbox_queue_timeout)
+            self._place_prise = True
         try:
             self._process = subprocess.Popen(
                 self._command,
@@ -126,6 +194,7 @@ class SandboxSession:
                 bufsize=1,
             )
         except FileNotFoundError as exc:
+            self._rendre_la_place()
             raise SandboxError(f"commande introuvable : {self._command[0]!r}") from exc
         threading.Thread(target=self._read_stdout, daemon=True).start()
         threading.Thread(target=self._read_stderr, daemon=True).start()
@@ -136,16 +205,27 @@ class SandboxSession:
 
     def close(self) -> None:
         process = self._process
-        if process is None:
-            return
         self._process = None
         try:
-            if process.stdin:
-                process.stdin.close()  # EOF -> le bridge arrête le kernel
-            process.wait(timeout=10)
-        except (OSError, subprocess.TimeoutExpired):
-            process.kill()
-            process.wait(timeout=10)
+            if process is None:
+                return
+            try:
+                if process.stdin:
+                    process.stdin.close()  # EOF -> le bridge arrête le kernel
+                process.wait(timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
+                process.wait(timeout=10)
+        finally:
+            # Après l'attente, pas avant : la place n'est libre que quand le
+            # conteneur a rendu sa mémoire. Et une seule fois, quel que soit le
+            # nombre d'appels à `close()`.
+            self._rendre_la_place()
+
+    def _rendre_la_place(self) -> None:
+        if self._place_prise:
+            self._place_prise = False
+            self._places.liberer()
 
     def __enter__(self) -> SandboxSession:
         self.start()

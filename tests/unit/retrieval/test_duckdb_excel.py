@@ -1,5 +1,6 @@
 """DuckDB sur fichiers : CSV natif, Excel multi-feuilles via pandas/openpyxl."""
 
+from contextlib import closing
 from pathlib import Path
 
 import duckdb
@@ -160,3 +161,41 @@ def test_le_verrou_vaut_pour_toute_connexion_pas_seulement_from_file(tmp_path: P
     assert adapter.run("SELECT count(*) AS n FROM ventes").rows == [[1]]
     with pytest.raises(QueryError, match="file system operations are disabled"):
         adapter.run("SELECT * FROM read_csv_auto('/etc/passwd')")
+
+
+# --- fermeture ----------------------------------------------------------------
+
+
+def test_close_ferme_la_base_en_memoire(csv_ventes: Path):
+    """Une base DuckDB en mémoire retient les données chargées tant qu'elle vit.
+
+    `open_source` est appelée à chaque exécution de nœud (audit §2.3) : sans
+    fermeture, chaque question laisse un classeur de plus en mémoire.
+    """
+    adapter = DuckDBAdapter.from_file(csv_ventes)
+
+    adapter.close()
+
+    with pytest.raises(QueryError, match="closed"):
+        adapter.run("SELECT 1")
+
+
+def test_close_lache_les_dataframes_enregistres(xlsx_multi: Path):
+    """Les feuilles Excel sont retenues par l'adaptateur pour le GC : à lâcher aussi."""
+    adapter = DuckDBAdapter.from_file(xlsx_multi)
+    assert adapter._frames
+
+    adapter.close()
+
+    assert not adapter._frames
+
+
+def test_close_sutilise_avec_contextlib_closing(csv_ventes: Path):
+    """La forme employée par l'orchestrateur : la fermeture est garantie même si ça lève."""
+    adapter = DuckDBAdapter.from_file(csv_ventes)
+
+    with pytest.raises(QueryError), closing(adapter):
+        adapter.run("DROP TABLE ventes")
+
+    with pytest.raises(QueryError, match="closed"):
+        adapter.run("SELECT 1")

@@ -128,6 +128,16 @@ class DuckDBAdapter:
             tables.append(TableInfo(name=name, columns=columns))
         return SchemaInfo(dialect=self.dialect, tables=tables)
 
+    def close(self) -> None:
+        """Ferme la base en mémoire et lâche les DataFrames enregistrés.
+
+        Une base DuckDB en mémoire pèse le poids des données chargées — un
+        classeur Excel entier, feuille par feuille. Tant que la connexion vit,
+        cette mémoire est retenue. ``close()`` est idempotent côté DuckDB.
+        """
+        self.connection.close()
+        self._frames.clear()
+
     def run(self, query: str, max_rows: int = 200) -> QueryResult:
         safe_query = assert_read_only(query)
         try:

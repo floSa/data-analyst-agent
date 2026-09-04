@@ -913,7 +913,11 @@ def test_une_autre_erreur_du_planificateur_reste_generique(
     )
     _llm, answer = _tour_de_requete(tmp_path, mini_csv, registry, tableaux=1)
     assert "Contexte refusé" not in answer.answer
-    assert "ModelHTTPError" in answer.error
+    # générique côté utilisateur, précis côté trace (cf. test_erreurs_masquees.py)
+    assert "ModelHTTPError" not in answer.error
+    assert "interpréter la demande" in answer.error
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert "ModelHTTPError" in plan.detail
 
 
 def test_prompt_plus_long_que_la_fenetre_du_serveur_est_dit_avant_l_appel(
