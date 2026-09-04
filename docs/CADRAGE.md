@@ -153,7 +153,7 @@ data-analyst-agent/
 │   ├── llm.py                # client Ollama / Qwen3-Coder mutualisé
 │   ├── orchestrator/         # graphe LangGraph, planner, routage, state
 │   ├── agents/
-│   │   ├── retrieval/        # catalog.py, sql.py, duckdb_excel.py
+│   │   ├── retrieval/        # catalog.py, sql.py, duckdb_source.py
 │   │   ├── analysis/         # agent.py, sandbox_client.py
 │   │   └── inference/        # schemas/, registry.py, predict.py
 │   ├── sandbox/              # Dockerfile, client.py

@@ -214,7 +214,9 @@ là où l'estimation par population tient au millième. Il aurait suffi de tombe
 sur le bon point pour « démontrer » n'importe quel chiffre voulu.
 <!-- #endregion -->
 ```python
-echantillon = duckdb.connect(str(BASE), read_only=True).execute("""
+echantillon = (
+    duckdb.connect(str(BASE), read_only=True)
+    .execute("""
     SELECT st.store_type, p.commodity_group, p.brand_type, p.base_price::DOUBLE AS base_price,
            (EXTRACT(ISODOW FROM s.date) - 1)::INT AS day_of_week,
            EXTRACT(MONTH FROM s.date)::INT        AS month,
@@ -225,7 +227,9 @@ echantillon = duckdb.connect(str(BASE), read_only=True).execute("""
     JOIN weather  w  ON w.store_id  = s.store_id AND w.date = s.date
     WHERE s.is_rupture = 0
     USING SAMPLE 20000 ROWS (reservoir, 42)
-""").df()
+""")
+    .df()
+)
 
 hors_campagne = model.predict(echantillon.assign(discount_rate=0.0, promo_type="aucune")).mean()
 for remise in (0.15, 0.20, 0.30):
@@ -234,9 +238,10 @@ for remise in (0.15, 0.20, 0.30):
     ).mean()
     print(f"remise {remise:.0%} -> uplift x{en_campagne / hors_campagne:.3f}")
 
-uplift_30 = model.predict(
-    echantillon.assign(discount_rate=0.30, promo_type="produits")
-).mean() / hors_campagne
+uplift_30 = (
+    model.predict(echantillon.assign(discount_rate=0.30, promo_type="produits")).mean()
+    / hors_campagne
+)
 assert 1.35 < uplift_30 < 1.85, "le modèle n'a pas appris l'effet des campagnes produits"
 ```
 
