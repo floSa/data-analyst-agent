@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 
+from data_analyst_agent import prompts
 from data_analyst_agent.agents.analysis.agent import AnalysisResult, SandboxLike, run_analysis
 from data_analyst_agent.agents.inference.predict import (
     BatchInferenceOutcome,
@@ -54,10 +55,10 @@ from data_analyst_agent.orchestrator.context_budget import (
     is_context_refusal,
 )
 from data_analyst_agent.orchestrator.plan import (
-    PLANNER_SYSTEM_PROMPT,
     Plan,
     planner_agent,
     planner_system_prompt,
+    planner_template,
 )
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
@@ -98,14 +99,6 @@ def reference_dincident() -> str:
     collisionner dans un journal, assez court pour être recopié à l'oral.
     """
     return uuid.uuid4().hex[:8]
-
-
-SYNTHESIS_SYSTEM_PROMPT = """\
-Tu rédiges la réponse finale pour l'utilisateur, en français, à partir du
-travail effectué par le système (résultats fournis ci-après). Cite les valeurs
-obtenues sans en inventer ; si une figure a été produite, mentionne-la
-(« ci-joint »). Reste concis : 1 à 4 phrases.
-"""
 
 
 class TraceStep(BaseModel):
@@ -559,7 +552,7 @@ class Orchestrator:
         # plus ANCIENS. (Le gabarit est pesé avec ses marqueurs
         # `{sources}`/`{datasets}` : quelques caractères de trop, du bon côté.)
         fixe = estimate_tokens(
-            PLANNER_SYSTEM_PROMPT,
+            planner_template(),
             sources_description,
             datasets_description,
             history_context,
@@ -1164,7 +1157,7 @@ class Orchestrator:
             f"Sorties du code exécuté :\n{analysis.execution.stdout or '(pas de sortie texte)'}\n\n"
             f"Figures produites : {figures}"
         )
-        agent = Agent(system_prompt=SYNTHESIS_SYSTEM_PROMPT)
+        agent = Agent(system_prompt=prompts.gabarit(prompts.SYNTHESIS))
         return agent.run_sync(context, model=self.model).output
 
     @staticmethod

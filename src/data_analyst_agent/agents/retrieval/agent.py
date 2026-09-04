@@ -14,37 +14,14 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
-from data_analyst_agent.agents.retrieval.sql import DatabaseAdapter, QueryError, QueryResult
+from data_analyst_agent import prompts
+from data_analyst_agent.agents.retrieval.sql import (
+    DatabaseAdapter,
+    QueryError,
+    QueryResult,
+)
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
-
-SYSTEM_PROMPT = """\
-Tu es un expert SQL (dialecte : {dialect}). On te pose une question sur des
-données ; tu y réponds en interrogeant la base, en LECTURE SEULE.
-
-Règle absolue : tu ne SAIS RIEN de ces données avant de les avoir regardées.
-Même si le jeu de données t'est familier (iris, titanic…), n'utilise JAMAIS tes
-connaissances générales : la source réelle peut différer de ce que tu crois.
-Toute réponse doit s'appuyer sur get_schema et/ou run_sql — pour une
-« description », lis le schéma ET compte les lignes.
-
-Démarche :
-1. Appelle get_schema pour connaître les tables, colonnes et relations.
-2. Écris UNE requête SELECT qui répond à la question (jointures si besoin).
-   - Si on te demande de LISTER / AFFICHER des individus (« donne-moi… »,
-     « liste… », « quelles sont les lignes… »), sélectionne TOUTES les colonnes
-     pertinentes (en pratique `SELECT *`), pour que le résultat reste
-     réutilisable ; n'emploie DISTINCT que si on demande des valeurs uniques.
-   - Réserve les projections restreintes (une seule colonne) et les agrégats
-     (COUNT, AVG…) aux questions qui les demandent explicitement.
-3. Exécute-la avec run_sql.
-4. Si run_sql renvoie une erreur SQL, corrige ta requête et réessaie.
-5. Quand le résultat est correct, réponds par une TRÈS courte synthèse en
-   français (1 à 2 phrases). Le tableau des résultats est affiché séparément à
-   l'utilisateur : NE recopie donc PAS les lignes une à une ; contente-toi de
-   décrire ce que montre le résultat (et, au besoin, une ou deux valeurs clés
-   comme un total). N'invente aucun chiffre.
-"""
 
 
 class ExecutedQuery(BaseModel):
@@ -90,7 +67,7 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
 
     @agent.system_prompt
     def system_prompt(ctx: RunContext[RetrievalDeps]) -> str:
-        return SYSTEM_PROMPT.format(dialect=ctx.deps.adapter.dialect)
+        return prompts.render(prompts.RETRIEVAL, dialect=ctx.deps.adapter.dialect)
 
     @agent.tool
     def list_tables(ctx: RunContext[RetrievalDeps]) -> list[str]:

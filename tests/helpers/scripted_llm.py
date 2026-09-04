@@ -17,13 +17,21 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
+from data_analyst_agent import prompts
 from data_analyst_agent.orchestrator.plan import Plan
 
-# Marqueurs stables des prompts système de chaque agent
-PLANNER = "planificateur"
-RETRIEVAL = "expert SQL"
-ANALYSIS = "data analyst Python"
-SYNTHESIS = "réponse finale"
+# Marqueurs des prompts système, DÉRIVÉS des prompts eux-mêmes.
+#
+# Ils étaient recopiés à la main ici — « planificateur », « expert SQL »,
+# « data analyst Python », « réponse finale » — ce qui faisait de la
+# formulation des prompts un contrat de test invisible : reformuler une phrase
+# d'accroche faisait tomber toute la suite sur « aucun script pour le prompt
+# système », sans que rien ne dise pourquoi (audit §5.3). Le fichier de prompt
+# est désormais la seule source ; `prompts.marqueur` en tire sa première ligne.
+PLANNER = prompts.marqueur(prompts.PLANNER)
+RETRIEVAL = prompts.marqueur(prompts.RETRIEVAL)
+ANALYSIS = prompts.marqueur(prompts.ANALYSIS)
+SYNTHESIS = prompts.marqueur(prompts.SYNTHESIS)
 
 
 def text(content: str) -> ModelResponse:

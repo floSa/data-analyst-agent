@@ -11,50 +11,18 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
+from data_analyst_agent import prompts
+
 Capability = Literal["query", "analyze", "predict", "fetch_then_predict"]
 
-PLANNER_SYSTEM_PROMPT = """\
-Tu es le planificateur d'un agent conversationnel d'analyse de données.
-Classe la demande de l'utilisateur dans UNE capacité :
 
-- "query" : requête ou agrégat SQL direct sur une source (compte, pourcentage,
-  moyenne, liste filtrée...).
-- "analyze" : VISUALISATION demandée (bar chart, histogramme, courbe...) ou
-  analyse statistique multi-étapes (test du khi-deux, ANOVA, ACP...) — du code
-  sera exécuté en sandbox.
-- "predict" : prédiction ML pour UN cas dont les VALEURS des features sont
-  données dans le message (ex. « sexe=female, classe=1, âge=28, tarif=80... »)
-  — extrais-les telles quelles dans `features` (noms exacts du schéma).
-- "fetch_then_predict" : prédiction ML pour un ou des individus DÉSIGNÉS PAR
-  RÉFÉRENCE À UNE SOURCE — un identifiant (« le passager 42 »), un filtre ou
-  un groupe (« toutes les femmes », « les passagers de 3e classe ») : leurs
-  features doivent d'abord être lues dans la source. Formule dans
-  `data_question` ce qu'il faut récupérer (la ou les lignes).
+def planner_template() -> str:
+    """Le gabarit du prompt du planificateur, marqueurs de substitution compris.
 
-Sources de données disponibles :
-{sources}
-
-Modèles de prédiction disponibles (dataset -> features attendues) :
-{datasets}
-
-Contraintes :
-- Pour query/analyze/fetch_then_predict : choisis `source` parmi les sources
-  listées (champ `name`). Si la demande NE DÉSIGNE aucune source (ni par son
-  nom, ni par un dataset comme « iris »/« titanic ») et que plusieurs sources
-  existent, laisse `source` VIDE — ne devine pas : le système demandera à
-  l'utilisateur de préciser.
-- Pour predict/fetch_then_predict : choisis `dataset` parmi les modèles listés.
-- Une prédiction qui désigne des individus STOCKÉS dans une source listée
-  (« le passager 42 », « toutes les femmes DE LA BASE ») est fetch_then_predict :
-  un attribut de filtre (ex. le sexe) n'est pas un jeu de features complet.
-- MAIS un cas hypothétique (« une femme de 1re classe », « un passager de
-  30 ans »), sans référence à une ligne existante, est predict : extrais les
-  features effectivement données (même incomplètes — le système redemandera
-  le reste). Idem si aucune source listée ne s'y prête.
-- N'invente ni source ni dataset ni feature : n'extrais que ce que le message
-  dit réellement. Les indices grammaticaux explicites comptent : « une
-  passagère », « elle » -> sex=female ; « un homme » -> sex=male.
-"""
+    Exposé parce que l'orchestrateur le PÈSE avant de le composer : un budget de
+    tokens se décompte sur le prompt réel (cf. ``Orchestrator._peser_le_prompt``).
+    """
+    return prompts.gabarit(prompts.PLANNER)
 
 
 class Plan(BaseModel):
@@ -85,8 +53,8 @@ def planner_system_prompt(
     avant de l'envoyer** : un budget de tokens se décompte sur le prompt réel,
     pas sur une estimation de ce qu'il contiendra.
     """
-    system_prompt = PLANNER_SYSTEM_PROMPT.format(
-        sources=sources_description, datasets=datasets_description
+    system_prompt = prompts.render(
+        prompts.PLANNER, sources=sources_description, datasets=datasets_description
     )
     for extra in (history_context, pending_context):
         if extra:
