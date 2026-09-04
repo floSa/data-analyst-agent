@@ -144,17 +144,102 @@ _WRITE_KEYWORDS_RE = re.compile(
 )
 
 
+def mask_literals(query: str) -> str:
+    """Blanchit ce qui n'est PAS du SQL exécutable, en gardant les positions.
+
+    Le garde-fou raisonnait sur le texte brut : il refusait
+    ``SELECT * FROM t WHERE nom = 'a;b'`` — un point-virgule, oui, mais dans un
+    littéral, donc une seule instruction (audit §5.1). Toute question portant
+    sur une valeur qui en contient était bloquée, et le modèle rebouclait
+    jusqu'à épuiser ``retrieval_request_limit`` sans jamais comprendre pourquoi.
+    Même mécanique pour un mot-clé d'écriture qui n'est qu'une donnée
+    (``WHERE action = 'DELETE'``).
+
+    Trois formes de contenu non exécutable sont neutralisées : le littéral
+    (``'…'``), l'identifiant cité (``"…"``) et le commentaire (``--`` jusqu'à la
+    fin de ligne, ``/* … */``). Une marque de citation s'échappe en se
+    **doublant** (``''``, ``""``), comme le veut la norme.
+
+    Les caractères masqués deviennent des espaces (les sauts de ligne restent
+    des sauts de ligne) : la chaîne rendue a la même longueur et la même
+    découpe en lignes que l'originale — elle sert à DÉCIDER, jamais à exécuter.
+
+    Deux choix conservateurs, qui font pencher les cas douteux du côté du refus
+    plutôt que du côté du passage :
+
+    - l'antislash n'échappe rien. Sous ``standard_conforming_strings`` (défaut
+      de Postgres depuis 9.1) et sous DuckDB, c'est le comportement du moteur ;
+      dans le cas contraire (chaîne ``E'…'``), le littéral est refermé trop
+      tôt et ce qui suit est examiné comme du SQL — donc refusé s'il porte un
+      point-virgule ;
+    - le littéral et le commentaire non refermés courent jusqu'à la fin, ce qui
+      masque tout ce qui suit. La requête est alors syntaxiquement invalide :
+      le moteur la rejette sans rien exécuter.
+
+    Le ``$$…$$`` de Postgres n'est pas reconnu : un point-virgule qui s'y niche
+    reste refusé à tort, comme avant ce correctif.
+    """
+    masque: list[str] = []
+    position = 0
+    fin_de_chaine = len(query)
+    while position < fin_de_chaine:
+        caractere = query[position]
+        if caractere in ("'", '"'):
+            debut = position
+            position += 1
+            while position < fin_de_chaine:
+                if query[position] == caractere:
+                    # marque doublée : elle s'échappe elle-même, on continue
+                    if query[position + 1 : position + 2] == caractere:
+                        position += 2
+                        continue
+                    position += 1
+                    break
+                position += 1
+            masque.append(_blanchir(query[debut:position]))
+            continue
+        if query.startswith("--", position):
+            saut = query.find("\n", position)
+            fin = fin_de_chaine if saut == -1 else saut
+            masque.append(_blanchir(query[position:fin]))
+            position = fin
+            continue
+        if query.startswith("/*", position):
+            ferme = query.find("*/", position + 2)
+            fin = fin_de_chaine if ferme == -1 else ferme + 2
+            masque.append(_blanchir(query[position:fin]))
+            position = fin
+            continue
+        masque.append(caractere)
+        position += 1
+    return "".join(masque)
+
+
+def _blanchir(fragment: str) -> str:
+    """Le fragment, tous caractères remplacés par des espaces sauf les sauts de ligne."""
+    return "".join("\n" if c == "\n" else " " for c in fragment)
+
+
 def assert_read_only(query: str) -> str:
-    """Refuse tout ce qui n'est pas une unique requête SELECT/WITH de lecture."""
+    """Refuse tout ce qui n'est pas une unique requête SELECT/WITH de lecture.
+
+    Les vérifications portent sur la requête **masquée** (cf.
+    ``mask_literals``) : ce qui vit dans un littéral, un identifiant cité ou un
+    commentaire est une donnée, pas une instruction. La requête rendue, elle,
+    est l'originale intacte — c'est elle qui part au moteur.
+    """
     stripped = query.strip().rstrip(";").strip()
     if not stripped:
         raise QueryError("requête vide")
-    if ";" in stripped:
+    masque = mask_literals(stripped)
+    if not masque.strip():
+        raise QueryError("requête vide")  # rien qu'un commentaire
+    if ";" in masque:
         raise QueryError("une seule instruction SQL à la fois")
-    first_word = stripped.split(None, 1)[0].lower()
+    first_word = masque.split(None, 1)[0].lower()
     if first_word not in ("select", "with"):
         raise QueryError("seules les requêtes SELECT (ou WITH ... SELECT) sont autorisées")
-    match = _WRITE_KEYWORDS_RE.search(stripped)
+    match = _WRITE_KEYWORDS_RE.search(masque)
     if match:
         raise QueryError(f"mot-clé interdit en lecture seule : {match.group(0).upper()}")
     return stripped
