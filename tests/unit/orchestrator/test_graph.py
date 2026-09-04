@@ -1160,6 +1160,67 @@ def test_le_dictionnaire_va_aussi_a_lagent_danalyse(tmp_path: Path, registry: Re
     assert "store_id va de S01 à S12" in prompt  # le dictionnaire est bien joint
 
 
+def test_le_dictionnaire_survit_a_la_fenetre_et_au_budget(tmp_path: Path, registry: Registry):
+    """Les plafonds de contexte n'évincent jamais le dictionnaire — par construction.
+
+    C'est le risque d'interaction de la fusion : `main` a introduit une fenêtre
+    d'artefacts et un budget de tokens, Maxizoo un dictionnaire de données que
+    les deux agents doivent voir. Si le budget venait à couper ce que le
+    dictionnaire ajoute, l'agent redeviendrait celui qui croit « Lyon » un
+    store_id — mais sans qu'aucun message ne le dise, et seulement à partir
+    d'un certain nombre de tours.
+
+    Ce n'est pas le cas, et la raison est structurelle : le budget ne resserre
+    que le catalogue d'objets intermédiaires du prompt du planificateur. Le
+    dictionnaire, lui, est passé directement à l'agent SQL et joint au contexte
+    de l'agent d'analyse — il ne traverse pas le budget. Ce test fige cette
+    séparation. Les plafonds sont réglés à l'absurde : tout ce qui PEUT être
+    coupé l'est.
+    """
+    TEMOIN = "PIÈGE : le e-commerce est le magasin ONLINE ; store_id va de S01 à S12."
+    dico = tmp_path / "dico.md"
+    dico.write_text(TEMOIN, encoding="utf-8")
+    source = DuckDBSource(
+        name="maxizoo", path=build_duckdb(tmp_path / "maxizoo.duckdb"), dictionary=dico
+    )
+    reglages = make_settings(
+        workspace_dir=tmp_path / "ws",
+        context_artifact_window=1,  # fenêtre serrée au minimum utile
+        context_token_budget=1,  # budget absurde : tout ce qui cède doit céder
+    )
+    ws = ConversationWorkspace(tmp_path / "ws", "cdico")
+    for tour in range(1, 31):
+        ws.save_table(["a"], [[tour]], f"tableau du tour {tour}")
+
+    for capability, agent in (("query", RETRIEVAL), ("analyze", ANALYSIS)):
+        llm = (
+            ScriptedLLM()
+            .script(PLANNER, [plan_response(Plan(capability=capability, source="maxizoo"))])
+            .script(
+                RETRIEVAL,
+                [tool_call("run_sql", {"query": "SELECT * FROM stores"}), text("Des magasins.")],
+            )
+            .script(ANALYSIS, [text("```python\nprint('ok')\n```")])
+            .script(SYNTHESIS, [text("Voilà.")])
+        )
+        orchestrator = orchestrator_with(
+            llm,
+            catalog=Catalog(sources=[source]),
+            registry=registry,
+            settings=reglages,
+            sandbox=ScriptedSandbox([SandboxResult(status="ok", stdout="ok\n", results=[])]),
+        )
+        answer = orchestrator.ask("les ventes de Lyon", conversation_id="cdico")
+
+        plan = next(step for step in answer.trace if step.node == "plan")
+        # les plafonds ont bel et bien mordu, et se sont dits
+        assert plan.truncated is True
+        assert "tableaux intermédiaires" in plan.truncation
+        # et pourtant le dictionnaire est arrivé, entier
+        recu = "\n".join(llm.systems_for(agent) + llm.prompts_for(agent))
+        assert TEMOIN in recu, f"dictionnaire perdu pour {capability}"
+
+
 def test_extrait_tronque_est_annonce_au_code_genere(
     tmp_path: Path, registry: Registry, monkeypatch
 ):
