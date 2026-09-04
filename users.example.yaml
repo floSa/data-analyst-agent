@@ -1,0 +1,37 @@
+# EXEMPLE de magasin de comptes — le vrai fichier n'est PAS versionné.
+#
+# Chemin réel : var/users.yaml (DAA_AUTH_ACCOUNTS_PATH pour en changer),
+# écrit en 0600. Ce fichier-ci n'est là que pour montrer la forme : ne le
+# copiez pas en var/users.yaml, l'empreinte ci-dessous ne correspond à aucun
+# mot de passe utilisable.
+#
+# Il n'y a ni inscription ouverte, ni compte par défaut. Le seul moyen de créer
+# un compte :
+#
+#     uv run python scripts/manage_users.py create alice
+#
+# Le mot de passe est demandé au terminal (jamais en argument : la ligne de
+# commande est lisible par tout compte local dans `ps` et reste dans
+# l'historique du shell).
+#
+#     uv run python scripts/manage_users.py list
+#     uv run python scripts/manage_users.py disable alice
+#     uv run python scripts/manage_users.py reset-password alice
+
+users:
+  - login: alice
+    # argon2id — jamais le mot de passe, jamais un hachage rapide type sha256.
+    # Les paramètres (m, t, p) sont dans l'empreinte : ils peuvent durcir sans
+    # invalider les comptes existants (réempreinte à la connexion suivante).
+    password_hash: "$argon2id$v=19$m=65536,t=3,p=4$EXEMPLE-SANS-VALEUR$EXEMPLE-SANS-VALEUR"
+    active: true
+    created_at: "2026-09-03T09:00:00+00:00"
+    password_updated_at: "2026-09-03T09:00:00+00:00"
+  - login: bob
+    password_hash: "$argon2id$v=19$m=65536,t=3,p=4$EXEMPLE-SANS-VALEUR$EXEMPLE-SANS-VALEUR"
+    # Compte fermé : il ne peut plus ouvrir de session, et ses sessions en cours
+    # sont révoquées. On désactive plutôt que de supprimer — l'historique reste
+    # attribuable.
+    active: false
+    created_at: "2026-09-03T09:00:00+00:00"
+    password_updated_at: "2026-09-03T09:00:00+00:00"

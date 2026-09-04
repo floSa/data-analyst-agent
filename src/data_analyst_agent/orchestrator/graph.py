@@ -13,6 +13,8 @@ import operator
 import re
 import tempfile
 import time
+import uuid
+from contextlib import closing
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -42,11 +44,62 @@ from data_analyst_agent.agents.retrieval.catalog import (
 from data_analyst_agent.agents.retrieval.sql import QueryResult, SchemaInfo
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
-from data_analyst_agent.orchestrator.plan import Plan, build_planner
+from data_analyst_agent.orchestrator.context_budget import (
+    CONTEXT_REFUSAL_ERROR,
+    CONTEXT_REFUSAL_MESSAGE,
+    ContextLimits,
+    ContextTrim,
+    detect_overflow,
+    estimate_tokens,
+    exceeds_model_window,
+    is_context_refusal,
+)
+from data_analyst_agent.orchestrator.plan import (
+    PLANNER_SYSTEM_PROMPT,
+    Plan,
+    planner_agent,
+    planner_system_prompt,
+)
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
 
 logger = logging.getLogger("data_analyst_agent.orchestrator")
+
+# Ce que lit l'utilisateur quand un nœud tombe sur une exception inattendue.
+#
+# Le message brut ne peut PAS servir : `_guarded` mettait
+# `f"{type(exc).__name__}: {exc}"` dans `error`, et la synthèse l'affichait tel
+# quel. Mesuré sur un Postgres injoignable, l'utilisateur recevait
+# « InterfaceError: (pg8000.exceptions.InterfaceError) Can't create a connection
+# to host 127.0.0.1 and port 65432… » — l'hôte et le port de la base (audit
+# §5.1). Ce que ça lui apprend : rien. Ce que ça apprend à qui n'est pas censé
+# le savoir : la topologie interne.
+#
+# Un message par nœud, parce qu'un message unique ne dirait pas *ce qui* a
+# échoué, et que « la source n'a pas répondu » et « l'analyse n'a pas abouti »
+# n'appellent pas la même réaction. Formulés pour s'enchaîner après « Je n'ai
+# pas pu répondre : » (cf. `_synthesize_node`).
+ERREURS_UTILISATEUR = {
+    "plan": "je n'ai pas réussi à interpréter la demande",
+    "retrieval": "la source de données n'a pas pu être interrogée",
+    "analysis": "l'analyse n'a pas pu être menée",
+    "inference": "la prédiction n'a pas pu être lancée",
+    "fetch_predict": "les données de la prédiction n'ont pas pu être récupérées",
+    "synthesize": "la réponse n'a pas pu être composée",
+}
+ERREUR_UTILISATEUR_PAR_DEFAUT = "une étape interne a échoué"
+
+
+def reference_dincident() -> str:
+    """Un identifiant court, le même dans la réponse, la trace et les logs.
+
+    Sans lui, masquer le détail technique reviendrait à le perdre : l'utilisateur
+    dirait « ça n'a pas marché » et l'exploitant chercherait dans les logs de la
+    journée. Avec, il suffit de le citer. Huit hexadécimaux : assez pour ne pas
+    collisionner dans un journal, assez court pour être recopié à l'oral.
+    """
+    return uuid.uuid4().hex[:8]
+
 
 SYNTHESIS_SYSTEM_PROMPT = """\
 Tu rédiges la réponse finale pour l'utilisateur, en français, à partir du
@@ -57,9 +110,20 @@ obtenues sans en inventer ; si une figure a été produite, mentionne-la
 
 
 class TraceStep(BaseModel):
+    """Ce qu'a fait un nœud — et ce qui a été coupé de ce qu'il a envoyé.
+
+    Rien ne comptait les tokens ni n'enregistrait de troncature : un utilisateur
+    voyait la qualité s'effondrer sans qu'aucun message ne l'explique. Les trois
+    derniers champs existent pour que ce ne soit plus jamais silencieux.
+    """
+
     node: str
     detail: str = ""
     duration_ms: int = 0
+    prompt_tokens: int | None = None  # estimation locale, décomptée AVANT l'appel
+    server_prompt_tokens: int | None = None  # ce que le serveur dit avoir évalué
+    truncated: bool = False
+    truncation: str = ""  # en clair : ce qui a été coupé, et par quel réglage
 
 
 class PendingInference(BaseModel):
@@ -133,6 +197,8 @@ class Orchestrator:
             registry if registry is not None else Registry.load(self.settings.models_registry_path)
         )
         self._sandbox_override = sandbox
+        # plafond de ce qu'un tour réinjecte dans le contexte du modèle
+        self.limits = ContextLimits.from_settings(self.settings)
         self.graph = self._build_graph()
 
     # -- API ----------------------------------------------------------------
@@ -143,11 +209,23 @@ class Orchestrator:
         source: str | None = None,
         pending: PendingInference | None = None,
         conversation_id: str | None = None,
+        workspace_root: Path | None = None,
     ) -> ChatAnswer:
+        """Répond à une question, dans la mémoire de ``conversation_id`` s'il y en a une.
+
+        ``workspace_root`` est la racine sous laquelle vit cette conversation.
+        L'API y passe ``ConversationStore.base_dir``, la racine de l'utilisateur
+        de la session : la transcription et les tableaux intermédiaires d'un
+        même fil doivent atterrir dans le MÊME dossier, et le seul moyen d'en
+        être sûr est que les deux couches lisent la même valeur plutôt que de
+        la recalculer chacune de son côté. À défaut, on retombe sur
+        ``workspace_dir`` — le cas des appels directs, hors session.
+        """
         # mémoire de conversation : les tableaux intermédiaires produits sont
         # persistés et réexposés aux tours suivants (cf. workspace.py)
+        racine = workspace_root if workspace_root is not None else self.settings.workspace_dir
         workspace = (
-            ConversationWorkspace(self.settings.workspace_dir, conversation_id)
+            ConversationWorkspace(racine, conversation_id, limits=self.limits)
             if conversation_id is not None
             else None
         )
@@ -179,13 +257,33 @@ class Orchestrator:
                 features=dict(inference.features) if aboutie else None,
             )
         return ChatAnswer(
-            answer=state.get("answer", ""),
+            answer=self._with_context_notices(state.get("answer", ""), state.get("trace", [])),
             artifacts=state.get("artifacts", []),
             plan=state.get("plan"),
             error=state.get("error"),
             trace=state.get("trace", []),
             pending=state.get("pending_out"),
         )
+
+    @staticmethod
+    def _with_context_notices(answer: str, trace: list[TraceStep]) -> str:
+        """Ajoute à la réponse ce qui a été coupé du contexte, s'il y a eu coupe.
+
+        Dans la RÉPONSE, et pas seulement dans la trace : la trace est un outil
+        de mise au point, elle n'est pas dépliée par défaut. Quelqu'un qui perd
+        du contexte doit l'apprendre de l'application — sinon il ne peut que le
+        déduire de la qualité des réponses, ce qui est précisément le défaut
+        relevé par l'audit (§3.5).
+
+        Un avis identique rendu par deux nœuds n'est écrit qu'une fois.
+        """
+        avis: list[str] = []
+        for step in trace:
+            if step.truncation and step.truncation not in avis:
+                avis.append(step.truncation)
+        if not avis:
+            return answer
+        return "\n\n".join([answer, *avis]) if answer else "\n\n".join(avis)
 
     # -- construction du graphe ----------------------------------------------
 
@@ -242,10 +340,41 @@ class Orchestrator:
                 update = fn(state)
             except Exception as exc:
                 duration = int((time.monotonic() - start) * 1000)
-                logger.exception("nœud %s : échec après %d ms", name, duration)
+                incident = reference_dincident()
+                logger.exception(
+                    "nœud %s : échec après %d ms (incident %s)", name, duration, incident
+                )
+                if is_context_refusal(exc):
+                    # Là où Ollama tronque en silence, vLLM rejette. Sans ce
+                    # branchement, le refus arriverait à l'utilisateur sous la
+                    # forme « ModelHTTPError: … », que rien ne relie à la
+                    # longueur du prompt — donc rien à faire pour s'en sortir.
+                    return {
+                        "error": CONTEXT_REFUSAL_ERROR,
+                        "trace": [
+                            TraceStep(
+                                node=name,
+                                detail=f"refus du serveur : {exc}",
+                                duration_ms=duration,
+                                truncated=True,
+                                truncation=CONTEXT_REFUSAL_MESSAGE,
+                            )
+                        ],
+                    }
+                # Le type et le message de l'exception restent du côté trace et
+                # logs ; l'utilisateur reçoit une phrase et une référence.
                 return {
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "trace": [TraceStep(node=name, detail=f"échec : {exc}", duration_ms=duration)],
+                    "error": (
+                        f"{ERREURS_UTILISATEUR.get(name, ERREUR_UTILISATEUR_PAR_DEFAUT)} "
+                        f"(incident {incident})"
+                    ),
+                    "trace": [
+                        TraceStep(
+                            node=name,
+                            detail=f"incident {incident} — échec : {type(exc).__name__}: {exc}",
+                            duration_ms=duration,
+                        )
+                    ],
                 }
             duration = int((time.monotonic() - start) * 1000)
             details = "; ".join(step.detail for step in update.get("trace", []))
@@ -257,9 +386,14 @@ class Orchestrator:
     # -- nœuds ----------------------------------------------------------------
 
     def _effective_catalog(self, state: OrchestratorState) -> Catalog:
-        """Catalogue du tour : sources déclarées + objets intermédiaires de la conversation."""
+        """Catalogue du tour : sources déclarées + objets intermédiaires RÉINJECTÉS.
+
+        ``as_sources()`` ne rend que la fenêtre : un objet évincé n'est pas
+        interrogeable ce tour-ci, exactement comme il n'est ni décrit au
+        planificateur ni monté dans la sandbox.
+        """
         workspace = state.get("workspace")
-        if workspace is None or not workspace.artifacts:
+        if workspace is None or not workspace.injected:
             return self.catalog
         return Catalog(sources=[*self.catalog.sources, *workspace.as_sources()])
 
@@ -333,12 +467,28 @@ class Orchestrator:
             "change complètement de sujet, ignore ce contexte."
         )
 
-    def _clarify(self, plan: Plan, question: str, start: float) -> dict:
-        """Court-circuite vers une question de clarification (réponse propre, pas d'erreur)."""
+    @staticmethod
+    def _ajoute_avis(mesures: dict, avis: str) -> None:
+        """Cumule un constat de troncature dans les mesures du tour.
+
+        Ils se cumulent bel et bien : un tour peut avoir évincé des objets ET
+        dépasser la fenêtre du serveur, et l'utilisateur a besoin des deux.
+        """
+        if not avis:
+            return
+        mesures["truncated"] = True
+        mesures["truncation"] = " ".join(a for a in (mesures["truncation"], avis) if a)
+
+    def _clarify(self, plan: Plan, question: str, start: float, **mesures) -> dict:
+        """Court-circuite vers une question de clarification (réponse propre, pas d'erreur).
+
+        ``mesures`` porte ce qui a été mesuré du prompt de ce tour : une
+        clarification n'annule pas une troncature, elle doit la dire aussi.
+        """
         return {
             "plan": plan,
             "clarification": question,
-            "trace": [self._step("plan", "clarification demandée", start)],
+            "trace": [self._step("plan", "clarification demandée", start, **mesures)],
         }
 
     @staticmethod
@@ -355,21 +505,46 @@ class Orchestrator:
     def _plan_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         pending = state.get("pending_in")
-        # les objets intermédiaires de la conversation sont décrits en plus des
-        # sources déclarées, pour que « prédis ces lignes » les désigne
         sources_description = self.catalog.describe()
         workspace = state.get("workspace")
+        datasets_description = self._datasets_description()
+        pending_context = self._pending_context(pending)
+        history_context = workspace.describe_context() if workspace is not None else None
+        # Budget décompté AVANT l'appel. Tout ce qui précède est incompressible
+        # ici : le gabarit, le catalogue déclaré, les modèles, le tour
+        # précédent, la question. Le seul poste qui cède est le catalogue des
+        # objets intermédiaires, et il cède par les plus ANCIENS. (Le gabarit est
+        # pesé avec ses marqueurs `{sources}`/`{datasets}` : quelques caractères
+        # de trop, du bon côté.)
+        fixe = estimate_tokens(
+            PLANNER_SYSTEM_PROMPT,
+            sources_description,
+            datasets_description,
+            history_context,
+            pending_context,
+            state["question"],
+        )
+        trim = workspace.fit_to_budget(fixe) if workspace is not None else ContextTrim()
+        mesures: dict = {"truncated": trim.truncated, "truncation": trim.message()}
+        # les objets intermédiaires RETENUS sont décrits en plus des sources
+        # déclarées, pour que « prédis ces lignes » les désigne
         workspace_description = workspace.describe() if workspace is not None else None
         if workspace_description:
             sources_description = f"{sources_description}\n\n{workspace_description}"
-        planner = build_planner(
+        system_prompt = planner_system_prompt(
             sources_description,
-            self._datasets_description(),
-            pending_context=self._pending_context(pending),
-            history_context=(workspace.describe_context() if workspace is not None else None),
+            datasets_description,
+            pending_context=pending_context,
+            history_context=history_context,
         )
+        mesures["prompt_tokens"] = estimate_tokens(system_prompt, state["question"])
+        # dernier constat avant l'envoi : au-delà de la fenêtre du serveur, un
+        # échec de sortie structurée ne laissera RIEN à mesurer au retour.
+        self._ajoute_avis(mesures, exceeds_model_window(mesures["prompt_tokens"], self.limits))
+        planner = planner_agent(system_prompt)
+        serveur: int | None = None
         try:
-            plan = planner.run_sync(state["question"], model=self.model).output
+            resultat = planner.run_sync(state["question"], model=self.model)
         except UnexpectedModelBehavior:
             # le LLM n'a pas su produire un Plan structuré (retries épuisés). Si on
             # a un tour précédent, on suppose un AJUSTEMENT et on reprend sa
@@ -387,8 +562,18 @@ class Orchestrator:
                     f"faire — interroger une source{perimetre}, une analyse ou une "
                     "visualisation, ou une prédiction — et sur quelles données ?",
                     start,
+                    **mesures,
                 )
             plan = fallback
+        else:
+            plan = resultat.output
+            # le budget est une prévision, `prompt_eval_count` est une mesure :
+            # c'est elle qui prouve qu'un serveur a tronqué sans le dire.
+            serveur = resultat.usage.input_tokens
+            debordement = detect_overflow(mesures["prompt_tokens"], serveur, self.limits)
+            if debordement is not None:
+                self._ajoute_avis(mesures, debordement.message())
+        mesures["server_prompt_tokens"] = serveur
         if state.get("source_name"):
             plan.source = state["source_name"]
         if plan.capability == "fetch_then_predict" and not self._effective_catalog(state).sources:
@@ -425,6 +610,7 @@ class Orchestrator:
                     f"La source « {plan.source} » est introuvable. Sur quelle source "
                     f"veux-tu travailler : {names} ?",
                     start,
+                    **mesures,
                 )
             plan.source = resolved
         # ambiguïté de source : la capacité interroge une source, aucune n'est
@@ -436,7 +622,9 @@ class Orchestrator:
             and len(self.catalog.sources) > 1
         ):
             names = ", ".join(s.name for s in self.catalog.sources)
-            return self._clarify(plan, f"Sur quelle source veux-tu travailler : {names} ?", start)
+            return self._clarify(
+                plan, f"Sur quelle source veux-tu travailler : {names} ?", start, **mesures
+            )
         # modèle de prédiction manquant : repli auto s'il n'y en a qu'un, sinon
         # on demande lequel plutôt que de propager un KeyError ('' -> inconnu).
         if plan.capability in self._PREDICT_CAPABILITIES and not plan.dataset:
@@ -445,7 +633,9 @@ class Orchestrator:
                 plan.dataset = datasets[0]
             elif len(datasets) > 1:
                 names = ", ".join(datasets)
-                return self._clarify(plan, f"Sur quel modèle veux-tu prédire : {names} ?", start)
+                return self._clarify(
+                    plan, f"Sur quel modèle veux-tu prédire : {names} ?", start, **mesures
+                )
         # « prédis ces lignes » : le LLM route parfois en 'predict' sans features
         # au lieu de fetch_then_predict. Si le dernier tableau mémorisé fournit
         # exactement les features du modèle, on chaîne dessus plutôt que de
@@ -456,9 +646,9 @@ class Orchestrator:
             and not plan.features
             and plan.dataset in SCHEMAS
             and workspace is not None
-            and workspace.artifacts
+            and workspace.injected
         ):
-            latest = workspace.artifacts[-1]
+            latest = workspace.injected[-1]
             needed = set(get_schema(plan.dataset).model_fields)
             if needed <= {c.lower() for c in latest.columns}:
                 plan.capability = "fetch_then_predict"
@@ -467,27 +657,30 @@ class Orchestrator:
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         return {
             "plan": plan,
-            "trace": [self._step("plan", detail, start)],
+            "trace": [self._step("plan", detail, start, **mesures)],
         }
 
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
+        # `closing` et non un adaptateur gardé : un nœud est exécuté à chaque
+        # question, et un pool de connexions abandonné à chaque fois finit par
+        # remplir le `max_connections` du serveur (audit §2.3).
         source = self._resolve_source(plan, self._effective_catalog(state))
-        adapter = open_source(source)
         # Le contexte du tour précédent va AUSSI à l'agent SQL, pas seulement au
         # planificateur : sans lui, « affiche ceux des autres années » est une
         # anaphore qu'il ne peut pas résoudre, et il répond « demande trop vague ».
         workspace = state.get("workspace")
         history = workspace.describe_context() if workspace is not None else None
-        outcome = run_retrieval(
-            state["question"],
-            adapter=adapter,
-            model=self.model,
-            settings=self.settings,
-            dictionary=source.dictionary_text(),
-            history=history,
-        )
+        with closing(open_source(source)) as adapter:
+            outcome = run_retrieval(
+                state["question"],
+                adapter=adapter,
+                model=self.model,
+                settings=self.settings,
+                dictionary=source.dictionary_text(),
+                history=history,
+            )
         artifacts = [_table_artifact(outcome.result)] if outcome.result else []
         # mémorise le tableau produit pour le réutiliser aux tours suivants
         self._memorize(state, outcome.result)
@@ -532,13 +725,13 @@ class Orchestrator:
     ) -> str:
         """Ajoute les CSV mémorisés aux fichiers montés et les décrit au code généré."""
         workspace = state.get("workspace")
-        if workspace is None or not workspace.artifacts:
+        if workspace is None or not workspace.injected:
             return data_context
         for host_path, name in workspace.sandbox_files().items():
             data_files.setdefault(host_path, name)
         lines = [
             f"- /data/{a.file} ({a.row_count} lignes ; colonnes : {', '.join(a.columns)})"
-            for a in workspace.artifacts
+            for a in workspace.injected
         ]
         extra = "Objets intermédiaires de la conversation (réutilisables) :\n" + "\n".join(lines)
         return f"{data_context}\n\n{extra}" if data_context else extra
@@ -556,20 +749,25 @@ class Orchestrator:
                 data_context = self._duckdb_context(source, open_source(source).schema())
             else:
                 # source SQL : matérialise chaque table en CSV pour la sandbox
-                adapter = open_source(source)
-                schema = adapter.schema()
-                data_files = {}
-                tronquees = []
-                for table in schema.tables:
-                    result = adapter.run(
-                        f"SELECT * FROM {table.name}",
-                        max_rows=self.settings.analysis_table_max_rows,
-                    )
-                    if result.truncated:
-                        tronquees.append(f"{table.name} ({result.row_count} lignes seulement)")
-                    csv_path = Path(tmp) / f"{table.name}.csv"
-                    pd.DataFrame(result.rows, columns=result.columns).to_csv(csv_path, index=False)
-                    data_files[csv_path] = f"{table.name}.csv"
+                with closing(open_source(source)) as adapter:
+                    schema = adapter.schema()
+                    data_files = {}
+                    tronquees = []
+                    for table in schema.tables:
+                        result = adapter.run(
+                            f"SELECT * FROM {table.name}",
+                            max_rows=self.settings.analysis_table_max_rows,
+                        )
+                        if result.truncated:
+                            tronquees.append(f"{table.name} ({result.row_count} lignes seulement)")
+                        csv_path = Path(tmp) / f"{table.name}.csv"
+                        pd.DataFrame(result.rows, columns=result.columns).to_csv(
+                            csv_path, index=False
+                        )
+                        data_files[csv_path] = f"{table.name}.csv"
+                # La base est refermée AVANT l'analyse : le code généré tourne sur
+                # les CSV matérialisés, il n'a plus rien à demander à la source, et
+                # une analyse dure bien plus longtemps qu'une extraction.
                 data_context = schema.to_prompt()
                 if tronquees:
                     # Une table coupée à analysis_table_max_rows produit des
@@ -664,14 +862,15 @@ class Orchestrator:
         """Chaînage ① -> ③ : récupère une ligne, la mappe sur les features, prédit."""
         start = time.monotonic()
         plan = state["plan"]
-        adapter = open_source(self._resolve_source(plan, self._effective_catalog(state)))
         data_question = plan.data_question or state["question"]
-        retrieval = run_retrieval(
-            data_question + self._expected_columns_hint(plan.dataset or ""),
-            adapter=adapter,
-            model=self.model,
-            settings=self.settings,
-        )
+        source = self._resolve_source(plan, self._effective_catalog(state))
+        with closing(open_source(source)) as adapter:
+            retrieval = run_retrieval(
+                data_question + self._expected_columns_hint(plan.dataset or ""),
+                adapter=adapter,
+                model=self.model,
+                settings=self.settings,
+            )
         if not retrieval.result or not retrieval.result.rows:
             return {
                 "retrieval": retrieval,
@@ -896,7 +1095,10 @@ class Orchestrator:
         return " ".join(parts)
 
     @staticmethod
-    def _step(node: str, detail: str, start: float) -> TraceStep:
+    def _step(node: str, detail: str, start: float, **mesures) -> TraceStep:
         return TraceStep(
-            node=node, detail=detail, duration_ms=int((time.monotonic() - start) * 1000)
+            node=node,
+            detail=detail,
+            duration_ms=int((time.monotonic() - start) * 1000),
+            **mesures,
         )

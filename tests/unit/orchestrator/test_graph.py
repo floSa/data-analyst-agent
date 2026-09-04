@@ -10,6 +10,7 @@ from pathlib import Path
 import joblib
 import pytest
 from pydantic_ai import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelHTTPError
 
 from data_analyst_agent.agents.inference.predict import InferenceOutcome, Prediction
 from data_analyst_agent.agents.inference.registry import Registry
@@ -21,6 +22,7 @@ from data_analyst_agent.agents.retrieval.catalog import (
 )
 from data_analyst_agent.agents.retrieval.duckdb_source import DuckDBAdapter
 from data_analyst_agent.config import Settings
+from data_analyst_agent.orchestrator.context_budget import estimate_tokens
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
@@ -606,7 +608,7 @@ def test_ajustement_flou_reprend_la_derniere_action(
             raise UnexpectedModelBehavior("Exceeded maximum output retries (1)")
 
     monkeypatch.setattr(
-        "data_analyst_agent.orchestrator.graph.build_planner",
+        "data_analyst_agent.orchestrator.graph.planner_agent",
         lambda *args, **kwargs: _PlannerQuiEchoue(),
     )
     sandbox = ScriptedSandbox(
@@ -791,6 +793,243 @@ def test_code_genere_accede_aux_objets_intermediaires(
     # le prompt d'analyse mentionne le fichier intermédiaire réutilisable
     analysis_prompt = llm.prompts_for(ANALYSIS)[0]
     assert "resultat_1.csv" in analysis_prompt
+
+
+def test_le_plafond_de_contexte_vaut_pour_le_planificateur_ET_la_sandbox(
+    tmp_path: Path, registry: Registry
+):
+    """La fenêtre s'applique aux trois axes du MÊME tour, ou pas du tout.
+
+    Un objet décrit au planificateur mais absent des montages — ou l'inverse —
+    donnerait au mieux un « source introuvable », au pire un `FileNotFoundError`
+    au milieu du code généré.
+    """
+    ws = ConversationWorkspace(tmp_path, "cfen")
+    for tour in range(1, 6):
+        ws.save_table(["a"], [[tour]], f"tableau du tour {tour}")
+
+    sandbox = ScriptedSandbox([SandboxResult(status="ok", stdout="ok\n", results=[])])
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="iris"))])
+        .script(ANALYSIS, [text("```python\nprint('ok')\n```")])
+        .script(SYNTHESIS, [text("Analyse faite.")])
+    )
+    orchestrator = orchestrator_with(
+        llm,
+        catalog=Catalog(sources=[FileSource(name="iris", path=REPO / "sources" / "iris.csv")]),
+        registry=registry,
+        settings=make_settings(workspace_dir=tmp_path, context_artifact_window=2),
+        sandbox=sandbox,
+    )
+    orchestrator.ask("analyse", conversation_id="cfen")
+
+    planificateur = llm.systems_for(PLANNER)[0]
+    analyse = llm.systems_for(ANALYSIS)[0] + llm.prompts_for(ANALYSIS)[0]
+    for evince in ("resultat_1", "resultat_2", "resultat_3"):
+        assert evince not in planificateur
+        assert evince not in analyse
+    for garde in ("resultat_4", "resultat_5"):
+        assert garde in planificateur
+        assert f"{garde}.csv" in analyse
+    # l'éviction est dite au planificateur, pour qu'il ne propose pas l'invisible
+    assert "3 tableau(x) plus ancien(s)" in planificateur
+
+
+def _tour_de_requete(tmp_path: Path, mini_csv: Path, registry: Registry, tableaux: int, **reglages):
+    """Un tour `query` dans une conversation qui a déjà produit ``tableaux`` tableaux."""
+    ws = ConversationWorkspace(tmp_path, "ctronc")
+    for tour in range(1, tableaux + 1):
+        ws.save_table(["a"], [[tour]], f"tableau du tour {tour}")
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [tool_call("run_sql", {"query": "SELECT count(*) AS n FROM mini"}), text("4.")],
+        )
+    )
+    orchestrator = orchestrator_with(
+        llm,
+        catalog=Catalog(sources=[FileSource(name="mini", path=mini_csv)]),
+        registry=registry,
+        settings=make_settings(workspace_dir=tmp_path, **reglages),
+    )
+    return llm, orchestrator.ask("combien de lignes ?", conversation_id="ctronc")
+
+
+def test_la_troncature_est_dite_dans_la_trace_ET_dans_la_reponse(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Le défaut corrigé : la perte de contexte était totalement silencieuse."""
+    _llm, answer = _tour_de_requete(
+        tmp_path, mini_csv, registry, tableaux=5, context_artifact_window=2
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.truncated is True
+    assert "3 des 5 tableaux" in plan.truncation
+    assert "DAA_CONTEXT_ARTIFACT_WINDOW=2" in plan.truncation
+    # et surtout : l'utilisateur le lit, sans avoir à déplier la trace
+    assert "3 des 5 tableaux" in answer.answer
+    # l'avis s'ajoute à la réponse, il ne la remplace pas
+    assert answer.answer.startswith("4.\n\nContexte tronqué :")
+
+
+def test_aucune_mention_quand_rien_n_est_coupe(tmp_path: Path, mini_csv: Path, registry: Registry):
+    _llm, answer = _tour_de_requete(
+        tmp_path, mini_csv, registry, tableaux=2, context_artifact_window=8
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.truncated is False
+    assert plan.truncation == ""
+    assert "Contexte tronqué" not in answer.answer
+
+
+def test_le_prompt_est_pese_avant_l_appel(tmp_path: Path, mini_csv: Path, registry: Registry):
+    """La trace porte ce qu'on a envoyé : rien ne comptait les tokens jusqu'ici."""
+    llm, answer = _tour_de_requete(tmp_path, mini_csv, registry, tableaux=3)
+    plan = next(step for step in answer.trace if step.node == "plan")
+    envoye = estimate_tokens(llm.systems_for(PLANNER)[0], "combien de lignes ?")
+    assert plan.prompt_tokens == envoye
+
+
+def test_le_budget_borne_le_prompt_reellement_envoye(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Le budget se décompte sur le prompt réel, et il est tenu."""
+    budget = 1000
+    llm, answer = _tour_de_requete(
+        tmp_path,
+        mini_csv,
+        registry,
+        tableaux=20,
+        context_artifact_window=0,  # la fenêtre est désactivée : seul le budget coupe
+        context_token_budget=budget,
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.prompt_tokens <= budget
+    assert estimate_tokens(llm.systems_for(PLANNER)[0], "combien de lignes ?") <= budget
+    assert "DAA_CONTEXT_TOKEN_BUDGET=1000" in plan.truncation
+
+
+def test_ce_que_le_serveur_dit_avoir_evalue_est_trace(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Le budget est une prévision ; `prompt_eval_count` est une mesure. On garde les deux."""
+    _llm, answer = _tour_de_requete(tmp_path, mini_csv, registry, tableaux=2)
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.prompt_tokens > 0
+    assert plan.server_prompt_tokens > 0
+    assert plan.truncated is False  # aucun débordement : les deux comptes concordent
+
+
+def test_debordement_constate_cote_serveur_remonte_a_l_utilisateur(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Le serveur a tronqué sans le dire : on le constate et on le dit.
+
+    Reproduit sans serveur le plafonnement mesuré contre gemma4:e4b : un premier
+    tour relève ce que le modèle dit avoir évalué, le second déclare cette
+    valeur comme fenêtre — le modèle rend alors tout juste de quoi la remplir,
+    pour un prompt plus long qu'elle. C'est exactement le constat qui a valu la
+    réponse « Je » à un prompt de 36 262 tokens sur une fenêtre de 32 768.
+    """
+    _llm, temoin = _tour_de_requete(tmp_path / "a", mini_csv, registry, tableaux=2)
+    fenetre = next(s for s in temoin.trace if s.node == "plan").server_prompt_tokens
+
+    _llm, answer = _tour_de_requete(
+        tmp_path / "b", mini_csv, registry, tableaux=2, context_model_window=fenetre
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.prompt_tokens > fenetre  # on a envoyé plus que la fenêtre
+    assert plan.truncated is True
+    assert "Contexte tronqué par le serveur" in plan.truncation
+    assert "la fenêtre du modèle est pleine" in plan.truncation
+    assert "Contexte tronqué par le serveur" in answer.answer
+
+
+def test_le_refus_explicite_du_serveur_est_dit_en_clair(
+    tmp_path: Path, mini_csv: Path, registry: Registry, monkeypatch
+):
+    """vLLM rejette là où Ollama tronque : le refus ne doit pas finir en ModelHTTPError."""
+
+    class _PlannerRefuse:
+        def run_sync(self, *args, **kwargs):
+            raise ModelHTTPError(
+                400,
+                "vllm",
+                body="This model's maximum context length is 32768 tokens. However, "
+                "you requested 41234 tokens. Please reduce the length of the messages.",
+            )
+
+    monkeypatch.setattr(
+        "data_analyst_agent.orchestrator.graph.planner_agent",
+        lambda *args, **kwargs: _PlannerRefuse(),
+    )
+    _llm, answer = _tour_de_requete(tmp_path, mini_csv, registry, tableaux=1)
+    assert answer.error == "le contexte envoyé au modèle dépasse sa fenêtre"
+    assert "ModelHTTPError" not in answer.answer
+    assert "Contexte refusé par le serveur" in answer.answer
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.truncated is True
+    assert "41234" in plan.detail  # le corps de l'erreur reste dans la trace
+
+
+def test_une_autre_erreur_du_planificateur_reste_generique(
+    tmp_path: Path, mini_csv: Path, registry: Registry, monkeypatch
+):
+    """On ne transforme pas toute panne en dépassement de contexte."""
+
+    class _PlannerCasse:
+        def run_sync(self, *args, **kwargs):
+            raise ModelHTTPError(503, "vllm", body="service unavailable")
+
+    monkeypatch.setattr(
+        "data_analyst_agent.orchestrator.graph.planner_agent",
+        lambda *args, **kwargs: _PlannerCasse(),
+    )
+    _llm, answer = _tour_de_requete(tmp_path, mini_csv, registry, tableaux=1)
+    assert "Contexte refusé" not in answer.answer
+    # générique côté utilisateur, précis côté trace (cf. test_erreurs_masquees.py)
+    assert "ModelHTTPError" not in answer.error
+    assert "interpréter la demande" in answer.error
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert "ModelHTTPError" in plan.detail
+
+
+def test_prompt_plus_long_que_la_fenetre_du_serveur_est_dit_avant_l_appel(
+    tmp_path: Path, mini_csv: Path, registry: Registry
+):
+    """Sans ce constat, un débordement massif ne laisse qu'un « je n'ai pas compris ».
+
+    Mesuré contre gemma4:e4b, plafonds désactivés : à 48 350 tokens envoyés pour
+    une fenêtre de 32 768, le modèle ne rend plus de sortie structurée, le
+    planificateur retombe sur son repli, et rien ne reliait ce repli à la
+    longueur du prompt. Ici la fenêtre déclarée est minuscule, pour constater le
+    même enchaînement sans serveur.
+    """
+    _llm, answer = _tour_de_requete(
+        tmp_path, mini_csv, registry, tableaux=2, context_model_window=200
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert plan.truncated is True
+    assert "pour une fenêtre de 200" in plan.truncation
+    assert "pour une fenêtre de 200" in answer.answer
+
+
+def test_les_constats_de_troncature_se_cumulent(tmp_path: Path, mini_csv: Path, registry: Registry):
+    """Éviction d'objets ET prompt plus long que la fenêtre : les deux se disent."""
+    _llm, answer = _tour_de_requete(
+        tmp_path,
+        mini_csv,
+        registry,
+        tableaux=5,
+        context_artifact_window=2,
+        context_model_window=200,
+    )
+    plan = next(step for step in answer.trace if step.node == "plan")
+    assert "3 des 5 tableaux" in plan.truncation
+    assert "pour une fenêtre de 200" in plan.truncation
 
 
 # --- analyze ------------------------------------------------------------------
@@ -1247,7 +1486,7 @@ def test_planificateur_illisible_repond_proprement(registry: Registry, monkeypat
             raise UnexpectedModelBehavior("Exceeded maximum output retries (1)")
 
     monkeypatch.setattr(
-        "data_analyst_agent.orchestrator.graph.build_planner",
+        "data_analyst_agent.orchestrator.graph.planner_agent",
         lambda *args, **kwargs: _PlannerQuiEchoue(),
     )
     orchestrator = orchestrator_with(ScriptedLLM(), registry=registry)

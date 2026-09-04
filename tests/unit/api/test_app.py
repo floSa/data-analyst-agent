@@ -1,5 +1,7 @@
 """Tests de l'API FastAPI (orchestrateur doublé + un flux réel scripté)."""
 
+from pathlib import Path
+
 import joblib
 import pytest
 from fastapi.testclient import TestClient
@@ -11,6 +13,7 @@ from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.sandbox.client import MimeOutput
+from helpers.auth import client_connecte, creer_compte, reglages_de_test
 from helpers.doubles import FakeRegressor
 from helpers.scripted_llm import PLANNER, ScriptedLLM, plan_response
 
@@ -31,11 +34,20 @@ class FakeOrchestrator:
     def __init__(self, answer: ChatAnswer) -> None:
         self.answer = answer
         self.calls: list[tuple[str, str | None, object]] = []
+        # la racine reçue au dernier appel : c'est elle qui doit être celle de
+        # l'utilisateur de la session, et pas la racine commune.
+        self.workspace_roots: list[Path | None] = []
 
     def ask(
-        self, question: str, source: str | None = None, pending=None, conversation_id=None
+        self,
+        question: str,
+        source: str | None = None,
+        pending=None,
+        conversation_id=None,
+        workspace_root: Path | None = None,
     ) -> ChatAnswer:
         self.calls.append((question, source, pending))
+        self.workspace_roots.append(workspace_root)
         return self.answer
 
 
@@ -51,13 +63,23 @@ def fake_orchestrator() -> FakeOrchestrator:
 
 @pytest.fixture
 def settings(tmp_path) -> Settings:
-    """Conversations isolées : chaque test a son propre dossier de travail."""
-    return Settings(_env_file=None, workspace_dir=tmp_path / "workspaces")
+    """Conversations, comptes et sessions isolés : chaque test a son dossier."""
+    return reglages_de_test(tmp_path)
 
 
 @pytest.fixture
-def client(fake_orchestrator: FakeOrchestrator, settings: Settings) -> TestClient:
-    return TestClient(create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings))
+def mot_de_passe(settings: Settings) -> str:
+    """Un compte, et son mot de passe tiré au hasard à chaque exécution."""
+    return creer_compte(settings)
+
+
+@pytest.fixture
+def client(
+    fake_orchestrator: FakeOrchestrator, settings: Settings, mot_de_passe: str
+) -> TestClient:
+    """Client authentifié : toutes les routes exigent une session."""
+    app = create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings)
+    return client_connecte(app, settings, mot_de_passe)
 
 
 def test_health(client: TestClient):
@@ -84,12 +106,16 @@ def test_chat_message_obligatoire(client: TestClient):
     assert response.status_code == 422
 
 
-def test_chat_erreur_transmise(fake_orchestrator: FakeOrchestrator, settings: Settings):
+def test_chat_erreur_transmise(
+    fake_orchestrator: FakeOrchestrator, settings: Settings, mot_de_passe: str
+):
     fake_orchestrator.answer = ChatAnswer(
         answer="Je n'ai pas pu répondre : source inconnue", error="source inconnue"
     )
-    client = TestClient(
-        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings)
+    client = client_connecte(
+        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings),
+        settings,
+        mot_de_passe,
     )
     body = client.post("/chat", json={"message": "?"}).json()
     assert body["error"] == "source inconnue"
@@ -105,7 +131,7 @@ def test_page_de_chat_servie(client: TestClient):
 
 
 def test_orchestrateur_construit_une_seule_fois(
-    fake_orchestrator: FakeOrchestrator, settings: Settings
+    fake_orchestrator: FakeOrchestrator, settings: Settings, mot_de_passe: str
 ):
     compteur = {"n": 0}
 
@@ -113,7 +139,9 @@ def test_orchestrateur_construit_une_seule_fois(
         compteur["n"] += 1
         return fake_orchestrator
 
-    client = TestClient(create_app(orchestrator_factory=factory, settings=settings))
+    client = client_connecte(
+        create_app(orchestrator_factory=factory, settings=settings), settings, mot_de_passe
+    )
     client.post("/chat", json={"message": "a"})
     client.post("/chat", json={"message": "b"})
     assert compteur["n"] == 1
@@ -157,14 +185,18 @@ def test_conversation_multi_tours_via_api(tmp_path):
             ),
         ],
     )
-    reglages = Settings(_env_file=None, workspace_dir=tmp_path / "workspaces")
+    reglages = reglages_de_test(tmp_path)
     orchestrator = Orchestrator(
         model=llm.model(),
         catalog=Catalog(sources=[]),
         registry=registry,
         settings=reglages,
     )
-    client = TestClient(create_app(orchestrator_factory=lambda: orchestrator, settings=reglages))
+    client = client_connecte(
+        create_app(orchestrator_factory=lambda: orchestrator, settings=reglages),
+        reglages,
+        creer_compte(reglages),
+    )
 
     tour1 = client.post(
         "/chat", json={"message": "Prédis les ventes de croquettes chien en grand magasin"}
@@ -203,14 +235,18 @@ def test_flux_reel_predict_via_api(tmp_path):
         PLANNER,
         [plan_response(Plan(capability="predict", dataset="maxizoo_sales", features=VENTES_OK))],
     )
-    reglages = Settings(_env_file=None, workspace_dir=tmp_path / "workspaces")
+    reglages = reglages_de_test(tmp_path)
     orchestrator = Orchestrator(
         model=llm.model(),
         catalog=Catalog(sources=[]),
         registry=registry,
         settings=reglages,
     )
-    client = TestClient(create_app(orchestrator_factory=lambda: orchestrator, settings=reglages))
+    client = client_connecte(
+        create_app(orchestrator_factory=lambda: orchestrator, settings=reglages),
+        reglages,
+        creer_compte(reglages),
+    )
     body = client.post("/chat", json={"message": "Prédis les ventes de ce produit..."}).json()
     assert "4.1391" in body["answer"]
     assert body["plan"]["capability"] == "predict"
@@ -251,7 +287,7 @@ def test_ouvrir_une_conversation_inconnue(client: TestClient):
 
 
 def test_reprise_repasse_le_pending_a_lorchestrateur(
-    fake_orchestrator: FakeOrchestrator, settings: Settings
+    fake_orchestrator: FakeOrchestrator, settings: Settings, mot_de_passe: str
 ):
     """Reprendre un fil en attente de features doit rendre son contexte à l'agent."""
     from data_analyst_agent.orchestrator.graph import PendingInference
@@ -260,8 +296,10 @@ def test_reprise_repasse_le_pending_a_lorchestrateur(
         answer="Quel univers ?",
         pending=PendingInference(dataset="maxizoo_sales", features={"store_type": "grand"}),
     )
-    client = TestClient(
-        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings)
+    client = client_connecte(
+        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings),
+        settings,
+        mot_de_passe,
     )
     conversation_id = client.post(
         "/chat", json={"message": "Prédis les ventes en grand magasin"}
@@ -275,18 +313,22 @@ def test_reprise_repasse_le_pending_a_lorchestrateur(
 
 
 def test_conversation_survit_a_un_redemarrage(
-    fake_orchestrator: FakeOrchestrator, settings: Settings
+    fake_orchestrator: FakeOrchestrator, settings: Settings, mot_de_passe: str
 ):
     """Le fil est sur disque : une nouvelle instance d'app le retrouve."""
-    premier = TestClient(
-        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings)
+    premier = client_connecte(
+        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings),
+        settings,
+        mot_de_passe,
     )
     conversation_id = premier.post("/chat", json={"message": "Combien de femmes ?"}).json()[
         "conversation_id"
     ]
 
-    redemarre = TestClient(
-        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings)
+    redemarre = client_connecte(
+        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings),
+        settings,
+        mot_de_passe,
     )
     assert [c["id"] for c in redemarre.get("/conversations").json()] == [conversation_id]
     assert redemarre.get(f"/conversations/{conversation_id}").status_code == 200
@@ -342,13 +384,13 @@ def test_page_de_chat_porte_la_barre_laterale(client: TestClient):
 
 
 def test_javascript_de_la_page_est_syntaxiquement_valide():
-    """Garde-fou : la page est une chaîne Python, un échappement raté casse tout le script."""
+    """Garde-fou : une erreur de syntaxe casse tout le script, sans bruit côté serveur."""
     esprima = pytest.importorskip("esprima")
     import re
 
-    from data_analyst_agent.api.app import CHAT_PAGE
+    from data_analyst_agent.api import pages
 
-    script = re.search(r"<script>(.*)</script>", CHAT_PAGE, re.S).group(1)
+    script = re.search(r"<script>(.*)</script>", pages.gabarit(pages.CHAT), re.S).group(1)
     esprima.parseScript(script)
 
 

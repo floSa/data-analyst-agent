@@ -19,25 +19,37 @@ Le LLM étant non déterministe, on vérifie des INVARIANTS, à deux niveaux :
   présence d'un tableau/figure, quelques mots-clés dans la réponse.
 
 Prérequis : l'API tourne (uvicorn), Ollama a le modèle, la base est construite
-(scripts/load_maxizoo_duckdb.py), l'image sandbox est construite.
+(scripts/load_maxizoo_duckdb.py), l'image sandbox est construite, et un compte
+existe (scripts/manage_users.py create <login>) — l'API n'a plus de route
+ouverte hormis /health.
 
-    uv run python scripts/live_scenarios.py            # tout
-    uv run python scripts/live_scenarios.py --base-url http://localhost:8000
-    uv run python scripts/live_scenarios.py --only maxizoo-decouverte maxizoo-pieges
+    uv run python scripts/live_scenarios.py --login alice
+    uv run python scripts/live_scenarios.py --login alice --base-url http://localhost:8000
+    uv run python scripts/live_scenarios.py --login alice --only maxizoo-decouverte maxizoo-pieges
+
+Le mot de passe est demandé au terminal ; DAA_LIVE_PASSWORD le fournit pour un
+lancement non interactif (CI). Il n'est jamais accepté en argument : la ligne de
+commande est lisible par tout compte local et reste dans l'historique du shell.
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
+import http.cookiejar
 import json
+import os
 import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+from data_analyst_agent.config import get_settings
 
 # --- marqueurs d'une exception brute qui aurait fui jusqu'à l'utilisateur ------
 LEAK_MARKERS = ("Traceback (most recent call", "KeyError", "ValueError:", '  File "')
@@ -279,13 +291,53 @@ SCENARIOS: list[Scenario] = [
 # --- exécution ----------------------------------------------------------------
 
 
-def post_chat(base_url: str, message: str, conversation_id: str, timeout: float) -> dict[str, Any]:
-    body = json.dumps({"message": message, "conversation_id": conversation_id}).encode("utf-8")
-    req = urllib.request.Request(
-        f"{base_url}/chat", data=body, headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+class Client:
+    """Client HTTP qui ouvre une session et la porte, comme un navigateur.
+
+    Toutes les routes exigent une session depuis que l'API est authentifiée : la
+    batterie doit se connecter avant de poser sa première question, et joindre à
+    chaque `POST /chat` le jeton anti-CSRF que la connexion lui a donné.
+    """
+
+    def __init__(self, base_url: str, timeout: float) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        reglages = get_settings()
+        self.cookie_csrf = reglages.csrf_cookie_name
+        self.jar = http.cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+
+    def _cookie(self, nom: str) -> str:
+        return next((c.value for c in self.jar if c.name == nom), "")
+
+    def login(self, login: str, password: str) -> None:
+        """Suit le parcours du formulaire : la page pose le jeton, le POST le renvoie."""
+        self.opener.open(f"{self.base_url}/login", timeout=self.timeout).read()
+        formulaire = urllib.parse.urlencode(
+            {"login": login, "motdepasse": password, "csrf": self._cookie(self.cookie_csrf)}
+        ).encode("utf-8")
+        requete = urllib.request.Request(
+            f"{self.base_url}/login",
+            data=formulaire,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with self.opener.open(requete, timeout=self.timeout) as reponse:
+            reponse.read()
+
+    def post_chat(self, message: str, conversation_id: str) -> dict[str, Any]:
+        body = json.dumps({"message": message, "conversation_id": conversation_id}).encode("utf-8")
+        requete = urllib.request.Request(
+            f"{self.base_url}/chat",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                # Le cookie de session part tout seul : c'est ce jeton qui
+                # distingue une requête de l'application d'une requête forgée.
+                "X-CSRF-Token": self._cookie(self.cookie_csrf),
+            },
+        )
+        with self.opener.open(requete, timeout=self.timeout) as reponse:
+            return json.loads(reponse.read().decode("utf-8"))
 
 
 C_OK, C_WARN, C_BAD, C_DIM, C_RST = "\033[32m", "\033[33m", "\033[31m", "\033[2m", "\033[0m"
@@ -450,9 +502,9 @@ def check_turn(turn: Turn, data: dict[str, Any]) -> tuple[list[str], list[str]]:
     return hard, soft
 
 
-def run(base_url: str, scenarios: list[Scenario], timeout: float) -> int:
+def run(client: Client, scenarios: list[Scenario]) -> int:
     total_hard = total_soft = total_turns = 0
-    print(f"Batterie live → {base_url}  ({len(scenarios)} scénarios)\n")
+    print(f"Batterie live → {client.base_url}  ({len(scenarios)} scénarios)\n")
     for scenario in scenarios:
         print(f"{C_DIM}━━━{C_RST} {scenario.title}  [{scenario.key}]")
         conversation_id = uuid.uuid4().hex
@@ -460,7 +512,7 @@ def run(base_url: str, scenarios: list[Scenario], timeout: float) -> int:
             total_turns += 1
             start = time.monotonic()
             try:
-                data = post_chat(base_url, turn.msg, conversation_id, timeout)
+                data = client.post_chat(turn.msg, conversation_id)
             except (urllib.error.URLError, TimeoutError) as exc:
                 total_hard += 1
                 print(f"  {C_BAD}✗{C_RST} T{i} {turn.msg[:60]!r} — échec HTTP : {exc}")
@@ -494,7 +546,14 @@ def main() -> None:
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--timeout", type=float, default=180.0, help="timeout par requête (s)")
     parser.add_argument("--only", nargs="*", metavar="KEY", help="ne lancer que ces scénarios")
+    parser.add_argument(
+        "--login",
+        default=os.environ.get("DAA_LIVE_LOGIN"),
+        help="compte utilisé pour ouvrir la session (défaut : DAA_LIVE_LOGIN)",
+    )
     args = parser.parse_args()
+    if not args.login:
+        parser.error("--login est requis : l'API n'a plus de route ouverte hormis /health")
 
     scenarios = SCENARIOS
     if args.only:
@@ -503,7 +562,17 @@ def main() -> None:
             keys = ", ".join(s.key for s in SCENARIOS)
             parser.error(f"aucun scénario ne correspond à {args.only} — connus : {keys}")
 
-    sys.exit(run(args.base_url, scenarios, args.timeout))
+    # Jamais en argument de ligne de commande : `ps` est lisible par tout compte
+    # local et le shell garde son historique.
+    password = os.environ.get("DAA_LIVE_PASSWORD") or getpass.getpass("Mot de passe : ")
+    client = Client(args.base_url, args.timeout)
+    try:
+        client.login(args.login, password)
+    except (urllib.error.HTTPError, urllib.error.URLError) as echec:
+        print(f"connexion refusée pour {args.login!r} : {echec}", file=sys.stderr)
+        sys.exit(1)
+
+    sys.exit(run(client, scenarios))
 
 
 if __name__ == "__main__":

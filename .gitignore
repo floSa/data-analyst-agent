@@ -28,6 +28,15 @@ coverage.xml
 sources/maxizoo.duckdb
 sources/maxizoo_dictionnaire.md
 
+# Magasin de comptes : logins et empreintes de mots de passe. Le défaut est
+# sous var/ (déjà ignoré), mais la règle est explicite pour que le fichier
+# reste hors du dépôt même si DAA_AUTH_ACCOUNTS_PATH le déplace. Forme du
+# fichier : users.example.yaml, lui versionné.
+users.yaml
+
+# État d'exécution local (workspaces des conversations)
+var/
+
 # IDE / OS
 .idea/
 .vscode/
@@ -35,3 +44,8 @@ Thumbs.db
 
 # Consignes de contribution locales (non versionnées)
 CLAUDE.md
+
+# Dossier de travail de l'outillage local : arbres de travail jetables et
+# copies de fichiers du dépôt. Non ignoré, les linters y descendaient et
+# rapportaient des erreurs sur des fichiers qui n'existent pas ici.
+.claude/

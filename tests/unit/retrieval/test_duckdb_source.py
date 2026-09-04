@@ -1,7 +1,9 @@
 """DuckDB sur fichiers : CSV natif, Excel multi-feuilles via pandas/openpyxl."""
 
+from contextlib import closing
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 import pytest
 
@@ -116,3 +118,84 @@ def test_schema_ignore_une_colonne_texte_a_forte_cardinalite(tmp_path: Path):
 
     assert colonnes["nom"].values is None
     assert "-- valeurs" not in schema.to_prompt()
+
+
+@pytest.mark.parametrize(
+    "requete",
+    [
+        "SELECT * FROM read_csv_auto('/etc/passwd')",
+        "SELECT content FROM read_text('/etc/hostname')",
+        "SELECT * FROM glob('/home/*')",
+    ],
+    ids=["read_csv_auto", "read_text", "glob"],
+)
+def test_lecture_de_fichier_hote_refusee(csv_ventes: Path, requete: str):
+    """DuckDB tourne dans le process de l'API : sans verrou, le SQL généré
+    par le modèle exfiltre n'importe quel fichier lisible par le serveur.
+    Ces requêtes sont des ``SELECT`` valides — le garde-fou lecture seule les
+    laisse passer, seul ``enable_external_access=false`` les arrête."""
+    adapter = DuckDBAdapter.from_file(csv_ventes)
+    with pytest.raises(QueryError, match="file system operations are disabled"):
+        adapter.run(requete)
+
+
+def test_le_verrou_ne_peut_pas_etre_leve_par_le_sql_genere(csv_ventes: Path):
+    adapter = DuckDBAdapter.from_file(csv_ventes)
+    with pytest.raises(QueryError):
+        adapter.run("SET enable_external_access=true")
+    with pytest.raises(QueryError, match="file system operations are disabled"):
+        adapter.run("SELECT * FROM read_csv_auto('/etc/passwd')")
+
+
+def test_le_verrou_vaut_pour_toute_connexion_pas_seulement_from_file(tmp_path: Path):
+    """Le verrou est posé dans ``__init__``, point de passage de toutes les
+    fabriques : une base ``.duckdb`` ouverte en lecture seule (cas d'une source
+    de type base, cf. ``from_database``) est protégée sans code dédié."""
+    base = tmp_path / "ventes.duckdb"
+    fabrique = duckdb.connect(str(base))
+    fabrique.execute("CREATE TABLE ventes AS SELECT 'nord' AS region, 100 AS montant")
+    fabrique.close()
+
+    adapter = DuckDBAdapter(duckdb.connect(str(base), read_only=True), ["ventes"])
+
+    assert adapter.run("SELECT count(*) AS n FROM ventes").rows == [[1]]
+    with pytest.raises(QueryError, match="file system operations are disabled"):
+        adapter.run("SELECT * FROM read_csv_auto('/etc/passwd')")
+
+
+# --- fermeture ----------------------------------------------------------------
+
+
+def test_close_ferme_la_base_en_memoire(csv_ventes: Path):
+    """Une base DuckDB en mémoire retient les données chargées tant qu'elle vit.
+
+    `open_source` est appelée à chaque exécution de nœud (audit §2.3) : sans
+    fermeture, chaque question laisse un classeur de plus en mémoire.
+    """
+    adapter = DuckDBAdapter.from_file(csv_ventes)
+
+    adapter.close()
+
+    with pytest.raises(QueryError, match="closed"):
+        adapter.run("SELECT 1")
+
+
+def test_close_lache_les_dataframes_enregistres(xlsx_multi: Path):
+    """Les feuilles Excel sont retenues par l'adaptateur pour le GC : à lâcher aussi."""
+    adapter = DuckDBAdapter.from_file(xlsx_multi)
+    assert adapter._frames
+
+    adapter.close()
+
+    assert not adapter._frames
+
+
+def test_close_sutilise_avec_contextlib_closing(csv_ventes: Path):
+    """La forme employée par l'orchestrateur : la fermeture est garantie même si ça lève."""
+    adapter = DuckDBAdapter.from_file(csv_ventes)
+
+    with pytest.raises(QueryError), closing(adapter):
+        adapter.run("DROP TABLE ventes")
+
+    with pytest.raises(QueryError, match="closed"):
+        adapter.run("SELECT 1")

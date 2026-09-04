@@ -2,12 +2,14 @@
 
 import datetime as dt
 import decimal
+from contextlib import closing
 
 import pytest
 
 from data_analyst_agent.agents.retrieval.sql import (
     ColumnInfo,
     ForeignKeyInfo,
+    PostgresAdapter,
     QueryError,
     QueryResult,
     SchemaInfo,
@@ -152,3 +154,36 @@ def test_ddl_derniere_colonne_sans_virgule_finale():
     ddl = SchemaInfo(tables=[table]).to_prompt()
 
     assert ddl == "TABLE t (\n  a TEXT,\n  b TEXT  -- valeurs : 'x', 'y'\n)"
+
+
+# --- fermeture de l'adaptateur Postgres ---------------------------------------
+
+
+class EngineEspion:
+    """Le minimum d'un Engine SQLAlchemy pour ce test : savoir s'il a été rendu."""
+
+    def __init__(self) -> None:
+        self.disposes = 0
+
+    def dispose(self) -> None:
+        self.disposes += 1
+
+
+def test_close_rend_le_pool_de_connexions():
+    """Sans `dispose()`, chaque nœud exécuté laisse un pool ouvert (audit §2.3)."""
+    engine = EngineEspion()
+    adapter = PostgresAdapter(engine)
+
+    adapter.close()
+
+    assert engine.disposes == 1
+
+
+def test_close_est_appele_par_contextlib_closing():
+    """La forme employée par l'orchestrateur, y compris quand le corps lève."""
+    engine = EngineEspion()
+
+    with pytest.raises(ZeroDivisionError), closing(PostgresAdapter(engine)):
+        raise ZeroDivisionError
+
+    assert engine.disposes == 1

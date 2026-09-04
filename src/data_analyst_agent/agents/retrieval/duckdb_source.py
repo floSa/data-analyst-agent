@@ -8,6 +8,14 @@ Une base ``.duckdb`` s'ouvre en lecture seule et expose ses tables telles
 qu'elles ont été déclarées : clés primaires et **étrangères** comprises. C'est
 ce que le mono-fichier ne peut pas donner — un schéma en étoile dont on tait les
 FK oblige le modèle à deviner les jointures.
+
+DuckDB tourne dans le process de l'API, pas dans la sandbox : toute connexion
+est donc verrouillée dès sa remise à l'adaptateur (``lock_external_access``),
+sinon le SQL généré par le modèle lit n'importe quel fichier de l'hôte. Le
+verrou est posé dans ``__init__``, seul point de passage commun à ``from_file``
+et à ``from_database`` — une base ``.duckdb`` ouverte en lecture seule reste
+une connexion capable de ``read_csv_auto`` sur l'hôte tant qu'on ne l'a pas
+fermée.
 """
 
 from __future__ import annotations
@@ -36,6 +44,21 @@ def sanitize_table_name(name: str) -> str:
     return cleaned or "table_sans_nom"
 
 
+def lock_external_access(connection: duckdb.DuckDBPyConnection) -> None:
+    """Coupe tout accès disque/réseau de la connexion, définitivement.
+
+    Sans ce verrou, ``assert_read_only`` laisse passer
+    ``SELECT * FROM read_csv_auto('/etc/passwd')`` : la requête *est* un
+    ``SELECT``, et son résultat remonte à l'utilisateur comme un tableau
+    ordinaire. Même chose avec ``read_text`` ou ``glob``.
+
+    À poser **après** la matérialisation des données (``CREATE TABLE ... AS``,
+    ``register``, ou ``connect(..., read_only=True)``) : le chargement légitime,
+    lui, a besoin de l'accès disque. DuckDB refuse de rouvrir le réglage ensuite.
+    """
+    connection.execute("SET enable_external_access=false")
+
+
 class DuckDBAdapter:
     dialect = "duckdb"
 
@@ -44,6 +67,9 @@ class DuckDBAdapter:
         self._table_names = table_names
         # garde une référence aux DataFrames enregistrés (sinon ramassés par le GC)
         self._frames: dict[str, pd.DataFrame] = {}
+        # Point de passage unique de toutes les fabriques : le verrou vaut donc
+        # pour n'importe quel chemin d'ouverture, présent ou à venir.
+        lock_external_access(connection)
 
     @classmethod
     def from_file(cls, path: Path) -> DuckDBAdapter:
@@ -55,18 +81,22 @@ class DuckDBAdapter:
         if suffix == ".csv":
             table = sanitize_table_name(path.stem)
             escaped = str(path).replace("'", "''")
-            connection.execute(f"CREATE VIEW {table} AS SELECT * FROM read_csv_auto('{escaped}')")
+            # CREATE TABLE et non CREATE VIEW : une vue relirait le fichier à
+            # chaque requête, ce que le verrou d'accès externe interdit ensuite.
+            connection.execute(f"CREATE TABLE {table} AS SELECT * FROM read_csv_auto('{escaped}')")
             return cls(connection, [table])
         if suffix in (".xlsx", ".xlsm"):
             sheets = pd.read_excel(path, sheet_name=None)  # toutes les feuilles
-            adapter = cls(connection, [])
+            # Tout enregistrer avant de construire l'adaptateur, qui verrouille.
+            frames: dict[str, pd.DataFrame] = {}
             for sheet_name, frame in sheets.items():
                 table = sanitize_table_name(str(sheet_name))
-                adapter._frames[table] = frame
+                frames[table] = frame
                 connection.register(table, frame)
-                adapter._table_names.append(table)
-            if not adapter._table_names:
+            if not frames:
                 raise ValueError(f"aucune feuille lisible dans {path.name}")
+            adapter = cls(connection, list(frames))
+            adapter._frames = frames
             return adapter
         raise ValueError(f"format non géré : {path.suffix} (attendu .csv, .xlsx, .xlsm)")
 
@@ -170,6 +200,16 @@ class DuckDBAdapter:
                 )
             )
         return SchemaInfo(dialect=self.dialect, tables=tables)
+
+    def close(self) -> None:
+        """Ferme la base en mémoire et lâche les DataFrames enregistrés.
+
+        Une base DuckDB en mémoire pèse le poids des données chargées — un
+        classeur Excel entier, feuille par feuille. Tant que la connexion vit,
+        cette mémoire est retenue. ``close()`` est idempotent côté DuckDB.
+        """
+        self.connection.close()
+        self._frames.clear()
 
     def run(self, query: str, max_rows: int = 200) -> QueryResult:
         safe_query = assert_read_only(query)

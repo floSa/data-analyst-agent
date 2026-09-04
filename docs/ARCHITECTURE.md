@@ -29,7 +29,7 @@ flowchart TB
     subgraph app["data-analyst-agent"]
         API["API FastAPI<br/>POST /chat · /conversations · GET /health"]
         ORCH["Orchestrateur LangGraph<br/>plan → route → capacité → synthèse"]
-        LLM["Client LLM mutualisé<br/>PydanticAI → Ollama"]
+        LLM["Client LLM mutualisé<br/>PydanticAI → OpenAI-compatible"]
 
         subgraph caps["Capacités"]
             RET["① Récupération<br/>catalogue + text-to-SQL à tools"]
@@ -157,7 +157,14 @@ CSV, sans laisser de données orphelines.
 - `plan.py` — le modèle `Plan` (capability, source, dataset, features,
   data_question) et l'agent planificateur PydanticAI à **sortie structurée** : le
   prompt liste les sources du catalogue et les modèles ML avec leurs features
-  attendues ; le LLM n'a le droit de choisir que dans ces listes.
+  attendues ; le LLM n'a le droit de choisir que dans ces listes. Le prompt est
+  **composé (`planner_system_prompt`) avant d'être confié à l'agent
+  (`planner_agent`)** : entre les deux, l'orchestrateur le pèse, parce qu'un
+  budget de tokens se décompte sur le prompt réel.
+- `context_budget.py` — ce qui entre dans le contexte : la fenêtre glissante et
+  le budget de tokens (§7), le compteur approché, et la détection d'un
+  débordement — plafonnement constaté sur `prompt_eval_count`, ou refus HTTP
+  explicite d'un serveur qui rejette au lieu de tronquer.
 - `graph.py` — le `StateGraph` LangGraph : state typé (`TypedDict` avec accumulation
   des artefacts et de la trace), nœuds gardés, routage code, chaînage
   `fetch_then_predict` (lignes SQL → intersection avec les champs du schéma de
@@ -167,13 +174,23 @@ CSV, sans laisser de données orphelines.
   chaque ligne validée, les valides prédites en un seul appel modèle vectorisé,
   les invalides écartées et comptées, réponse agrégée (répartition des classes ou
   moyenne) + table de détail ligne à ligne en artefact. Chaque nœud produit un
-  `TraceStep{node, detail, duration_ms}` et journalise (logger
-  `data_analyst_agent.orchestrator`).
+  `TraceStep{node, detail, duration_ms, prompt_tokens, server_prompt_tokens,
+  truncated, truncation}` et journalise (logger
+  `data_analyst_agent.orchestrator`). Une troncature de contexte est en outre
+  ajoutée à la réponse rendue à l'utilisateur : la trace n'est pas dépliée par
+  défaut, et une perte de contexte ne doit pas se deviner à la qualité des
+  réponses.
 
 ### 4.3 `llm.py` + `config.py` — LLM mutualisé et réglages
 
-`build_model()` fabrique l'unique modèle PydanticAI, pointé sur l'endpoint
-OpenAI-compatible d'Ollama, température 0 par défaut. `Settings`
+`build_model()` fabrique l'unique modèle PydanticAI, pointé sur un endpoint
+**OpenAI-compatible**, température 0 par défaut. Le moteur n'est pas nommé :
+`/v1/chat/completions` est servi aussi bien par Ollama (en service) que par vLLM
+(la cible, [VLLM.md](VLLM.md)) — passer de l'un à l'autre ne change que
+`DAA_LLM_BASE_URL`. Le client HTTP est construit explicitement pour porter la
+clé d'API (`DAA_LLM_API_KEY`, exigée par un vLLM lancé avec `--api-key`), le
+délai et le nombre de réessais : laissés aux défauts du SDK OpenAI (600 s,
+2 réessais), un appel bloqué retenait un thread ~30 min. `Settings`
 (pydantic-settings) centralise tous les réglages, surchargeables par variables
 d'environnement `DAA_*` ou `.env` (tableau complet en §7).
 
@@ -293,15 +310,24 @@ tests/
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `DAA_OLLAMA_BASE_URL` | `http://localhost:11434/v1` | endpoint OpenAI-compatible d'Ollama |
+| `DAA_LLM_BASE_URL` | `http://localhost:11434/v1` | endpoint OpenAI-compatible du serveur LLM (Ollama ou vLLM) |
+| `DAA_OLLAMA_BASE_URL` | — | **déprécié** : ancien nom du précédent, encore honoré (avertissement au démarrage) |
+| `DAA_LLM_API_KEY` | *(vide)* | clé envoyée en `Authorization` ; exigée par un vLLM lancé avec `--api-key` |
 | `DAA_LLM_MODEL` | `qwen3-coder:30b` | le modèle mutualisé |
 | `DAA_LLM_TEMPERATURE` | `0.0` | déterminisme des générations |
+| `DAA_LLM_TIMEOUT` | `120.0` s | délai d'un appel LLM |
+| `DAA_LLM_MAX_RETRIES` | `2` | réessais du SDK sur le transitoire (429, 5xx, coupure) |
 | `DAA_CATALOG_PATH` | `sources/catalogue.yaml` | catalogue des sources |
 | `DAA_RETRIEVAL_MAX_ROWS` | `200` | lignes max renvoyées par requête |
 | `DAA_RETRIEVAL_REQUEST_LIMIT` | `10` | allers-retours LLM max (anti-boucle) |
 | `DAA_ANALYSIS_MAX_ATTEMPTS` | `3` | essais de self-debug du code |
 | `DAA_ANALYSIS_TABLE_MAX_ROWS` | `10000` | lignes matérialisées par table pour l'analyse |
 | `DAA_MODELS_REGISTRY_PATH` | `models/registry.yaml` | registre des modèles ML |
+| `DAA_WORKSPACE_DIR` | `var/workspaces` | racine de la mémoire de conversation (par utilisateur) |
+| `DAA_CONTEXT_ARTIFACT_WINDOW` | `8` | tableaux intermédiaires réinjectés (0 = pas de fenêtre) |
+| `DAA_CONTEXT_TOKEN_BUDGET` | `8000` | budget du prompt du planificateur, décompté avant l'appel (0 = pas de budget) |
+| `DAA_CONTEXT_MODEL_WINDOW` | `32768` | fenêtre réellement servie par le serveur — sert à **constater** un débordement (0 = inconnue) |
+| `DAA_CONTEXT_OVERFLOW_RATIO` | `0.4` | filet de détection quand la fenêtre est inconnue ou mal déclarée |
 | `DAA_SANDBOX_DOCKER_CMD` | `["docker"]` | commande docker (ex. `["wsl","docker"]`) |
 | `DAA_SANDBOX_IMAGE` | `data-analyst-agent-sandbox:0.1` | image de la sandbox |
 | `DAA_SANDBOX_MEM_LIMIT` / `_CPUS` / `_PIDS_LIMIT` | `1g` / `1.0` / `256` | quotas conteneur |
@@ -309,10 +335,27 @@ tests/
 
 ## 8. Limites connues et pistes V2
 
-- **Mémoire conversationnelle limitée au slot-filling** : le multi-tours couvre
-  la complétion de features d'une prédiction (fusion, correction, digression) ;
-  il ne couvre pas encore les références anaphoriques générales (« et pour les
-  hommes ? » après une requête SQL).
+- **Mémoire conversationnelle limitée à UN tour**, et non « au slot-filling »
+  comme l'annonçait cette section : `ConversationContext` est reconstruit à
+  chaque `record_turn`, il n'accumule pas. Ce qui remonte au modèle, c'est le
+  tour précédent (question, capacité, source, code de figure, features de la
+  dernière prédiction réussie) — deux tours en arrière est déjà oublié. Le
+  transcript, lui, n'est jamais renvoyé au modèle. Les références anaphoriques
+  générales (« et pour les hommes ? » après une requête SQL) ne sont donc pas
+  couvertes au-delà du tour immédiatement précédent.
+- **Ce qui entre dans le contexte est plafonné, et le plafond s'annonce** : les
+  tableaux intermédiaires sont réinjectés sur trois axes (prompt du
+  planificateur, montages de la sandbox, catalogue effectif) et le même
+  plafond s'applique aux trois — fenêtre glissante
+  (`DAA_CONTEXT_ARTIFACT_WINDOW`) puis budget de tokens décompté avant l'appel
+  (`DAA_CONTEXT_TOKEN_BUDGET`), les plus anciens évincés en premier. Les
+  tableaux évincés restent sur le disque. La coupe est portée par la trace
+  (`prompt_tokens`, `server_prompt_tokens`, `truncated`, `truncation`) et
+  ajoutée à la réponse rendue. **Limite restante** : seul le prompt du
+  planificateur est budgété ; l'agent SQL, l'agent d'analyse et la synthèse ne
+  le sont pas — ils sont bornés par leurs propres limites d'allers-retours, et
+  un dépassement chez eux n'est vu qu'au retour (`prompt_eval_count`) ou au
+  refus du serveur.
 - **Conversations stockées sur le disque local** (un dossier par fil) : simple et
   sans dépendance, mais lié à une instance — à externaliser si multi-instances.
   Ni purge ni quota : les fils s'accumulent jusqu'à suppression explicite, et la

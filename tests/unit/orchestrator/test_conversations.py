@@ -1,16 +1,26 @@
 """Tests du magasin de conversations (transcription, reprise, duplication)."""
 
+import stat
+
 import pytest
 
-from data_analyst_agent.orchestrator.conversations import ConversationStore, _title_from
+from data_analyst_agent.orchestrator.conversations import (
+    Conversation,
+    ConversationOwnershipError,
+    ConversationStore,
+    _title_from,
+)
 from data_analyst_agent.orchestrator.graph import PendingInference
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
 
+# Un magasin est ouvert POUR quelqu'un : il n'existe pas de magasin anonyme.
+PROPRIETAIRE = "alice"
+
 
 @pytest.fixture
 def store(tmp_path) -> ConversationStore:
-    return ConversationStore(tmp_path)
+    return ConversationStore(tmp_path, PROPRIETAIRE)
 
 
 def test_conversation_neuve_puis_relue(store: ConversationStore):
@@ -83,7 +93,7 @@ def test_liste_du_plus_recent_au_plus_ancien(store: ConversationStore):
 
 
 def test_liste_vide_sans_dossier(tmp_path):
-    assert ConversationStore(tmp_path / "jamais-cree").list() == []
+    assert ConversationStore(tmp_path / "jamais-cree", PROPRIETAIRE).list() == []
 
 
 def test_liste_ignore_un_dossier_sans_transcription(store: ConversationStore, tmp_path):
@@ -97,7 +107,7 @@ def test_liste_ignore_un_dossier_sans_transcription(store: ConversationStore, tm
 def test_suppression_efface_le_fil_et_sa_memoire(store: ConversationStore, tmp_path):
     conversation = store.create()
     store.record_turn(conversation.id, question="Liste les femmes", answer="ok")
-    workspace = ConversationWorkspace(tmp_path, conversation.id)
+    workspace = ConversationWorkspace(store.base_dir, conversation.id)
     workspace.save_table(["nom"], [["Alice"]], question="Liste les femmes")
 
     assert store.delete(conversation.id) is True
@@ -128,13 +138,13 @@ def test_duplication_emporte_la_memoire_reutilisable(store: ConversationStore, t
     """La copie doit pouvoir enchaîner sur « prédis ces lignes » comme l'originale."""
     original = store.create()
     store.record_turn(original.id, question="Liste les femmes", answer="ok")
-    ConversationWorkspace(tmp_path, original.id).save_table(
+    ConversationWorkspace(store.base_dir, original.id).save_table(
         ["nom"], [["Alice"]], question="Liste les femmes"
     )
 
     copie = store.duplicate(original.id)
 
-    memoire_copie = ConversationWorkspace(tmp_path, copie.id)
+    memoire_copie = ConversationWorkspace(store.base_dir, copie.id)
     assert [a.name for a in memoire_copie.artifacts] == ["resultat_1"]
     assert memoire_copie.path_of(memoire_copie.artifacts[0]).exists()
 
@@ -171,3 +181,75 @@ def test_id_arbitraire_retrouve_malgre_le_nom_de_dossier(store: ConversationStor
 
     assert [c.id for c in store.list()] == ["ma conv #1"]
     assert store.load("ma conv #1") is not None
+
+
+def test_dossier_de_conversation_cree_en_0700(tmp_path):
+    """Le transcript porte les questions de l'utilisateur : lui seul et le
+    service ont à le lire (mesuré 0o775 avant correctif)."""
+    store = ConversationStore(tmp_path / "var" / "workspaces", PROPRIETAIRE)
+
+    conversation = store.create()
+
+    dossier = store.dir_of(conversation.id)
+    assert oct(stat.S_IMODE(dossier.stat().st_mode)) == "0o700"
+    assert oct(stat.S_IMODE(store.base_dir.stat().st_mode)) == "0o700"
+
+
+# -- filet : un fil déposé sous la mauvaise racine ---------------------------
+#
+# La racine est par utilisateur, et rien dans le code n'y écrit le fil d'un
+# autre : ces cas ne peuvent naître que du disque — sauvegarde restaurée au
+# mauvais endroit, dossier recopié à la main, migration interrompue. Le champ
+# `owner` est ce qui les rattrape, et c'est sa seule raison d'être en plus du
+# chemin.
+
+
+def _deposer_un_fil_etranger(store: ConversationStore, conversation_id: str) -> None:
+    """Écrit à la main, sous la racine du magasin, la transcription d'un autre."""
+    dossier = store.dir_of(conversation_id)
+    dossier.mkdir(parents=True, exist_ok=True)
+    (dossier / ConversationStore.TRANSCRIPT).write_text(
+        Conversation(id=conversation_id, owner="quelqun-dautre").model_dump_json(),
+        encoding="utf-8",
+    )
+
+
+def test_un_fil_depose_sous_la_mauvaise_racine_nest_pas_rendu(store: ConversationStore):
+    _deposer_un_fil_etranger(store, "intrus")
+
+    assert store.load("intrus") is None
+    assert store.list() == []
+
+
+def test_ecrire_par_dessus_le_fil_dun_autre_est_refuse(store: ConversationStore):
+    """On refuse plutôt qu'on écrase : la perte serait silencieuse."""
+    _deposer_un_fil_etranger(store, "intrus")
+
+    with pytest.raises(ConversationOwnershipError, match="quelqun-dautre"):
+        store.create("intrus")
+    with pytest.raises(ConversationOwnershipError):
+        store.record_turn("intrus", question="coucou", answer="ok")
+
+    lu = Conversation.model_validate_json(
+        (store.dir_of("intrus") / ConversationStore.TRANSCRIPT).read_text(encoding="utf-8")
+    )
+    assert lu.owner == "quelqun-dautre"
+    assert lu.messages == []
+
+
+def test_supprimer_le_fil_dun_autre_depose_la_est_refuse(store: ConversationStore):
+    _deposer_un_fil_etranger(store, "intrus")
+
+    assert store.delete("intrus") is False
+    assert (store.dir_of("intrus") / ConversationStore.TRANSCRIPT).exists()
+
+
+def test_un_fil_corrompu_reste_supprimable(store: ConversationStore):
+    """Illisible n'est pas « à quelqu'un d'autre » : sinon il deviendrait indéboulonnable."""
+    conversation = store.create()
+    (store.dir_of(conversation.id) / ConversationStore.TRANSCRIPT).write_text(
+        "{ pas du json", encoding="utf-8"
+    )
+
+    assert store.delete(conversation.id) is True
+    assert not store.dir_of(conversation.id).exists()
