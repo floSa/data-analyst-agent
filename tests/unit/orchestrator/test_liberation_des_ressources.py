@@ -16,7 +16,12 @@ import joblib
 import pytest
 
 from data_analyst_agent.agents.inference.registry import Registry
-from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource, PostgresSource
+from data_analyst_agent.agents.retrieval.catalog import (
+    Catalog,
+    DuckDBSource,
+    FileSource,
+    PostgresSource,
+)
 from data_analyst_agent.agents.retrieval.duckdb_source import DuckDBAdapter
 from data_analyst_agent.agents.retrieval.sql import QueryError
 from data_analyst_agent.config import Settings
@@ -195,6 +200,40 @@ def test_le_noeud_danalyse_referme_la_base_avant_de_lancer_la_sandbox(
     )
 
     reponse = orchestrateur.ask("Trace la répartition")
+
+    assert reponse.error is None
+    assert [e.ferme for e in espions] == [True]
+
+
+def test_le_noeud_danalyse_referme_aussi_la_base_duckdb_montee(
+    mini_csv: Path, registry: Registry, monkeypatch, tmp_path: Path
+):
+    """Une source `duckdb` n'est pas matérialisée : l'adaptateur ne sert qu'au schéma.
+
+    Ce chemin-là n'existe que sur cette branche, et il était le seul à ouvrir
+    une source sans la refermer — la fusion apportait le `closing` des trois
+    autres nœuds mais pas de celui-ci, qu'elle ne connaissait pas. Une base
+    Maxizoo retient sa mémoire tant que la connexion vit, et l'analyse qui suit
+    dure bien plus longtemps que la lecture du schéma.
+    """
+    espions = espionner_les_sources(monkeypatch, mini_csv)
+    base = tmp_path / "maxizoo.duckdb"
+    base.touch()  # `open_source` est espionnée : le fichier n'est jamais ouvert
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="maxizoo"))])
+        .script(ANALYSIS, [text("```python\nprint('ok')\n```")])
+        .script(SYNTHESIS, [text("Voici l'analyse.")])
+    )
+    orchestrateur = Orchestrator(
+        model=llm.model(),
+        catalog=Catalog(sources=[DuckDBSource(name="maxizoo", path=base)]),
+        registry=registry,
+        settings=make_settings(),
+        sandbox=ScriptedSandbox([SandboxResult(status="ok", stdout="ok\n")]),
+    )
+
+    reponse = orchestrateur.ask("Trace l'évolution du chiffre d'affaires")
 
     assert reponse.error is None
     assert [e.ferme for e in espions] == [True]

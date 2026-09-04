@@ -746,7 +746,12 @@ class Orchestrator:
                 data_context = ""
             elif isinstance(source, DuckDBSource):
                 data_files = {source.path: source.path.name}
-                data_context = self._duckdb_context(source, open_source(source).schema())
+                # `closing` ici aussi : l'adaptateur ne sert qu'à lire le schéma,
+                # mais une base DuckDB laissée ouverte retient sa mémoire pour
+                # toute la durée de l'analyse — bien plus longue que la lecture.
+                # C'est la sandbox qui rouvre le fichier, pas cette connexion.
+                with closing(open_source(source)) as adapter:
+                    data_context = self._duckdb_context(source, adapter.schema())
             else:
                 # source SQL : matérialise chaque table en CSV pour la sandbox
                 with closing(open_source(source)) as adapter:
