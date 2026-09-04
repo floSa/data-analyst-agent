@@ -16,6 +16,11 @@ magasin qui verrait plus loin. Le fil d'un autre compte répond donc **404 et no
 Cela vaut aussi pour le ``conversation_id`` que ``POST /chat`` accepte du client :
 il ne désigne jamais que le dossier de l'appelant.
 
+**La surface est réduite au strict nécessaire** : la documentation interactive
+(``/docs``, ``/redoc``, ``/openapi.json``) est éteinte par défaut, le corps des
+requêtes et la longueur d'une question sont bornés, et ``POST /chat`` — qui
+déclenche jusqu'à onze appels LLM et un conteneur — est plafonné en débit.
+
 **Toutes les routes exigent une session**, sauf ``/health`` — une sonde de
 disponibilité n'a pas de session, et lui refuser l'accès ferait passer le
 service pour tombé. Une requête sans session reçoit 401 sur l'API et la page de
@@ -38,6 +43,7 @@ import data_analyst_agent
 from data_analyst_agent.api import pages
 from data_analyst_agent.auth.accounts import AccountStore, normalize_login
 from data_analyst_agent.auth.current_user import CurrentUser, current_user
+from data_analyst_agent.auth.rate_limit import RateLimiter
 from data_analyst_agent.auth.sessions import TOKEN_BYTES, Session, SessionStore
 from data_analyst_agent.auth.throttle import LoginThrottle
 from data_analyst_agent.config import Settings, get_settings
@@ -65,6 +71,9 @@ EN_TETE_CSRF = "X-CSRF-Token"
 ECHEC_CONNEXION = "Identifiants invalides."
 ECHEC_VERROUILLE = "Trop de tentatives. Réessayez dans quelques minutes."
 ECHEC_FORMULAIRE = "Formulaire expiré. Recommencez."
+CORPS_TROP_GROS = "corps de requête trop volumineux"
+MESSAGE_TROP_LONG = "message trop long"
+TROP_DE_REQUETES = "trop de questions en peu de temps : réessayez dans un instant"
 
 
 # L'utilisateur de la session, tel que posé par le middleware. Toute route qui
@@ -86,15 +95,23 @@ def create_app(
     orchestrator_factory: Callable[[], Orchestrator] | None = None,
     settings: Settings | None = None,
 ) -> FastAPI:
+    reglages: Settings = settings or get_settings()
+    # Éteindre la documentation interactive, c'est éteindre TROIS routes : sans
+    # `openapi_url=None`, /openapi.json continue de publier le schéma complet
+    # alors même que /docs a disparu. (`/docs/oauth2-redirect`, lui, ne vit que
+    # tant que `docs_url` existe.)
+    documentee = reglages.api_docs_enabled
     app = FastAPI(
         title="data-analyst-agent",
         version=data_analyst_agent.__version__,
         description="Agent conversationnel sur données, on-premise.",
+        docs_url="/docs" if documentee else None,
+        redoc_url="/redoc" if documentee else None,
+        openapi_url="/openapi.json" if documentee else None,
     )
     app.state.orchestrator = None
     app.state.orchestrator_factory = orchestrator_factory or Orchestrator
-    app.state.settings = settings or get_settings()
-    reglages: Settings = app.state.settings
+    app.state.settings = reglages
     app.state.accounts = AccountStore(reglages.auth_accounts_path)
     app.state.sessions = SessionStore(
         reglages.auth_state_dir,
@@ -105,6 +122,13 @@ def create_app(
         reglages.auth_state_dir,
         reglages.login_max_failures,
         reglages.login_lockout_seconds,
+    )
+    # Quota de questions, par COMPTE : le LLM mutualisé sert une requête à la
+    # fois, une rafale d'un seul utilisateur met tous les autres en file.
+    app.state.chat_limiter = RateLimiter(
+        reglages.auth_state_dir,
+        reglages.chat_rate_limit_requests,
+        reglages.chat_rate_limit_window,
     )
 
     def get_orchestrator() -> Orchestrator:
@@ -186,6 +210,25 @@ def create_app(
         # Ce que lira `Depends(current_user)` : la garde est ici, en un seul
         # endroit, et une route ajoutée demain est protégée sans rien déclarer.
         request.state.user = CurrentUser(login=session.login)
+        return await call_next(request)
+
+    @app.middleware("http")
+    async def borner_le_corps(request: Request, call_next):
+        """Refuse un corps annoncé trop gros, AVANT de le lire et avant la session.
+
+        Enregistré après la garde de session, donc exécuté avant elle : Starlette
+        empile le dernier middleware enregistré à l'extérieur. C'est voulu — on
+        ne veut ni lire ni parser un corps démesuré, y compris sur `/login`, qui
+        est ouvert.
+
+        Le contrôle porte sur `Content-Length`. Une requête en `chunked` n'en
+        annonce pas : elle passe ici, et se fait border plus loin par les limites
+        de champ (`chat_message_max_chars`). Un serveur en frontal reste la bonne
+        place pour un plafond dur.
+        """
+        annonce = request.headers.get("content-length", "")
+        if annonce.isdigit() and int(annonce) > reglages.api_max_body_bytes:
+            return JSONResponse({"detail": CORPS_TROP_GROS}, status_code=413)
         return await call_next(request)
 
     # -- connexion / déconnexion ----------------------------------------------
@@ -278,6 +321,23 @@ def create_app(
         avant la moindre écriture parce qu'elle est vérifiée par le chemin
         lui-même.
         """
+        if len(request.message) > reglages.chat_message_max_chars:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"{MESSAGE_TROP_LONG} : {len(request.message)} caractères pour un "
+                    f"maximum de {reglages.chat_message_max_chars}"
+                ),
+            )
+        attente = app.state.chat_limiter.hit(utilisateur.login)
+        if attente is not None:
+            # `Retry-After` en secondes : le client sait quand revenir, au lieu
+            # de réessayer en boucle et d'aggraver ce qu'on cherche à contenir.
+            raise HTTPException(
+                status_code=429,
+                detail=TROP_DE_REQUETES,
+                headers={"Retry-After": str(max(1, int(attente) + 1))},
+            )
         magasin = store(utilisateur)
         existante = (
             magasin.load(request.conversation_id) if request.conversation_id is not None else None
