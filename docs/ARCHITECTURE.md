@@ -39,7 +39,7 @@ flowchart TB
     end
 
     subgraph infra["Infrastructure locale"]
-        OLLAMA["Ollama<br/>qwen3-coder:30b"]
+        OLLAMA["Ollama<br/>gemma4:e4b"]
         SBX["Sandbox Docker<br/>kernel Jupyter · réseau coupé"]
         PG[("Postgres<br/>multi-tables")]
         FILES[("Fichiers<br/>CSV / Excel via DuckDB")]
@@ -313,7 +313,7 @@ tests/
 | `DAA_LLM_BASE_URL` | `http://localhost:11434/v1` | endpoint OpenAI-compatible du serveur LLM (Ollama ou vLLM) |
 | `DAA_OLLAMA_BASE_URL` | — | **déprécié** : ancien nom du précédent, encore honoré (avertissement au démarrage) |
 | `DAA_LLM_API_KEY` | *(vide)* | clé envoyée en `Authorization` ; exigée par un vLLM lancé avec `--api-key` |
-| `DAA_LLM_MODEL` | `qwen3-coder:30b` | le modèle mutualisé |
+| `DAA_LLM_MODEL` | `gemma4:e4b` | le modèle mutualisé, tel que le sert le central |
 | `DAA_LLM_TEMPERATURE` | `0.0` | déterminisme des générations |
 | `DAA_LLM_TIMEOUT` | `120.0` s | délai d'un appel LLM |
 | `DAA_LLM_MAX_RETRIES` | `2` | réessais du SDK sur le transitoire (429, 5xx, coupure) |

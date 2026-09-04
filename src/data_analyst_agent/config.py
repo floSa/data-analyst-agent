@@ -49,7 +49,12 @@ class Settings(BaseSettings):
     # d'authentification (le SDK OpenAI pose sa clé factice, qu'il exige non
     # nulle même quand le serveur s'en moque).
     llm_api_key: str = ""
-    llm_model: str = "qwen3-coder:30b"
+    # Le modèle réellement servi par le central. CADRAGE §5 visait
+    # qwen3-coder:30b, qui n'a jamais été chargé : ce repli échouait donc en
+    # `404 model not found`, et le masquage des erreurs ne laissait qu'un
+    # « je n'ai pas réussi à interpréter la demande » dans la réponse. Le repli
+    # doit désigner ce qui existe ; le `.env` reste maître.
+    llm_model: str = "gemma4:e4b"
     llm_temperature: float = 0.0
     # Délai d'un appel LLM et nombre de réessais. Les défauts du SDK OpenAI
     # (600 s, 2 réessais) n'étaient pas une décision : un appel bloqué retenait
