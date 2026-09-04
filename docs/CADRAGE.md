@@ -141,31 +141,56 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 
 ## 10. Arborescence de repo
 
+Telle qu'elle est, et non telle qu'elle était visée à l'ouverture du projet : cette
+section décrit le dépôt tel qu'il est construit, authentification, prompts
+externalisés, mémoire de conversation et scripts d'exploitation compris.
+
 ```
 data-analyst-agent/
-├── pyproject.toml            # uv + deps
+├── pyproject.toml                # uv + deps + config ruff/pytest/coverage
 ├── uv.lock
-├── README.md
-├── CLAUDE.md                 # consignes IA (fichier dédié)
-├── docs/CADRAGE.md           # ce document
+├── README.md                     # démarrage, routes, mémoire, DEUX BRANCHES
+├── .env.example                  # modèle de configuration (dont les DAA_PG_*)
+├── users.example.yaml            # forme du magasin de comptes (le vrai n'est pas versionné)
+├── docs/
+│   ├── CADRAGE.md                # ce document (le pourquoi)
+│   ├── ARCHITECTURE.md           # le comment, service par service + réglages (§7)
+│   ├── AUDIT-2026-09.md          # état des lieux et backlog priorisé
+│   ├── VLLM.md                   # banc d'essai du tool calling sur vLLM
+│   └── spike-vanna.md            # comparaison text-to-SQL (verdict : socle maison)
 ├── src/data_analyst_agent/
-│   ├── config.py             # settings (pydantic-settings)
-│   ├── llm.py                # client Ollama / Qwen3-Coder mutualisé
-│   ├── orchestrator/         # graphe LangGraph, planner, routage, state
+│   ├── config.py                 # Settings (pydantic-settings), préfixe DAA_
+│   ├── llm.py                    # LLM mutualisé, endpoint OpenAI-compatible
+│   ├── prompts/                  # les 4 prompts système, hors du code (.txt)
+│   ├── orchestrator/
+│   │   ├── plan.py               # modèle Plan + agent à sortie structurée
+│   │   ├── graph.py              # graphe LangGraph, nœuds gardés, règles du plan
+│   │   ├── context_budget.py     # fenêtre, budget de tokens, débordement constaté
+│   │   ├── workspace.py          # mémoire d'un fil (tableaux intermédiaires, contexte)
+│   │   └── conversations.py      # persistance des fils, par utilisateur
 │   ├── agents/
-│   │   ├── retrieval/        # catalog.py, sql.py, duckdb_excel.py
-│   │   ├── analysis/         # agent.py, sandbox_client.py
-│   │   └── inference/        # schemas/, registry.py, predict.py
-│   ├── sandbox/              # Dockerfile, client.py
-│   └── api/                  # FastAPI + chat
-├── models/                   # .pkl (ou MLflow)
-├── sources/                  # catalogue.yaml, excels de test
-├── notebooks/                # entraînement des modèles jouets
+│   │   ├── retrieval/            # catalog.py, sql.py, duckdb_excel.py, agent.py
+│   │   ├── analysis/             # agent.py (génération de code + self-debug)
+│   │   └── inference/            # schemas/, validation.py, registry.py, predict.py
+│   ├── auth/                     # accounts.py, sessions.py, throttle.py, rate_limit.py
+│   ├── sandbox/                  # client.py + image/ (Dockerfile, bridge.py, lockfile)
+│   └── api/                      # app.py, pages.py, templates/ (chat + connexion)
+├── models/                       # artefacts joblib + registry.yaml
+├── sources/                      # catalogue.yaml + datasets vendorisés
+├── notebooks/                     # entraînement des modèles jouets (jupytext .md + .ipynb)
+├── scripts/                      # comptes, migration du workspace, seed, mesures, bancs
+├── var/                          # NON versionné : comptes, sessions, workspaces
 └── tests/
-    ├── unit/                 # par brique, isolé (mocks LLM/DB)
-    ├── integration/          # sandbox réel, Postgres via testcontainers
-    └── e2e/                  # les 3 scénarios golden (§12)
+    ├── unit/                     # par brique, isolé (LLM scripté, sandbox doublée)
+    ├── integration/              # sandbox réelle, Postgres via testcontainers
+    ├── e2e/                      # les scénarios golden (§12)
+    ├── fakes/                    # faux bridge de sandbox
+    ├── helpers/                  # ScriptedLLM, doublures, seed + oracle Titanic
+    └── fixtures/                 # échantillons de données
 ```
+
+`var/` n'existe pas dans le dépôt : il est créé au premier usage, en `0o700`, et
+porte tout ce qui est propre à un déploiement — comptes, sessions, conversations.
 
 ## 11. Ordre de construction (roadmap) — chaque étape livrée AVEC ses tests
 
@@ -180,7 +205,10 @@ data-analyst-agent/
 8. **Observabilité** — traces, rejouabilité.
 9. **Spike Vanna** — en parallèle, comparé au socle maison.
 
-Commiter à la fin de chaque étape vérifiée **et testée** (cf. CLAUDE.md).
+Commiter à la fin de chaque étape vérifiée **et testée**. Les consignes de
+contribution vivent dans un fichier local **non versionné** (voir `.gitignore`) :
+elles ne sont donc pas dans un dépôt fraîchement cloné, et les conventions qui
+comptent pour un contributeur extérieur sont dans le [README](../README.md#qualité).
 
 ## 12. Stratégie de tests (exigence forte : couverture maximale avant présentation)
 

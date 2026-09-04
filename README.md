@@ -6,7 +6,7 @@ Agent conversationnel sur données, **on-premise**. À partir d'une source décl
 2. **Analyser** — calculer KPI, statistiques (χ², ANOVA…) et visualisations en exécutant du code dans un bac à sable durci (réseau coupé) ;
 3. **Prédire** — appeler un modèle de ML sur des features validées (Pydantic), en redemandant ce qui manque avant tout predict.
 
-Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM mutualisé (Qwen3-Coder via Ollama), orchestration explicite et traçable, licences 100 % permissives (MIT/Apache/BSD).
+Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM mutualisé, joint par un **endpoint OpenAI-compatible** — Ollama aujourd'hui, vLLM sans changer une ligne de code ; le service en place sert `gemma4:e4b`. Orchestration explicite et traçable, licences 100 % permissives (MIT/Apache/BSD).
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
@@ -20,7 +20,7 @@ Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM 
 flowchart LR
     U(["Utilisateur"]) --> API["API FastAPI<br/>+ page de chat"]
     API --> O["Orchestrateur LangGraph<br/>plan → route → capacité → synthèse"]
-    O -.-> L["LLM mutualisé<br/>Qwen3-Coder / Ollama"]
+    O -.-> L["LLM mutualisé<br/>endpoint OpenAI-compatible"]
     O --> R["① Récupération<br/>text-to-SQL à tools"]
     O --> A["② Analyse<br/>code stats/viz"]
     O --> I["③ Inférence gardée<br/>validation → predict"]
@@ -31,12 +31,46 @@ flowchart LR
 
 Le fonctionnement détaillé (schéma fonctionnel du graphe, séquences, durcissement de la sandbox, explication service par service) est dans **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
+## Deux branches durables, aux exigences opposées
+
+**À lire avant de « corriger » quoi que ce soit sur l'une ou l'autre.** Ce dépôt
+porte deux branches qui ne convergeront pas, et qui n'ont pas le même cahier des
+charges :
+
+| Branche | Ce qu'elle est | Authentification |
+|---|---|---|
+| **`main`** | le **socle produit** : la base sur laquelle plusieurs cas d'usage clients seront bâtis | **exigée** — hormis `/health`, aucune route n'est atteignable sans session, et chaque compte est cloisonné dans son dossier |
+| **`Maxizoo`** | une **démonstration client**, qu'on ouvre à quelqu'un en lui envoyant un lien | **absente, et c'est un choix** — pas un retard, pas un oubli |
+
+Une démonstration derrière un écran de connexion n'est plus une démonstration : il
+faudrait créer un compte pour chaque personne à qui on la montre, et le premier
+geste demandé à un prospect serait de taper un mot de passe. L'absence
+d'authentification sur `Maxizoo` est donc **une décision de périmètre**, tenable
+parce que la branche ne sert que des données de démonstration et ne vit que le temps
+d'une présentation.
+
+Concrètement :
+
+- **ne pas porter l'authentification de `main` vers `Maxizoo`.** Si un durcissement
+  de `main` touche `auth/`, il ne remonte pas — c'est le seul écart attendu entre
+  les deux branches ;
+- **ne pas déployer `Maxizoo` sur une adresse publique durable** ni y brancher de
+  données réelles : c'est là, et seulement là, que l'absence de compte devient un
+  vrai problème ;
+- tout le reste — correctifs de sécurité SQL, plafonds de contexte, libération des
+  ressources, découpages — vaut pour les deux et doit être reporté.
+
+Le récapitulatif des garde-fous de
+[ARCHITECTURE §5](docs/ARCHITECTURE.md#5-sécurité--récapitulatif-des-garde-fous)
+décrit `main`. Sur `Maxizoo`, en retirer le point 1.
+
 ## Documentation
 
 | Document | Contenu |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | schémas architectural et fonctionnel, description de chaque service, sécurité, configuration, stratégie de tests |
-| [docs/CADRAGE.md](docs/CADRAGE.md) | cahier des charges : contraintes, décisions, stack, roadmap, exigences de tests |
+| [docs/CADRAGE.md](docs/CADRAGE.md) | cahier des charges : contraintes, décisions, stack, roadmap, arborescence, exigences de tests |
+| [docs/AUDIT-2026-09.md](docs/AUDIT-2026-09.md) | état des lieux mesuré et backlog priorisé (multi-utilisateurs, mémoire, moteur LLM, sécurité, qualité) |
 | [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
 | [docs/VLLM.md](docs/VLLM.md) | banc d'essai vLLM : le tool calling mesuré, ce qui casse sans les bonnes options, ce qui reste à vérifier |
 
@@ -62,11 +96,28 @@ cookie de session étant `Secure` par défaut, il faut poser
 
 Sous Windows, les tests nécessitant Docker (intégration, e2e) se lancent depuis WSL ; sans Docker ils sont automatiquement sautés. Le test live du LLM (`-m live`) est exclu par défaut.
 
-L'image de la sandbox se construit une fois : `docker build -t data-analyst-agent-sandbox:0.1 src/data_analyst_agent/sandbox/image/` (sinon elle est construite au premier usage).
+**L'image de la sandbox se construit à la main, une fois**, et elle n'est *pas* construite au premier usage :
+
+```bash
+docker build -t data-analyst-agent-sandbox:0.1 src/data_analyst_agent/sandbox/image/
+```
+
+`ensure_image()` sait la construire, mais rien dans le chemin applicatif ne l'appelle — seuls les tests d'intégration et e2e s'en servent. Sans image, une analyse échoue au `docker run` ; elle ne déclenche pas de build.
 
 ## Configuration
 
-Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`) : modèle (`DAA_LLM_MODEL`), serveur LLM (`DAA_LLM_BASE_URL`, `DAA_LLM_API_KEY`, `DAA_LLM_TIMEOUT`, `DAA_LLM_MAX_RETRIES`), quotas sandbox, chemins du catalogue et du registre, durées de session et seuils de verrouillage (`DAA_SESSION_*`, `DAA_LOGIN_*`) — tableau complet dans [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md). Les sources de données se déclarent dans `sources/catalogue.yaml` (livré avec deux sources : `titanic` et `iris`).
+Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`). Une quarantaine de réglages, groupés par domaine dans **[docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-configuration-daa_)** : LLM, sources et capacités, mémoire de conversation et contexte, authentification et sessions, surface HTTP et débit, sandbox. Les plus souvent touchés :
+
+| Réglage | Défaut | Quand y toucher |
+|---|---|---|
+| `DAA_LLM_BASE_URL` | `http://localhost:11434/v1` | changer de serveur LLM (Ollama → vLLM) |
+| `DAA_LLM_MODEL` | `gemma4:e4b` | changer de modèle servi |
+| `DAA_SESSION_COOKIE_SECURE` | `true` | `false` pour un développement local en http |
+| `DAA_WORKSPACE_DIR` | `var/workspaces` | pointer un volume dédié en production |
+| `DAA_API_DOCS_ENABLED` | `false` | `true` pour développer contre l'OpenAPI |
+| `DAA_SANDBOX_MAX_SESSIONS` | `4` | régler sur la RAM réellement disponible |
+
+Les sources de données se déclarent dans `sources/catalogue.yaml` (livré avec deux sources : `titanic` et `iris`).
 
 ### Sources livrées
 
@@ -199,7 +250,7 @@ sont plus transmis au modèle (fenêtre DAA_CONTEXT_ARTIFACT_WINDOW=8). Ils
 restent enregistrés — le fil, lui, reste complet.
 ```
 
-Trois situations sont distinguées, et se cumulent :
+Quatre situations sont distinguées, et se cumulent :
 
 1. **éviction délibérée** — la fenêtre ou le budget ont retiré des tableaux ;
 2. **prompt plus long que la fenêtre du serveur** (`DAA_CONTEXT_MODEL_WINDOW`,
@@ -208,7 +259,12 @@ Trois situations sont distinguées, et se cumulent :
 3. **troncature constatée côté serveur** — `prompt_eval_count` confronté à ce
    qu'on a envoyé. Le compteur de tokens local est approché (3 caractères par
    token) et **surestime** de 1 à 17 % (mesuré contre `gemma4:e4b`) : il coupe
-   donc un peu trop tôt plutôt que trop tard.
+   donc un peu trop tôt plutôt que trop tard ;
+4. **table matérialisée coupée** — analyser une source SQL matérialise chaque table
+   en CSV, plafonnée à `DAA_ANALYSIS_TABLE_MAX_ROWS`. Un CSV coupé reste
+   parfaitement lisible : rien, dans le fichier, ne dit qu'il manque des lignes, et
+   un agrégat calculé dessus est faux tout en se présentant comme juste. L'avis part
+   donc à la fois dans le contexte du code généré et dans la réponse rendue.
 
 Un serveur qui **refuse** au lieu de tronquer (vLLM répond `400 … maximum
 context length`) est reconnu comme tel et dit en clair, au lieu de finir en
@@ -280,14 +336,23 @@ Les tests marqués `live` (LLM local requis) sont exclus par défaut : `uv run p
 ## Structure
 
 ```
-src/data_analyst_agent/   # package (orchestrator, agents, sandbox, api)
+src/data_analyst_agent/   # package
+├── orchestrator/         # graphe, plan et ses règles, budget de contexte, mémoire des fils
+├── agents/               # ① retrieval  ② analysis  ③ inference
+├── auth/                 # comptes argon2id, sessions côté serveur, anti-force brute
+├── prompts/              # les 4 prompts système, hors du code (.txt)
+├── sandbox/              # client durci + image/ (Dockerfile, bridge Jupyter)
+└── api/                  # app.py (HTTP seul) + templates/ (chat, connexion)
 docs/                     # ARCHITECTURE, CADRAGE, AUDIT, VLLM, spike-vanna
 models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
 sources/                  # catalogue des sources + datasets vendorisés
-scripts/                  # comptes, migration du workspace, seed Postgres, batterie live, banc vLLM
+scripts/                  # comptes, migration du workspace, seed Postgres, mesures, bancs
 notebooks/                # entraînement des modèles jouets (jupytext .md + .ipynb)
-tests/                    # unit / integration / e2e golden / helpers
+tests/                    # unit / integration / e2e golden / helpers / fakes / fixtures
+var/                      # NON versionné : comptes, sessions, conversations (0o700)
 ```
+
+L'arborescence détaillée, fichier par fichier, est dans [docs/CADRAGE.md §10](docs/CADRAGE.md).
 
 ---
 
@@ -302,5 +367,5 @@ tests/                    # unit / integration / e2e golden / helpers
 | pandas | Manipulation de données | BSD-3-Clause |
 | pg8000 | Driver PostgreSQL | BSD-3-Clause |
 | joblib | Sérialisation des modèles | BSD-3-Clause |
-| Ollama (Qwen3-Coder) | LLM mutualisé local | MIT (Ollama) / Apache-2.0 (Qwen) `<à confirmer selon le modèle>` |
+| Ollama | serveur du LLM mutualisé, local | MIT (Ollama) ; la licence du **modèle** dépend du modèle servi — `gemma4:e4b` sur le service en place `<à confirmer>` |
 | **Ce projet** | Code applicatif | MIT — Copyright (c) 2026 floSa `<à confirmer : aucun fichier LICENSE présent>` |
