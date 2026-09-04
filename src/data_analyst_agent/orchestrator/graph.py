@@ -698,16 +698,44 @@ class Orchestrator:
         extra = "Objets intermédiaires de la conversation (réutilisables) :\n" + "\n".join(lines)
         return f"{data_context}\n\n{extra}" if data_context else extra
 
+    def _avis_de_troncature(self, tables: list[str]) -> str:
+        """Ce qu'on dit d'une table matérialisée AMPUTÉE ("" si rien n'a été coupé).
+
+        ``analysis_table_max_rows`` est le seul endroit du code qui livre à
+        l'analyse une donnée incomplète, et il le fait sans laisser de trace
+        dans ce qu'il livre : un ``SELECT *`` coupé à 10 000 lignes donne un CSV
+        parfaitement lisible où rien ne dit qu'il manque des lignes. Le code
+        généré y calcule alors une somme, une moyenne ou un comptage en le
+        prenant pour la table entière, et la réponse cite le chiffre sans
+        réserve. C'est le seul chemin de ce nœud qui produit un résultat FAUX au
+        lieu d'une erreur.
+
+        Un seul message pour deux destinataires : le contexte du code généré,
+        pour qu'il sache sur quoi il travaille, et la trace — d'où la réponse
+        rendue le reprend (cf. ``_with_context_notices``), parce que la trace
+        n'est pas dépliée par défaut.
+        """
+        if not tables:
+            return ""
+        return (
+            f"Données tronquées : {', '.join(tables)} coupée(s) à "
+            f"{self.settings.analysis_table_max_rows} lignes (réglage "
+            "DAA_ANALYSIS_TABLE_MAX_ROWS) — tout agrégat qui porte sur elles "
+            "(somme, moyenne, comptage) décrit cet échantillon, pas la table entière."
+        )
+
     def _analysis_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
         source = self._resolve_source(plan, self._effective_catalog(state))
+        avis = ""
         with tempfile.TemporaryDirectory(prefix="daa-analysis-") as tmp:
             if isinstance(source, FileSource):
                 data_files = {source.path: source.path.name}
                 data_context = ""
             else:
                 # source SQL : matérialise chaque table en CSV pour la sandbox
+                tronquees: list[str] = []
                 with closing(open_source(source)) as adapter:
                     schema = adapter.schema()
                     data_files = {}
@@ -716,6 +744,8 @@ class Orchestrator:
                             f"SELECT * FROM {table.name}",
                             max_rows=self.settings.analysis_table_max_rows,
                         )
+                        if result.truncated:
+                            tronquees.append(table.name)
                         csv_path = Path(tmp) / f"{table.name}.csv"
                         pd.DataFrame(result.rows, columns=result.columns).to_csv(
                             csv_path, index=False
@@ -725,6 +755,9 @@ class Orchestrator:
                 # les CSV matérialisés, il n'a plus rien à demander à la source, et
                 # une analyse dure bien plus longtemps qu'une extraction.
                 data_context = schema.to_prompt()
+                avis = self._avis_de_troncature(tronquees)
+                if avis:
+                    data_context = f"{data_context}\n\n{avis}"
             # objets intermédiaires de la conversation : montés aussi pour que le
             # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
             data_context = self._mount_workspace(state, data_files, data_context)
@@ -759,7 +792,7 @@ class Orchestrator:
         return {
             "analysis": outcome,
             "artifacts": images,
-            "trace": [self._step("analysis", detail, start)],
+            "trace": [self._step("analysis", detail, start, truncated=bool(avis), truncation=avis)],
         }
 
     def _inference_node(self, state: OrchestratorState) -> dict:
