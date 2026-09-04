@@ -25,6 +25,7 @@ from data_analyst_agent.agents.retrieval.sql import (
     TableInfo,
     assert_read_only,
     build_result,
+    low_cardinality_values,
 )
 
 
@@ -90,27 +91,21 @@ class DuckDBAdapter:
             return adapter
         raise ValueError(f"format non géré : {path.suffix} (attendu .csv, .xlsx, .xlsm)")
 
-    # Cf. PostgresAdapter : au-delà, la colonne est du texte libre.
-    MAX_DISTINCT_VALUES = 15
-
     def _distinct_values(self, table: str, column: str, type_sql: str) -> list[str] | None:
-        """Valeurs d'une colonne texte à faible cardinalité (sinon ``None``).
-
-        Montre au modèle les littéraux réellement présents ('setosa'…) plutôt que
-        de le laisser les deviner.
-        """
+        """Valeurs d'une colonne texte à faible cardinalité (cf. ``low_cardinality_values``)."""
         if "VARCHAR" not in type_sql.upper():
             return None
-        try:
-            lignes = self.connection.execute(
-                f'SELECT DISTINCT "{column}" FROM {table} WHERE "{column}" IS NOT NULL LIMIT ?',
-                [self.MAX_DISTINCT_VALUES + 1],
-            ).fetchall()
-        except duckdb.Error:
-            return None  # introspection best-effort : jamais bloquante
-        if len(lignes) > self.MAX_DISTINCT_VALUES:
-            return None
-        return sorted(str(ligne[0]) for ligne in lignes)
+
+        def fetch(limite: int) -> list | None:
+            try:
+                return self.connection.execute(
+                    f'SELECT DISTINCT "{column}" FROM {table} WHERE "{column}" IS NOT NULL LIMIT ?',
+                    [limite],
+                ).fetchall()
+            except duckdb.Error:
+                return None  # introspection best-effort : jamais bloquante
+
+        return low_cardinality_values(fetch)
 
     def schema(self) -> SchemaInfo:
         tables = []

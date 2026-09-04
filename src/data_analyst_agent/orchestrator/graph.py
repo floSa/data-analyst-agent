@@ -190,9 +190,22 @@ class ChatAnswer(BaseModel):
     conversation_id: str | None = None  # renseigné par l'API
 
 
-def _table_artifact(result: QueryResult) -> MimeOutput:
-    payload = {"columns": result.columns, "rows": result.rows, "truncated": result.truncated}
+def _json_table(columns: list[str], rows: list[list], truncated: bool) -> MimeOutput:
+    """L'artefact « tableau » que la page sait afficher : colonnes, lignes, troncature.
+
+    Un seul point de fabrication. Le contrat est lu par le front, qui n'attend
+    que ces trois clés : deux ``json.dumps`` séparés, c'étaient deux occasions
+    de renommer une clé d'un côté seulement, ou d'oublier ``ensure_ascii=False``
+    — auquel cas les accents partent en ``\u00e9`` dans la moitié des tableaux
+    (audit §5.2).
+    """
+    payload = {"columns": columns, "rows": rows, "truncated": truncated}
     return MimeOutput(mime="application/json", data=json.dumps(payload, ensure_ascii=False))
+
+
+def _table_artifact(result: QueryResult) -> MimeOutput:
+    """Le tableau d'une requête, tel quel."""
+    return _json_table(result.columns, result.rows, result.truncated)
 
 
 class Orchestrator:
@@ -1045,8 +1058,7 @@ class Orchestrator:
                 label = f"écartée ({fields})"
                 confidence = None
             rows.append([*source_row, label, confidence])
-        payload = {"columns": columns, "rows": rows, "truncated": result.truncated}
-        return MimeOutput(mime="application/json", data=json.dumps(payload, ensure_ascii=False))
+        return _json_table(columns, rows, result.truncated)
 
     def _synthesize_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()

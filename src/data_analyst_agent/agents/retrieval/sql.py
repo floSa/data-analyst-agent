@@ -11,6 +11,7 @@ import datetime as dt
 import decimal
 import math
 import re
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -134,6 +135,42 @@ def build_result(columns: list[str], raw_rows: list, max_rows: int) -> QueryResu
     truncated = len(raw_rows) > max_rows
     rows = [[normalize_value(v) for v in row] for row in raw_rows[:max_rows]]
     return QueryResult(columns=columns, rows=rows, truncated=truncated)
+
+
+# --- valeurs d'une colonne à faible cardinalité --------------------------------
+
+# Au-delà, la colonne est un identifiant ou du texte libre (un nom de
+# passager…) : la lister n'aide pas le modèle et alourdit le prompt.
+#
+# Une seule définition, et c'est le point : les deux adaptateurs avaient la
+# leur, avec le même 15, le même `+1` et le même verdict recopiés à la main
+# (audit §5.2). Deux copies d'une politique se mettent à divergier en silence —
+# et celle-ci décide de ce que le modèle voit des données.
+MAX_DISTINCT_VALUES = 15
+
+
+def low_cardinality_values(fetch: Callable[[int], list | None]) -> list[str] | None:
+    """Les valeurs distinctes d'une colonne texte, ou ``None`` si trop nombreuses.
+
+    Sert à montrer au modèle les littéraux réellement présents ('1re classe',
+    'S'…) au lieu de le laisser les deviner : il devine dans SA langue, et un
+    ``WHERE label LIKE '%First%'`` sur des libellés français ne ramène rien.
+
+    ``fetch(limite)`` exécute le ``SELECT DISTINCT … LIMIT <limite>`` propre au
+    moteur et rend ses lignes, ou ``None`` s'il a échoué — l'introspection est
+    best-effort et ne bloque jamais un schéma.
+
+    On demande **une valeur de plus** que le plafond : c'est le seul moyen de
+    savoir qu'on l'a dépassé plutôt que de l'atteindre pile.
+
+    Ce que le moteur garde pour lui : le test de type texte, la citation des
+    identifiants et la classe d'exception qui signifie « laisse tomber ». Ces
+    trois-là diffèrent réellement entre Postgres et DuckDB.
+    """
+    lignes = fetch(MAX_DISTINCT_VALUES + 1)
+    if lignes is None or len(lignes) > MAX_DISTINCT_VALUES:
+        return None
+    return sorted(str(ligne[0]) for ligne in lignes)
 
 
 # --- garde-fou lecture seule ---------------------------------------------------
@@ -275,36 +312,27 @@ class PostgresAdapter:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
 
-    # Au-delà, la colonne est un identifiant ou du texte libre (un nom de
-    # passager…) : la lister n'aide pas le modèle et alourdit le prompt.
-    MAX_DISTINCT_VALUES = 15
-
     @classmethod
     def from_dsn(cls, dsn: str) -> PostgresAdapter:
         return cls(create_engine(dsn))
 
     def _distinct_values(self, table: str, column: dict) -> list[str] | None:
-        """Valeurs d'une colonne texte à faible cardinalité (sinon ``None``).
-
-        Sert à montrer au modèle les littéraux réellement présents ('1re classe',
-        'S'…) au lieu de le laisser les deviner.
-        """
+        """Valeurs d'une colonne texte à faible cardinalité (cf. ``low_cardinality_values``)."""
         if not isinstance(column["type"], SQLString):
             return None
         requete = text(
             f'SELECT DISTINCT "{column["name"]}" FROM "{table}" '
             f'WHERE "{column["name"]}" IS NOT NULL LIMIT :limite'
         )
-        try:
-            with self.engine.connect() as connection:
-                lignes = connection.execute(
-                    requete, {"limite": self.MAX_DISTINCT_VALUES + 1}
-                ).fetchall()
-        except SQLAlchemyError:
-            return None  # introspection best-effort : jamais bloquante
-        if len(lignes) > self.MAX_DISTINCT_VALUES:
-            return None
-        return sorted(str(ligne[0]) for ligne in lignes)
+
+        def fetch(limite: int) -> list | None:
+            try:
+                with self.engine.connect() as connection:
+                    return connection.execute(requete, {"limite": limite}).fetchall()
+            except SQLAlchemyError:
+                return None  # introspection best-effort : jamais bloquante
+
+        return low_cardinality_values(fetch)
 
     def schema(self) -> SchemaInfo:
         inspector = inspect(self.engine)
