@@ -8,6 +8,10 @@ chantier de durcissement de septembre 2026. Les dix-sept tâches de
 chemin sans entrer dans leur périmètre. Aucun point n'est spéculatif : chacun a été
 constaté sur le code ou mesuré à l'exécution.
 
+Les points **corrigés depuis** gardent leur entrée, avec ce qui a été mesuré avant et
+après et pourquoi la correction a atterri là plutôt qu'à l'endroit d'abord proposé :
+c'est la partie qu'on ne retrouve pas dans un diff.
+
 ---
 
 ## Sécurité
@@ -60,21 +64,72 @@ constaté sur le code ou mesuré à l'exécution.
 
 ## Correctness
 
-### « De quels attributs as-tu besoin ? » n'a pas de route
+### Les questions SUR le système n'avaient aucune route — dont « De quels attributs as-tu besoin ? »
 
-- **Où** : [`orchestrator/graph.py:703`](../src/data_analyst_agent/orchestrator/graph.py)
-  (`_regle_choisir_le_modele`)
-- **Problème** : la question tombe dans le repli « je n'ai pas bien compris », alors que
-  la liste des features est **déjà** dans le prompt du planificateur. La cause n'est pas
-  le prompt : `Capability` n'a pas de valeur pour « décris-moi le modèle », donc la
-  demande ne peut littéralement pas être routée. C'est le premier tour d'une
-  conversation de prédiction sur deux.
-- **Correction proposée** : dans `_regle_choisir_le_modele`, traiter le cas « le message
-  demande les features attendues » **avant** le cas « prédiction sans dataset », et
-  répondre par `describe_features(SCHEMAS[dataset])`. Cette règle est la bonne place :
-  elle voit déjà `self.registry.datasets` et sait déjà formuler une question de
-  désambiguïsation.
-- **Statut** : Ouvert — point d'atterrissage identifié, correction non écrite.
+- **Où** : [`orchestrator/introspection.py`](../src/data_analyst_agent/orchestrator/introspection.py)
+  et `Orchestrator._court_circuit_meta` / `_system_node`
+  ([`orchestrator/graph.py`](../src/data_analyst_agent/orchestrator/graph.py))
+- **Problème** : la question tombait dans le repli « je n'ai pas bien compris », alors que
+  la liste des features est **déjà** dans le prompt du planificateur. La cause n'était pas
+  le prompt : `Capability` n'avait pas de valeur pour « décris-moi le modèle », donc la
+  demande ne pouvait littéralement pas être routée.
+- **Ce que la mesure a montré** : le cas n'était pas isolé. Sur vingt-et-une questions
+  méta posées au vrai système, **huit tombaient dans le repli et quatre à côté** — les
+  familles « capacités » (« que sais-tu faire ? ») et « features non qualifiées » étaient
+  à zéro. Tableau complet, avant et après :
+  [surface-conversationnelle.md](surface-conversationnelle.md).
+- **Correction retenue** : un module `introspection.py` qui construit la réponse depuis
+  les **sources de vérité** — catalogue, registre, `SCHEMAS`/`describe_features`,
+  ontologie de la source, et son dictionnaire quand elle en déclare un — et un nœud
+  `system` du graphe, atteint par un **court-circuit placé avant l'appel au
+  planificateur**. Cinq sujets : `sources`, `schema`, `modeles`, `features`, `capacites`.
+- **Pourquoi pas dans `_regle_choisir_le_modele`**, comme cette entrée le proposait : les
+  règles de `_REGLES_DU_PLAN` ajustent un `Plan` que le LLM a **déjà** rendu. L'élargir
+  aurait gardé l'aller-retour, n'aurait rattrapé que les demandes déjà classées en
+  `predict` — pas le cas constaté, où le planificateur ne classe rien — et aurait fait
+  répondre à des questions une règle dont le nom dit « choisir le modèle ». Il fallait
+  une étape **avant** les règles, pas une règle de plus.
+- **Résultat mesuré** : 21/21 correctes, **zéro repli**, et **9 appels LLM au lieu de 43**
+  — dix-sept des vingt-et-une questions se répondent sans le moindre aller-retour, la
+  réponse étant entièrement déterminée par la configuration.
+- **Statut** : **Corrigé.**
+
+### La capacité système n'est pas dans `Capability`, et ne doit pas y revenir sans mesure
+
+- **Où** : [`orchestrator/plan.py`](../src/data_analyst_agent/orchestrator/plan.py)
+- **Constat** : le réflexe naturel — ajouter `"describe_system"` au `Literal` et le
+  décrire dans le prompt — a été essayé et **retiré, deux fois, pour deux raisons
+  distinctes** :
+  1. annoncé dans le prompt, il coûtait **+134 tokens à chaque requête** et déplaçait
+     **quatre questions d'une bonne réponse vers une mauvaise, aucune dans l'autre sens** :
+     « sur quelle période portent les données ? » routée en `describe_system` alors que la
+     réponse est un `SELECT` ;
+  2. laissé dans le seul `Literal`, prompt inchangé, le modèle continuait de le choisir —
+     **`Capability` *est* le JSON Schema de la sortie structurée**, lu indépendamment du
+     prompt — et son élargissement dégradait l'extraction d'une capacité voisine : `pcass`
+     au lieu de `pclass`, donc une relance au lieu d'une prédiction. Reproductible dans
+     les deux sens.
+- **Ce qui en découle** : le graphe route sur `system_topic` posé dans le state, et non
+  sur `plan.capability`. `ChatAnswer.plan` reste donc **vide** pour une question méta —
+  exact plutôt qu'incomplet : il n'y a pas eu de planification. Le contrat que lit le
+  modèle est inchangé au caractère près, ce qui garantit par construction qu'aucun chemin
+  existant n'est affecté.
+- **Statut** : Fermé par décision, verrouillé par un test
+  (`test_le_contrat_de_sortie_du_llm_reste_a_quatre_capacites`). À rouvrir seulement avec
+  une mesure sur un modèle plus solide.
+
+### Le repli citait les sources en dur
+
+- **Où** : `Orchestrator._repli_du_planificateur`
+  ([`orchestrator/graph.py`](../src/data_analyst_agent/orchestrator/graph.py))
+- **Problème** : le message déclarait ne pas comprendre **en nommant les sources**
+  (« interroger une source (titanic, iris…) ») — l'information était donc disponible à
+  l'instant même où le système disait ne pas l'avoir. Et elle était **recopiée dans la
+  chaîne**, donc fausse dès qu'un déploiement change de catalogue.
+- **Correction** : le repli rend l'inventaire réel, lu dans le catalogue et le registre
+  (`introspection.inventaire`), et **finit** par la question au lieu de commencer par
+  elle — ce qu'on lit en dernier est ce à quoi on répond.
+- **Statut** : **Corrigé.**
 
 ### Deux politiques différentes face à un fichier corrompu
 
@@ -221,7 +276,7 @@ constaté sur le code ou mesuré à l'exécution.
 |---|---|---|---|
 | P0 | Verrou DuckDB absent de la branche `Maxizoo` | Ouvert | Le SQL généré y lit les fichiers de l'hôte |
 | P1 | Anti-force brute par adresse derrière un frontal | Ouvert | Un échec quelconque verrouille tous les comptes |
-| P1 | « De quels attributs as-tu besoin ? » sans route | Ouvert | Un tour de prédiction sur deux part en clarification inutile |
+| — | Questions SUR le système sans route | **Corrigé** | Était : 8 replis et 4 réponses à côté sur 21 questions méta. Devenu 21/21, et 9 appels LLM au lieu de 43 |
 | P1 | Migration des conversations réelles jamais exécutée | Ouvert | Les fils existants restent hors de l'arborescence par utilisateur |
 | P1 | Aucun fichier `LICENSE` | Ouvert | L'annonce MIT du README est sans portée |
 | P2 | argon2 non plafonné face au pool de threads | Ouvert | Une rafale de connexions réserve ~2,5 Gio |

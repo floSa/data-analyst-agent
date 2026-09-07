@@ -38,6 +38,7 @@ flowchart TB
             RET["① Récupération<br/>catalogue + text-to-SQL à tools"]
             ANA["② Analyse<br/>génération de code stats/viz"]
             INF["③ Inférence gardée<br/>validation → predict déterministe"]
+            SYS["④ Répondre sur soi-même<br/>catalogue · registre · schémas<br/>(zéro LLM)"]
         end
     end
 
@@ -50,11 +51,12 @@ flowchart TB
     end
 
     UI -->|JSON| API --> ORCH
-    ORCH --> RET & ANA & INF
+    ORCH --> RET & ANA & INF & SYS
     ORCH -.->|prompts| LLM -.-> OLLAMA
     RET --> PG & FILES
     ANA -->|code Python| SBX
     INF --> REG
+    SYS --> REG
 ```
 
 Réponse renvoyée au client : `{answer, artifacts[{mime,data}], plan, error, trace}` —
@@ -65,18 +67,26 @@ JSON) et la trace d'exécution.
 
 ```mermaid
 flowchart LR
-    Q(["question"]) --> PLAN["plan<br/>LLM → objet Plan"]
+    Q(["question"]) --> PLAN["plan<br/>question SUR le système ?<br/>sinon LLM → objet Plan"]
+    PLAN -->|"système<br/>(0 appel LLM)"| SYS["system<br/>catalogue · registre<br/>schémas · ontologie"]
     PLAN -->|"query"| RETR["retrieval<br/>SQL lecture seule"]
     PLAN -->|"analyze"| ANAL["analysis<br/>code en sandbox"]
     PLAN -->|"predict"| INFE["inference<br/>valide → prédit"]
     PLAN -->|"fetch_then_predict"| FP["fetch_predict<br/>ligne SQL → features → prédit"]
     PLAN -->|"erreur"| SYN
-    RETR --> SYN["synthesize"]
+    SYS --> SYN["synthesize"]
+    RETR --> SYN
     ANAL --> SYN
     INFE --> SYN
     FP --> SYN
     SYN --> R(["réponse + artefacts + trace"])
 ```
+
+**La branche `system` est la seule qui ne vient pas d'un `Plan`**, et c'est ce qui la
+rend gratuite : une question SUR le système est reconnue par du code *avant* l'appel
+au planificateur, et le routage se fait sur `system_topic` posé dans le state. Cinq
+sujets — sources, schéma, modèles, features, capacités — dont quatre se répondent
+sans même ouvrir une connexion (§4.10).
 
 Le planificateur classe la demande dans une capacité et en extrait les paramètres
 (source, dataset, features). Le plan qu'il rend est ensuite passé dans une suite de
@@ -90,6 +100,7 @@ pour une analyse réussie**, tout le reste est déterministe :
 
 | Situation | Mode de synthèse |
 |---|---|
+| Question SUR le système | la réponse lue dans la configuration, **telle quelle** (§4.10) |
 | Erreur d'un nœud | phrase normalisée + référence d'incident (le détail reste dans la trace) |
 | Clarification demandée par une règle du plan | la question, telle quelle |
 | Features invalides/incomplètes | la relance structurée, telle quelle |
@@ -194,6 +205,9 @@ les CSV, sans laisser de données orphelines.
   **composé (`planner_system_prompt`) avant d'être confié à l'agent
   (`planner_agent`)** : entre les deux, l'orchestrateur le pèse, parce qu'un
   budget de tokens se décompte sur le prompt réel.
+- `introspection.py` — les réponses aux questions **sur le système**, construites
+  depuis le catalogue, le registre, les schémas de features et l'ontologie des
+  sources (§4.10). Module pur : aucun fichier, aucune connexion, aucun LLM.
 - `context_budget.py` — ce qui entre dans le contexte : la fenêtre glissante et
   le budget de tokens (§7), le compteur approché, et la détection d'un
   débordement — plafonnement constaté sur `prompt_eval_count`, ou refus HTTP
@@ -218,7 +232,13 @@ les CSV, sans laisser de données orphelines.
   défaut, et une perte de contexte ne doit pas se deviner à la qualité des
   réponses.
 
-**Le nœud `plan` est une suite de règles nommées**, et l'ordre en est explicite. Le
+**Le nœud `plan` commence par une question qui n'en appelle aucune autre** : la
+demande porte-t-elle sur le système plutôt que sur les données ? Si oui
+(`introspection.sujet_de`), le graphe part sur le nœud `system` sans qu'un seul token
+soit envoyé — la réponse à « quelles sources possèdes-tu ? » est connue avant même
+que la question soit lue (§4.10). Sinon, le planificateur est appelé comme avant.
+
+**Puis le nœud `plan` est une suite de règles nommées**, et l'ordre en est explicite. Le
 plan que rend le LLM est rarement utilisable tel quel : il faut y imposer la source
 choisie par l'appelant, dégrader un chaînage faute de source, y refusionner les
 features déjà obtenues, normaliser un nom de source décoré, demander de préciser
@@ -228,6 +248,18 @@ réel, chacune porte son nom et sa docstring, et `_REGLES_DU_PLAN` — sept lign
 est la seule chose à lire pour connaître leur ordre, qui est significatif. Une règle
 rend soit rien (le plan continue), soit la question à poser, qui court-circuite les
 suivantes.
+
+Ces règles ajustent un plan que le LLM a **déjà** rendu : l'aller-retour est derrière
+elles. C'est pourquoi le cas « question sur le système » ne pouvait pas y être traité
+— il fallait une étape *avant*, et non une règle de plus
+([surface-conversationnelle.md](surface-conversationnelle.md) §5).
+
+Quand le planificateur échoue à produire un `Plan` structuré et qu'il n'y a aucun tour
+précédent à reprendre, le repli **rend l'inventaire réel** — sources et modèles lus
+dans le catalogue et le registre — avant de redemander de préciser. Il citait
+auparavant « titanic, iris… » recopiés en dur dans la chaîne : il déclarait ne pas
+comprendre tout en nommant la source qu'on lui demandait, et se trompait dès qu'un
+déploiement changeait de catalogue.
 
 ### 4.3 `llm.py` + `config.py` — LLM mutualisé et réglages
 
@@ -247,6 +279,9 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
 - `catalog.py` — catalogue **déclaratif** des sources (`sources/catalogue.yaml`) :
   `postgres` (DSN SQLAlchemy, `${VARIABLES}` d'environnement autorisées) ou `file`
   (CSV/Excel, chemin relatif au YAML). `open_source()` renvoie l'adaptateur adapté.
+  Toute source peut déclarer un `dictionary` **facultatif** : un Markdown qui dit ce
+  que les données *veulent dire*, là où le DDL ne dit que des types. C'est lui qu'on
+  cite quand on demande le sens d'une colonne (§4.10).
 - `sql.py` — l'ontologie (tables, colonnes, types, clés primaires/étrangères) rendue
   en DDL compact pour le prompt, valeurs des colonnes à faible cardinalité comprises
   (sans quoi le modèle devine les littéraux, et il les devine dans sa langue) ; le
@@ -375,6 +410,62 @@ Trois détails qui ont leur raison :
 que la doublure de test route ses réponses vers le bon agent (§6), au lieu d'une
 formulation recopiée à la main.
 
+### 4.10 `orchestrator/introspection.py` — capacité ④ Répondre sur soi-même
+
+Les quatre capacités précédentes agissent **sur** les données. Celle-ci répond aux
+questions **sur le système** : quelles sources, quelles tables, quelles colonnes, le
+sens d'une colonne, quels modèles, quels attributs ils attendent, ce que l'agent sait
+faire. Elle n'existait pas, et son absence ne se lisait pas comme une erreur de
+classement : la demande n'avait aucune case où être rangée, et tombait dans le repli
+« je n'ai pas bien compris » — **une question méta sur trois**, mesuré
+([surface-conversationnelle.md](surface-conversationnelle.md)).
+
+**Chaque réponse est lue, jamais racontée.** Le catalogue, le registre, les schémas de
+features (`describe_features`), l'ontologie que la source rend elle-même, et son
+dictionnaire quand elle en déclare un. **Rien depuis la mémoire du modèle** : c'est le
+défaut corrigé par `acfd8f5`, où « décris le dataset iris » recevait une prose de
+culture générale servie comme une lecture de la source. Le nœud `system` ne fait donc
+appel à **aucun LLM**, et la synthèse rend sa réponse telle quelle.
+
+Le module est **pur** — il n'ouvre ni fichier ni connexion, un test le vérifie sur son
+propre code source. L'entrée/sortie appartient au nœud, comme pour toute autre
+capacité.
+
+| Sujet | Source de vérité | Connexion ? |
+|---|---|---|
+| `sources` | `sources/catalogue.yaml` | non |
+| `modeles` | `models/registry.yaml` | non |
+| `features` | `SCHEMAS` + `describe_features` | non |
+| `capacites` | les valeurs de `Capability`, plus l'inventaire | non |
+| `schema` | l'ontologie de la source (+ son dictionnaire) | **oui** |
+
+`schema` se décline à quatre niveaux de détail, selon ce que la question nomme : une
+colonne (sa fiche, avec la clé étrangère — le nom `class_id` n'apprend rien, la table
+`classes` qu'il référence tout), une table (ses colonnes), une source (toutes ses
+tables), rien de décidable (le tour d'horizon : les tables de chaque source, sans les
+colonnes).
+
+**La reconnaissance est du code, pas un prompt.** Un lexique de tournures, précis
+plutôt qu'exhaustif, qui **s'abstient** dès qu'un marqueur de calcul paraît
+(`combien`, `moyenne`, `manquant`, `histogramme`…) : « quelles colonnes de passengers
+contiennent des valeurs manquantes ? » a la tournure d'une question de schéma et la
+réponse est un `SELECT`. Se tromper de ce côté coûte un appel LLM ; se tromper de
+l'autre donne une réponse fausse à une question sur les données, sans le dire.
+
+**La frontière tient en une phrase** : `describe_system` répond sur ce que l'agent
+EST, jamais sur ce que les données CONTIENNENT. « Sur quelle période portent les
+données ? » et « combien de lignes ? » exigent un `MIN`/`MAX` ou un `COUNT` : elles
+restent du ressort de `query`.
+
+**Cette capacité n'est PAS une valeur de `Capability`, et c'est mesuré.** Le `Literal`
+est le JSON Schema de la sortie structurée du planificateur : l'élargir change le
+contrat que lit le modèle, même sans toucher au prompt, et dégrade son extraction sur
+les capacités voisines (`pcass` au lieu de `pclass`, donc une relance au lieu d'une
+prédiction). Le graphe route donc sur `system_topic`, posé dans le state par le
+court-circuit. `ChatAnswer.plan` reste **vide** pour une question méta : il n'y a pas
+eu de planification. Le détail des deux expériences est dans
+[surface-conversationnelle.md](surface-conversationnelle.md) §6.
+
 ## 5. Sécurité — récapitulatif des garde-fous
 
 1. **Identité** : hormis `GET /health`, aucune route n'est atteignable sans session
@@ -423,6 +514,14 @@ tests/
   défaut.
 - Le scénario golden n°1 est vérifié contre un **oracle pandas** calculé
   indépendamment du pipeline.
+- Deux runners vivent **hors de la suite**, parce qu'ils interrogent le vrai système
+  et qu'un verdict rendu par un modèle n'a rien à faire dans une CI déterministe :
+  `scripts/live_scenarios.py` (cinq conversations en cascade contre l'API en marche)
+  et `scripts/mesure_surface_conversationnelle.py` (la batterie de questions **sur le
+  système**, oracle tiré des sources de vérité et compteur d'appels LLM —
+  [surface-conversationnelle.md](surface-conversationnelle.md)). Le second est fait
+  pour être **rejoué** : avant/après une correction, ou après un changement de
+  modèle.
 - CI GitHub Actions : lint (ruff) + suite complète avec build de l'image sandbox
   (cache buildx) — couverture exigée ≥ 85 %.
 

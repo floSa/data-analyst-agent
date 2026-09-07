@@ -168,6 +168,11 @@ class Resultat:
     duree_ms: int
     verdict: str
     manquants: list[str] = field(default_factory=list)
+    # La trace complète, dans le journal. Une erreur d'un nœud ne rend à
+    # l'utilisateur qu'une phrase et une référence d'incident : sans la trace,
+    # un échec vu une fois et non reproductible ne laisse rien à diagnostiquer,
+    # et c'est arrivé.
+    trace: list[str] = field(default_factory=list)
 
 
 class ModeleCompteur(WrapperModel):
@@ -531,6 +536,7 @@ def poser(orchestrateur: Orchestrator, compteur: ModeleCompteur, q: QuestionMeta
         duree_ms=duree,
         verdict=verdict,
         manquants=manquants,
+        trace=[f"{s.node} : {s.detail}" for s in reponse.trace],
     )
 
 
@@ -610,6 +616,7 @@ def journal(resultats: list[Resultat]) -> list[dict]:
             "duree_ms": r.duree_ms,
             "verdict": r.verdict,
             "manquants": r.manquants,
+            "trace": r.trace,
         }
         for r in resultats
     ]

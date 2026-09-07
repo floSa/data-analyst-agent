@@ -19,12 +19,34 @@ from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter
 from data_analyst_agent.agents.retrieval.sql import DatabaseAdapter, PostgresAdapter
 
 
-class PostgresSource(BaseModel):
+class SourceBase(BaseModel):
+    """Ce que toute source déclare : un nom, une description, un dictionnaire.
+
+    ``dictionary`` désigne un fichier Markdown décrivant la base — sens des
+    colonnes, valeurs admises, et surtout les pièges de modélisation. Le DDL
+    dit les types ; le dictionnaire dit ce que les données VEULENT dire, et
+    c'est lui qu'on cite quand on demande « que signifie cette colonne ? ». Ça
+    ne s'infère d'aucun schéma.
+
+    Facultatif : une source qui n'en déclare pas se décrit par son ontologie
+    seule.
+    """
+
+    name: str
+    description: str = ""
+    dictionary: Path | None = None
+
+    def dictionary_text(self) -> str | None:
+        """Contenu du dictionnaire, ou ``None`` si la source n'en déclare pas."""
+        if self.dictionary is None:
+            return None
+        return self.dictionary.read_text(encoding="utf-8")
+
+
+class PostgresSource(SourceBase):
     """Base Postgres. Le DSN peut contenir des ``${VARIABLES}`` d'environnement."""
 
     type: Literal["postgres"] = "postgres"
-    name: str
-    description: str = ""
     dsn: str  # postgresql+pg8000://user:mdp@hote:5432/base
 
     def resolved_dsn(self) -> str:
@@ -42,12 +64,10 @@ class PostgresSource(BaseModel):
         return dsn
 
 
-class FileSource(BaseModel):
+class FileSource(SourceBase):
     """Fichier de données requêtable en SQL (CSV ou Excel, via DuckDB)."""
 
     type: Literal["file"] = "file"
-    name: str
-    description: str = ""
     path: Path
 
 
@@ -79,6 +99,8 @@ def load_catalog(path: Path) -> Catalog:
     for source in catalog.sources:
         if isinstance(source, FileSource) and not source.path.is_absolute():
             source.path = (path.parent / source.path).resolve()
+        if source.dictionary is not None and not source.dictionary.is_absolute():
+            source.dictionary = (path.parent / source.dictionary).resolve()
     return catalog
 
 

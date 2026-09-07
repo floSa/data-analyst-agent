@@ -13,6 +13,23 @@ from pydantic_ai import Agent
 
 from data_analyst_agent import prompts
 
+# Quatre actions SUR les données. C'est le contrat de sortie structurée du
+# planificateur, et rien d'autre : ce que le LLM a le droit de choisir.
+#
+# Une question SUR le système (« quelles sources possèdes-tu ? ») est aussi une
+# capacité de l'agent, et elle n'est volontairement PAS ici : elle est routée
+# par du code avant l'appel, vers le nœud `system` (cf.
+# `Orchestrator._court_circuit_meta`). La raison est mesurée, pas esthétique —
+# ce Literal EST le JSON Schema de sortie, que le modèle lit même quand le
+# prompt ne dit rien de la valeur ajoutée. Constaté en live sur gemma4:e4b, de
+# façon reproductible : avec une cinquième valeur, « prédis la survie d'une
+# passagère de 1re classe… » ressortait avec `pcass` au lieu de `pclass` —
+# champ inconnu, prédiction remplacée par une relance. La valeur retirée, la
+# prédiction aboutit.
+#
+# Élargir ce Literal n'est donc pas gratuit : c'est toucher au contrat que le
+# modèle lit, et ça se paie sur les capacités voisines. Mesures dans
+# docs/surface-conversationnelle.md.
 Capability = Literal["query", "analyze", "predict", "fetch_then_predict"]
 
 

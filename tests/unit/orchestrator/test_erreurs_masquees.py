@@ -141,7 +141,15 @@ def test_le_traceback_complet_part_dans_les_logs(
 def test_chaque_noeud_a_son_message():
     """Un message par nœud : « la source n'a pas répondu » et « l'analyse n'a pas
     abouti » n'appellent pas la même réaction de l'utilisateur."""
-    noeuds = {"plan", "retrieval", "analysis", "inference", "fetch_predict", "synthesize"}
+    noeuds = {
+        "plan",
+        "retrieval",
+        "analysis",
+        "inference",
+        "fetch_predict",
+        "system",
+        "synthesize",
+    }
 
     assert set(ERREURS_UTILISATEUR) == noeuds
     assert len(set(ERREURS_UTILISATEUR.values())) == len(noeuds)  # aucun doublon

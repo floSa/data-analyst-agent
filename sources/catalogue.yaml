@@ -1,6 +1,11 @@
 # Catalogue déclaratif des sources de données (CADRAGE §7-①).
 # - postgres : DSN SQLAlchemy (driver pg8000) ; ${VARIABLES} d'environnement autorisées.
 # - file     : chemin CSV/Excel, relatif à ce fichier.
+#
+# `dictionary` (facultatif) : Markdown décrivant la source, relatif à ce fichier. Le
+# DDL dit les types ; le dictionnaire dit ce que les données VEULENT dire — c'est lui
+# qu'on cite quand on demande le sens d'une colonne. Aucune source d'ici n'en déclare :
+# titanic et iris se décrivent entièrement par leur ontologie.
 sources:
   - type: postgres
     name: titanic
