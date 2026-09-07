@@ -16,7 +16,15 @@ from helpers.auth import client_connecte, creer_compte, reglages_de_test
 
 
 class OrchestrateurMuet:
-    def ask(self, question, source=None, pending=None, conversation_id=None, workspace_root=None):
+    def ask(
+        self,
+        question,
+        source=None,
+        pending=None,
+        conversation_id=None,
+        workspace_root=None,
+        source_de_travail=None,
+    ):
         return ChatAnswer(answer="ok")
 
 

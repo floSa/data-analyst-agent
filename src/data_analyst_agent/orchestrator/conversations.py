@@ -33,7 +33,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from data_analyst_agent.orchestrator.graph import PendingInference
+from data_analyst_agent.orchestrator.graph import PendingInference, SourceDeTravail
 from data_analyst_agent.orchestrator.workspace import (
     conversation_lock,
     make_private_dir,
@@ -96,6 +96,13 @@ class Conversation(BaseModel):
     # multi-tours : prédiction en attente de features, persistée avec le fil pour
     # qu'une reprise après rechargement retrouve la question posée par l'agent.
     pending: PendingInference | None = None
+    # La source de données sur laquelle porte ce fil, validée par l'utilisateur.
+    # Persistée avec lui pour la même raison qu'``owner`` : elle appartient à la
+    # conversation, pas au tour. Une transcription écrite AVANT ce champ le
+    # reçoit à sa valeur par défaut — aucune source liée — et le fil continue
+    # donc de fonctionner comme avant, le planificateur choisissant à chaque
+    # tour. C'est ce qui rend la migration inutile.
+    source_de_travail: SourceDeTravail = Field(default_factory=SourceDeTravail)
 
 
 class ConversationSummary(BaseModel):
@@ -255,8 +262,14 @@ class ConversationStore:
         artifacts: list[MimeOutput] | None = None,
         error: str | None = None,
         pending: PendingInference | None = None,
+        source_de_travail: SourceDeTravail | None = None,
     ) -> Conversation:
         """Ajoute le tour (question + réponse) au fil et met à jour son état.
+
+        ``source_de_travail`` à ``None`` laisse la source liée telle quelle :
+        c'est ce que rend l'orchestrateur quand rien ne l'a changée, et ça
+        évite qu'un appelant distrait la remette à vide en la passant par
+        défaut.
 
         Lecture, ajout et écriture sont tenus sous le verrou de la conversation :
         c'est un lecture-modification-écriture, et il n'était pas atomique. Deux
@@ -277,6 +290,8 @@ class ConversationStore:
                 Message(role="agent", content=answer, artifacts=artifacts or [], error=error)
             )
             conversation.pending = pending
+            if source_de_travail is not None:
+                conversation.source_de_travail = source_de_travail
             conversation.updated_at = _now()
             return self._save(conversation)
 

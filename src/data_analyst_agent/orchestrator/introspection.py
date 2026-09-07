@@ -93,6 +93,19 @@ def source_visee(question: str, catalogue: Catalog) -> Source | None:
     return catalogue.get(nom) if nom else None
 
 
+def source_nommee(question: str, catalogue: Catalog) -> str | None:
+    """Le nom de source que le TEXTE cite, sans repli sur l'unique source.
+
+    Distincte de ``source_visee``, et pour une raison de fond : celle-ci sert à
+    savoir si **l'utilisateur** a désigné une source — donc à lier la
+    conversation à elle, ou à en changer. Le repli sur l'unique source du
+    catalogue serait ici une désignation qu'il n'a pas faite, et le nom choisi
+    par le planificateur une supposition du modèle. Ni l'un ni l'autre ne doit
+    faire basculer la source de travail de quelqu'un.
+    """
+    return _nomme_dans(question, [s.name for s in catalogue.sources])
+
+
 def dataset_vise(question: str, registre: Registry) -> str | None:
     """Le modèle que la question nomme, ou l'unique modèle du registre."""
     nom = _nomme_dans(question, registre.datasets)
@@ -158,6 +171,30 @@ def decrire_les_sources(catalogue: Catalog) -> str:
         "Demande-moi les tables ou les colonnes de l'une d'elles "
         "(« quelles colonnes a la source "
         f"{catalogue.sources[0].name} ? ») pour en voir le détail.",
+    ]
+    return "\n".join(lignes)
+
+
+def proposer_les_sources(catalogue: Catalog) -> str:
+    """Le même inventaire, mais posé comme une QUESTION : laquelle prend-on ?
+
+    L'ancienne clarification énumérait des noms nus — « Sur quelle source
+    veux-tu travailler : titanic, iris ? ». Deux noms sans un mot de contexte
+    ne permettent pas de choisir quand on découvre l'agent, et la réponse était
+    de toute façon perdue au tour suivant. Celle-ci rend ce que le catalogue
+    dit de chaque source, et la réponse est liée à la conversation.
+
+    Elle **finit** par la question, comme le repli du planificateur et pour la
+    même raison : ce qu'on lit en dernier est ce à quoi on répond.
+    """
+    if not catalogue.sources:
+        return AUCUNE_SOURCE
+    lignes = [
+        *_liste_des_sources(catalogue),
+        "",
+        "Donne-moi le nom de celle qui t'intéresse : je la garde pour la suite de la conversation.",
+        "",
+        "Sur laquelle veux-tu travailler ?",
     ]
     return "\n".join(lignes)
 

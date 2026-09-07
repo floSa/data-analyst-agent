@@ -214,8 +214,23 @@ def test_les_sources_sont_celles_du_catalogue(catalogue: Catalog):
     assert "sans description" in reponse  # iris n'en déclare pas : on le dit
 
 
+def test_la_proposition_rend_le_meme_inventaire_mais_finit_par_la_question(catalogue: Catalog):
+    """Même matière, autre acte : décrire, ou demander de choisir.
+
+    Elle finit par la question, comme le repli du planificateur et pour la même
+    raison : ce qu'on lit en dernier est ce à quoi on répond.
+    """
+    proposition = introspection.proposer_les_sources(catalogue)
+
+    assert "titanic" in proposition
+    assert "Base Titanic." in proposition
+    assert proposition.strip().endswith("?")
+
+
 def test_un_catalogue_vide_se_dit_vide():
+    """Y compris quand on allait proposer de choisir : il n'y a rien à choisir."""
     assert "aucune source" in introspection.decrire_les_sources(Catalog(sources=[]))
+    assert "aucune source" in introspection.proposer_les_sources(Catalog(sources=[]))
 
 
 def test_les_modeles_sont_ceux_du_registre(registre: Registry):
