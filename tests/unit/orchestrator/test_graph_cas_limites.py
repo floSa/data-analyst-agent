@@ -208,7 +208,7 @@ def test_repli_impossible_apres_un_tour_sans_source(
 
     assert second.error is None
     assert second.answer.strip().endswith("?")
-    assert [s.node for s in second.trace] == ["plan", "synthesize"]
+    assert [s.node for s in second.trace] == ["system", "plan", "synthesize"]
 
 
 # --- récupération puis prédiction : ligne incomplète ----------------------------

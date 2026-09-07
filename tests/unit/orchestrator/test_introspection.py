@@ -1,10 +1,18 @@
-"""Les questions SUR le système : ce qui est reconnu, et ce qui est répondu.
+"""Les FAITS du système : ce qu'ils disent, et ce qu'ils refusent de laisser dire.
 
-Deux choses séparées, et testées séparément. La **reconnaissance**
-(``sujet_de``) est un lexique : on la juge sur sa précision, c'est-à-dire
-autant sur ce qu'elle laisse passer que sur ce qu'elle attrape. La
-**réponse** est un formateur pur : on la juge sur le fait qu'elle ne dise rien
-qui ne soit lu dans un artefact du dépôt.
+Deux choses séparées, et testées séparément. Les **textes de faits** sont des
+formateurs purs : on les juge sur le fait qu'ils ne disent rien qui ne soit lu
+dans un artefact du dépôt. La **ceinture** (``defaut_de_fondation``) juge la
+formulation du modèle contre ces faits ; on la juge, elle, sur les deux fautes
+qu'elle doit attraper — un nom inventé, un nom oublié — et sur le fait qu'elle
+laisse passer une reformulation honnête.
+
+Ce fichier testait aussi une **reconnaissance par lexique** (``sujet_de``),
+retirée : le sujet d'une question est désormais reconnu par le modèle, qui
+appelle l'outil qui porte les faits. Ce que le lexique garantissait — ne pas
+voler une question sur les données — est maintenant l'affaire du prompt de
+l'agent système et des témoins de la batterie live, pas d'un test unitaire :
+c'est un comportement de modèle, il se mesure, il ne s'assied pas.
 """
 
 from pathlib import Path
@@ -95,72 +103,78 @@ def ontologie_titanic() -> introspection.Ontologie:
     )
 
 
-# --- la reconnaissance : précise avant d'être exhaustive ------------------------
+# --- ce qui remplace la reconnaissance par lexique ------------------------------
 
 
 @pytest.mark.parametrize(
-    ("question", "sujet"),
+    "reponse",
     [
-        # sources — la question du propriétaire et ses tournures
-        (
-            "Bonjour, saurais-tu me dire les différentes sources de données que tu possèdes ?",
-            "sources",
-        ),
-        ("Sur quoi peux-tu travailler ?", "sources"),
-        ("À quelles bases de données as-tu accès ?", "sources"),
-        ("Liste-moi tes sources de données.", "sources"),
-        # schéma
-        ("Quelles tables contient la source titanic ?", "schema"),
-        ("Comment est structurée la base titanic ?", "schema"),
-        ("Quelles colonnes y a-t-il dans la table passengers ?", "schema"),
-        ("Que signifie la colonne class_id ?", "schema"),
-        # modèles
-        ("Quels modèles de prédiction sais-tu utiliser ?", "modeles"),
-        ("Est-ce que tu sais faire des prédictions, et sur quoi ?", "modeles"),
-        # features — dont la question exacte de docs/axes-amelioration.md
-        ("De quels attributs as-tu besoin ?", "features"),
-        ("De quoi as-tu besoin pour prédire ?", "features"),
-        ("Quelles mesures faut-il te donner pour que tu prédises l'espèce d'un iris ?", "features"),
-        # capacités
-        ("Que sais-tu faire ?", "capacites"),
-        ("À quoi sers-tu, exactement ?", "capacites"),
-        ("Qui es-tu ?", "capacites"),
+        # les deux noms de sources, tels que les faits les rendent
+        "Je vois deux sources : `titanic` et `iris`.",
+        # la décoration Markdown du modèle : `titanic` en gras, l'autre en code
+        "Mes sources sont **titanic** et `iris`.",
     ],
 )
-def test_les_questions_meta_sont_reconnues(question: str, sujet: str):
-    assert introspection.sujet_de(question) == sujet
+def test_une_formulation_qui_porte_les_faits_est_servie(catalogue: Catalog, reponse: str):
+    """Le modèle a le droit de reformuler : c'est tout l'objet du changement."""
+    faits = introspection.decrire_les_sources(catalogue)
+
+    assert introspection.defaut_de_fondation(reponse, faits) == ""
 
 
-@pytest.mark.parametrize(
-    "question",
-    [
-        # de vraies questions sur les DONNÉES : le lexique doit les laisser passer
-        "Combien de passagers ont survécu ?",
-        "Quel est l'âge du passager le plus âgé ?",
-        "Quel pourcentage des femmes de 1re classe ont survécu ?",
-        "Trace un histogramme de l'âge des passagers",
-        "Fais une ACP sur iris",
-        "Combien de lignes contient la table passengers ?",
-        "Sur quelle période portent les données ?",
-        "Prédis la survie du passager 42",
-        # le piège : la tournure d'une question de schéma pour une question de contenu
-        "Quelles colonnes de la table passengers contiennent des valeurs manquantes ?",
-        "Quelle est la répartition des colonnes par type ?",
-    ],
-)
-def test_les_questions_sur_les_donnees_ne_sont_pas_volees(question: str):
-    """Un routeur se juge autant sur ce qu'il laisse passer que sur ce qu'il attrape.
+def test_un_nom_de_table_absent_du_catalogue_ne_passe_pas(catalogue: Catalog):
+    """LE défaut à ne pas laisser revenir par la porte de l'agent système.
 
-    Se tromper de ce côté coûte un appel LLM ; se tromper de l'autre donne une
-    réponse fausse à une question sur les données, sans le dire.
+    ``acfd8f5`` corrigeait « décris le dataset iris » répondu de mémoire, sans
+    regarder la source. Un modèle à qui l'on demande les tables d'une base
+    « familière » sait en citer de mémoire — `flights`, `passengers_2`, ce
+    qu'on veut. Un nom inventé est plus nocif qu'une réponse absente : il a
+    l'air d'une lecture de la source.
     """
-    assert introspection.sujet_de(question) is None
+    faits = introspection.decrire_les_sources(catalogue)
+
+    defaut = introspection.defaut_de_fondation(
+        "Mes sources sont `titanic`, `iris` et `flights`.", faits
+    )
+
+    assert "flights" in defaut
 
 
-def test_un_marqueur_de_calcul_fait_abandonner_le_lexique():
-    """« quelles colonnes » est une tournure de schéma — « combien » tranche."""
-    assert introspection.sujet_de("Quelles colonnes a la table passengers ?") == "schema"
-    assert introspection.sujet_de("Combien de colonnes a la table passengers ?") is None
+def test_un_identifiant_en_serpent_est_repere_meme_hors_accents_graves():
+    """Un jeton à blanc souligné n'est jamais de la prose française.
+
+    Le gras, lui, n'est délibérément PAS compté du côté du modèle : il met en
+    gras des mots ordinaires, et les prendre pour des noms techniques ferait
+    écarter des réponses justes.
+    """
+    faits = "- `sepal_length`"
+
+    assert introspection.defaut_de_fondation("Il me faut sepal_length.", faits) == ""
+    assert "sepal_lenght" in introspection.defaut_de_fondation(
+        "Il me faut sepal_length et sepal_lenght.", faits
+    )
+
+
+def test_une_liste_incomplete_n_est_pas_une_reponse(catalogue: Catalog):
+    """Défaut mesuré : la version narrée par le modèle avait laissé tomber deux
+    colonnes sur dix (mesure du 2026-09-07, §4 de surface-conversationnelle.md)."""
+    faits = introspection.decrire_les_sources(catalogue)
+
+    defaut = introspection.defaut_de_fondation("Ma source est `titanic`.", faits)
+
+    assert "iris" in defaut
+
+
+def test_un_echappement_markdown_ne_compte_pas_pour_un_oubli():
+    """Le modèle écrit ``passenger\\_id`` : l'antislash est de l'affichage."""
+    assert (
+        introspection.defaut_de_fondation("La colonne `passenger\\_id`.", "- `passenger_id`") == ""
+    )
+
+
+def test_une_reponse_vide_ou_hors_sujet_ne_se_sert_pas():
+    assert introspection.defaut_de_fondation("   ", "- `titanic`") == "réponse vide"
+    assert introspection.defaut_de_fondation("AUTRE", "- `titanic`") == "réponse hors sujet"
 
 
 # --- ce qu'on cherche à qualifier ----------------------------------------------
@@ -426,17 +440,6 @@ def test_l_inventaire_d_une_installation_nue(tmp_path: Path):
 
 
 # --- le contrat du module ------------------------------------------------------
-
-
-def test_seul_le_schema_exige_une_connexion():
-    """Les autres sujets sont lisibles sans ouvrir quoi que ce soit — c'est ce qui
-    permet d'y répondre sans le moindre aller-retour."""
-    assert introspection.SUJETS_AVEC_ONTOLOGIE == ("schema",)
-    assert set(introspection.SUJETS_AVEC_ONTOLOGIE) <= set(get_args(introspection.Sujet))
-
-
-def test_le_lexique_ne_couvre_que_des_sujets_connus():
-    assert {sujet for sujet, _ in introspection.LEXIQUE} == set(get_args(introspection.Sujet))
 
 
 def test_le_module_ne_lit_ni_fichier_ni_base():

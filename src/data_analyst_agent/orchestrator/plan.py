@@ -17,9 +17,10 @@ from data_analyst_agent import prompts
 # planificateur, et rien d'autre : ce que le LLM a le droit de choisir.
 #
 # Une question SUR le système (« quelles sources possèdes-tu ? ») est aussi une
-# capacité de l'agent, et elle n'est volontairement PAS ici : elle est routée
-# par du code avant l'appel, vers le nœud `system` (cf.
-# `Orchestrator._court_circuit_meta`). La raison est mesurée, pas esthétique —
+# capacité de l'agent, et elle n'est volontairement PAS ici : elle est reconnue
+# EN AMONT du planificateur, par un agent qui dispose d'outils rendant les faits
+# du dépôt (`orchestrator/systeme.py`, nœud `system` en tête du graphe). La
+# raison est mesurée, pas esthétique —
 # ce Literal EST le JSON Schema de sortie, que le modèle lit même quand le
 # prompt ne dit rien de la valeur ajoutée. Constaté en live sur gemma4:e4b, de
 # façon reproductible : avec une cinquième valeur, « prédis la survie d'une

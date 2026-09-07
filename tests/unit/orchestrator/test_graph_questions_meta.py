@@ -1,10 +1,15 @@
 """Routage des questions SUR le système, bout en bout dans le graphe.
 
-Deux chemins d'entrée, et ils ne coûtent pas la même chose. Le lexique
-court-circuite le planificateur — **zéro appel LLM**, et c'est vérifié ici en
-n'en scriptant aucun : le moindre appel ferait tomber la doublure. La capacité
-``describe_system`` offerte au planificateur est le second chemin, celui des
-tournures que le lexique ne connaît pas.
+Un seul chemin d'entrée désormais, et c'est le **modèle** qui l'ouvre : le nœud
+`system` est en tête du graphe, il soumet la question à un agent muni de cinq
+outils rendant les faits du dépôt, et l'appel d'un outil est le signal de
+routage. Rien n'est appelé : le tour repart au planificateur comme avant.
+
+Ce qui est vérifié ici n'est donc pas un lexique — il n'y en a plus — mais les
+trois façons de ne PAS servir le modèle : il n'appelle rien, il invente un nom,
+il en oublie un. Dans les deux derniers cas ce sont les faits eux-mêmes qui
+partent à l'utilisateur, et c'est le rôle qu'a pris l'ancien chemin
+déterministe : une ceinture, plus le chemin principal.
 """
 
 from pathlib import Path
@@ -25,6 +30,7 @@ from helpers.scripted_llm import (
     PLANNER,
     RETRIEVAL,
     SYNTHESIS,
+    SYSTEME,
     ScriptedLLM,
     plan_response,
     text,
@@ -67,102 +73,232 @@ def orchestrateur(llm: ScriptedLLM, **kwargs) -> Orchestrator:
     return Orchestrator(model=llm.model(), **kwargs)
 
 
-# --- le chemin sans LLM --------------------------------------------------------
+def agent_systeme(outil: str, args: dict, reponse: str) -> ScriptedLLM:
+    """Un modèle qui appelle ``outil`` puis formule ``reponse``.
 
-
-def test_les_sources_sont_rendues_sans_le_moindre_appel_llm(mini_csv: Path, registre: Registry):
-    """La réponse est dans le catalogue : la faire classer par un modèle serait
-    payer un aller-retour pour apprendre ce qu'on sait déjà.
-
-    Aucune réponse n'est scriptée : si un agent était appelé, la doublure
-    lèverait faute de script. C'est la preuve, pas l'illustration.
+    Deux allers-retours, comme en vrai : le premier choisit l'outil, le second
+    rédige à partir de ce qu'il a rendu.
     """
-    llm = ScriptedLLM()
+    return ScriptedLLM().script(SYSTEME, [tool_call(outil, args), text(reponse)])
+
+
+# --- le chemin principal : le modèle appelle, l'outil rend, le modèle formule ---
+
+
+def test_les_sources_viennent_de_l_outil_et_le_modele_les_formule(
+    mini_csv: Path, registre: Registry
+):
+    """Le tour de force attendu du changement : la réponse est du modèle, et les
+    noms sont ceux du catalogue.
+
+    Le lexique reconnaissait cette question par la tournure « sources de
+    données ». Ici, rien de tel n'est écrit nulle part : c'est le modèle qui a
+    décidé d'appeler l'outil.
+    """
+    llm = agent_systeme(
+        "sources_de_donnees",
+        {},
+        "Je n'ai qu'une source pour l'instant : `ventes_2026`, un fichier.",
+    )
     catalogue = Catalog(
         sources=[FileSource(name="ventes_2026", path=mini_csv, description="Les ventes.")]
     )
-    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
-        "Bonjour, saurais-tu me dire les différentes sources de données que tu possèdes ?"
-    )
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask("tu bosses sur quoi ?")
+
     assert reponse.error is None
     assert "ventes_2026" in reponse.answer
-    assert "Les ventes." in reponse.answer
-    assert [s.node for s in reponse.trace] == ["plan", "system", "synthesize"]
+    # la formulation du MODÈLE, pas le gabarit : sa phrase, mot pour mot
+    assert reponse.answer.startswith("Je n'ai qu'une source")
+    assert [s.node for s in reponse.trace] == ["system", "synthesize"]
     assert llm.prompts_for(PLANNER) == []  # le planificateur n'a jamais été appelé
     # Aucun plan : il n'y a pas eu de planification, parce qu'il n'y avait rien
-    # à planifier. La trace, elle, dit ce qui a été routé et à quel prix.
+    # à planifier. La trace, elle, dit quel outil a fondé la réponse.
     assert reponse.plan is None
+    assert "sources_de_donnees" in next(s for s in reponse.trace if s.node == "system").detail
 
 
-def test_la_trace_dit_que_le_plan_n_a_rien_coute(mini_csv: Path, registre: Registry):
-    """Le nœud `plan` ne compte aucun token : il n'a rien envoyé."""
-    catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
-    reponse = orchestrateur(ScriptedLLM(), catalog=catalogue, registry=registre).ask(
-        "Que sais-tu faire ?"
+def test_le_schema_est_lu_dans_la_source_et_non_narre_de_memoire(
+    mini_csv: Path, registre: Registry
+):
+    """L'outil ouvre la source ; le modèle n'a que ce qu'elle a rendu."""
+    llm = agent_systeme(
+        "schema_d_une_source",
+        {"cible": "mini"},
+        "La table `mini` a deux colonnes : `sexe` et `survie`, toutes deux en VARCHAR "
+        "et BIGINT selon le schéma.",
     )
-    plan = next(s for s in reponse.trace if s.node == "plan")
-    assert "sans appel LLM" in plan.detail
-    assert plan.prompt_tokens is None
-    assert plan.server_prompt_tokens is None
-
-
-def test_les_colonnes_passent_par_le_systeme(mini_csv: Path, registre: Registry):
-    """« quelles colonnes ? » se lit dans l'ontologie, pas dans une réponse narrée.
-
-    C'est ce qui la rend complète par construction : la version narrée par le
-    modèle avait laissé tomber deux colonnes sur dix (mesure du 2026-09-07).
-    """
     catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
-    reponse = orchestrateur(ScriptedLLM(), catalog=catalogue, registry=registre).ask(
-        "Quelles colonnes y a-t-il dans la table mini ?"
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "il y a quoi comme colonnes ?"
     )
+
     assert "sexe" in reponse.answer
     assert "survie" in reponse.answer
-    assert "VARCHAR" in reponse.answer  # le type réel, lu dans le schéma
+
+
+def test_les_attributs_d_un_modele_designe_sont_rendus(registre: Registry):
+    """L'entrée « De quels attributs as-tu besoin ? » de axes-amelioration.md."""
+    champs = ("sex", "pclass", "age", "sibsp", "parch", "fare", "embarked")
+    llm = agent_systeme(
+        "attributs_d_un_modele",
+        {"modele": "titanic"},
+        "Pour **titanic** (classification de `survived`) il me faut : "
+        + ", ".join(f"`{c}`" for c in champs)
+        + ".",
+    )
+
+    reponse = orchestrateur(llm, registry=registre).ask(
+        "il te faut quoi pour deviner si un passager a survécu ?"
+    )
+
+    for champ in champs:
+        assert champ in reponse.answer
 
 
 def test_les_modeles_sont_ceux_du_registre(registre: Registry):
-    reponse = orchestrateur(ScriptedLLM(), registry=registre).ask(
-        "Quels modèles de prédiction sais-tu utiliser ?"
+    llm = agent_systeme(
+        "modeles_de_prediction",
+        {},
+        "Deux modèles : **iris** (cible `species`) et **titanic** (cible `survived`).",
     )
+
+    reponse = orchestrateur(llm, registry=registre).ask("quel genre de prévisions tu peux faire ?")
+
     assert "titanic" in reponse.answer
     assert "iris" in reponse.answer
 
 
-def test_les_features_d_un_modele_designe_sont_rendues(registre: Registry):
-    """L'entrée « De quels attributs as-tu besoin ? » de axes-amelioration.md."""
-    reponse = orchestrateur(ScriptedLLM(), registry=registre).ask(
-        "De quels attributs as-tu besoin pour prédire la survie d'un passager du Titanic ?"
+def test_la_reponse_du_systeme_n_est_pas_repassee_a_la_synthese(mini_csv: Path, registre: Registry):
+    """Le modèle a déjà formulé, avec les faits sous les yeux. La faire reformuler
+    par l'agent de synthèse — qui, lui, ne les a pas — rouvrirait la porte à une
+    réponse qui n'est plus celle du catalogue (cf. ``acfd8f5``)."""
+    llm = agent_systeme(
+        "capacites_de_l_agent",
+        {},
+        "Je sais interroger, analyser, prédire et parler de moi. Ma source : "
+        "`mini`. Mes modèles : `iris`, `titanic`.",
     )
-    for champ in ("sex", "pclass", "age", "sibsp", "parch", "fare", "embarked"):
-        assert champ in reponse.answer
-    assert "Southampton" in reponse.answer  # le sens du champ, tiré du schéma
-
-
-def test_les_features_non_qualifiees_repondent_au_lieu_de_demander(registre: Registry):
-    """Deux modèles, aucun désigné : on décrit les deux.
-
-    L'utilisateur recevait « Sur quel modèle veux-tu prédire : iris, titanic ? »
-    — sa propre question, renvoyée avec la liste. Répondre coûte le même
-    nombre d'appels LLM (aucun) et lui épargne un tour.
-    """
-    reponse = orchestrateur(ScriptedLLM(), registry=registre).ask(
-        "De quels attributs as-tu besoin ?"
-    )
-    assert "titanic" in reponse.answer
-    assert "iris" in reponse.answer
-    assert "sepal_length" in reponse.answer
-
-
-def test_la_reponse_du_systeme_n_est_pas_reformulee(mini_csv: Path, registre: Registry):
-    """Déterministe et rendue telle quelle : la faire reformuler rouvrirait la
-    porte à une réponse qui n'est plus celle du catalogue (cf. ``acfd8f5``)."""
-    llm = ScriptedLLM()
     catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
-    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask("Que sais-tu faire ?")
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "je peux te demander quoi ?"
+    )
+
     assert llm.prompts_for(SYNTHESIS) == []
     synthese = next(s for s in reponse.trace if s.node == "synthesize")
     assert synthese.detail == "système (déterministe)"
+
+
+# --- la ceinture : trois façons de ne pas servir le modèle ---------------------
+
+
+def test_un_nom_absent_des_faits_fait_servir_les_faits(mini_csv: Path, registre: Registry):
+    """LE défaut à ne pas laisser revenir par cette porte.
+
+    ``acfd8f5`` corrigeait « décris le dataset iris » répondu de mémoire. Un
+    modèle à qui l'on demande les tables d'une base « familière » sait en citer
+    de mémoire, et un nom inventé est plus nocif qu'une réponse absente : il a
+    l'air d'une lecture de la source. Ici le modèle cite `flights`, que le
+    catalogue ne connaît pas — ce sont les faits qui partent, et le nom inventé
+    n'atteint JAMAIS l'utilisateur.
+    """
+    llm = agent_systeme(
+        "sources_de_donnees",
+        {},
+        "J'ai deux sources : `mini` et `flights`.",
+    )
+    catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "montre-moi ce que tu as"
+    )
+
+    assert "flights" not in reponse.answer
+    assert "mini" in reponse.answer
+    detail = next(s for s in reponse.trace if s.node == "system").detail
+    assert "faits servis tels quels" in detail
+    assert "flights" in detail  # la trace dit POURQUOI on a écarté la formulation
+
+
+def test_une_liste_incomplete_fait_servir_les_faits(mini_csv: Path, registre: Registry):
+    """Défaut mesuré : la version narrée avait laissé tomber deux colonnes sur dix
+    (mesure du 2026-09-07, §4 de surface-conversationnelle.md). Une liste
+    incomplète n'est pas une réponse à « quelles sources ? »."""
+    llm = agent_systeme("sources_de_donnees", {}, "Ma source est `mini`.")
+    catalogue = Catalog(
+        sources=[
+            FileSource(name="mini", path=mini_csv),
+            FileSource(name="autre", path=mini_csv),
+        ]
+    )
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask("liste tes bases")
+
+    assert "autre" in reponse.answer  # rendue par les faits, oubliée par le modèle
+    assert "fait(s) omis" in next(s for s in reponse.trace if s.node == "system").detail
+
+
+def test_aucun_outil_appele_renvoie_la_question_au_planificateur(
+    mini_csv: Path, registre: Registry
+):
+    """Le signal de routage est l'appel d'outil, pas le texte : un modèle qui
+    répond de mémoire sans rien regarder ne peut pas se faire servir."""
+    llm = (
+        ScriptedLLM()
+        .script(SYSTEME, [text("Iris est un jeu de classification floristique bien connu.")])
+        .script(PLANNER, [plan_response(Plan(capability="predict", dataset="titanic"))])
+    )
+
+    reponse = orchestrateur(
+        llm, catalog=Catalog(sources=[FileSource(name="mini", path=mini_csv)]), registry=registre
+    ).ask("décris le dataset iris")
+
+    assert "floristique" not in reponse.answer
+    assert reponse.plan is not None  # un plan a bien été demandé, et rendu
+    assert "aucun outil appelé" in next(s for s in reponse.trace if s.node == "system").detail
+
+
+def test_un_agent_systeme_qui_n_aboutit_pas_laisse_passer_la_question(
+    mini_csv: Path, registre: Registry, monkeypatch
+):
+    """Fail-open, et délibérément : ce nœud est en tête de CHAQUE tour.
+
+    Un planificateur qui aurait su répondre ne doit pas être privé de la
+    question par un incident du nœud d'avant. Ce qu'un OUTIL rate, en
+    revanche, n'est pas rattrapé (test suivant).
+    """
+
+    def _echoue(*args, **kwargs):
+        raise UnexpectedModelBehavior("Exceeded maximum retries")
+
+    monkeypatch.setattr("data_analyst_agent.orchestrator.graph.run_systeme", _echoue)
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="predict"))])
+
+    reponse = orchestrateur(
+        llm, catalog=Catalog(sources=[FileSource(name="mini", path=mini_csv)]), registry=registre
+    ).ask("quelles sources ?")
+
+    assert reponse.error is None
+    assert reponse.plan is not None
+    assert "agent système écarté" in next(s for s in reponse.trace if s.node == "system").detail
+
+
+def test_un_outil_qui_tombe_reste_garde(tmp_path: Path, registre: Registry):
+    """Le fichier de la source a disparu : une phrase et une référence
+    d'incident, pas une exception brute. Et ce n'est PAS rattrapé — un
+    catalogue qui pointe dans le vide est un vrai défaut de configuration."""
+    llm = agent_systeme("schema_d_une_source", {"cible": "envolee"}, "peu importe")
+    catalogue = Catalog(sources=[FileSource(name="envolee", path=tmp_path / "absent.csv")])
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "Quelles colonnes a la table envolee ?"
+    )
+
+    assert "ma propre configuration" in reponse.answer
+    assert "incident" in reponse.answer
+    assert "FileNotFoundError" not in reponse.answer
 
 
 # --- le planificateur n'a PAS cette capacité, et c'est mesuré -----------------
@@ -186,27 +322,20 @@ def test_le_contrat_de_sortie_du_llm_reste_a_quatre_capacites():
       de ``pclass``, donc une relance au lieu d'une prédiction. Le Literal
       retiré, la prédiction aboutit.
 
-    D'où le routage par du code (``_court_circuit_meta``), qui est de toute
-    façon la règle du dépôt. Ce test garde le contrat : l'élargir de nouveau
-    demandera une mesure, pas une intuition.
+    D'où un **outil** plutôt qu'une capacité : il ne touche pas ce contrat. Ce
+    test le garde : l'élargir de nouveau demandera une mesure, pas une
+    intuition.
     """
     assert get_args(Capability) == ("query", "analyze", "predict", "fetch_then_predict")
 
 
 def test_le_planificateur_n_entend_pas_parler_du_systeme(registre: Registry):
     llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query"))])
+
     orchestrateur(llm, registry=registre).ask("euh")
+
     assert "describe_system" not in llm.systems_for(PLANNER)[0]
-
-
-def test_une_tournure_inconnue_du_lexique_suit_le_chemin_habituel(registre: Registry):
-    """Le lexique est précis, pas exhaustif : ce qu'il ne reconnaît pas est
-    classé par le planificateur comme avant, sans passer par le nœud système."""
-    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="predict"))])
-    reponse = orchestrateur(llm, registry=registre).ask("Raconte-moi un peu ton périmètre.")
-    assert reponse.plan is not None  # un plan a bien été demandé, et rendu
-    assert "system" not in [s.node for s in reponse.trace]
-    assert len(llm.prompts_for(PLANNER)) == 1
+    assert "sources_de_donnees" not in llm.systems_for(PLANNER)[0]
 
 
 # --- le repli, qui ne repart plus les mains vides -----------------------------
@@ -226,9 +355,11 @@ def test_le_repli_rend_l_inventaire_reel(mini_csv: Path, registre: Registry, mon
         lambda *args, **kwargs: _PlanificateurQuiEchoue(),
     )
     catalogue = Catalog(sources=[FileSource(name="ventes_2026", path=mini_csv)])
+
     reponse = orchestrateur(ScriptedLLM(), catalog=catalogue, registry=registre).ask(
         "euh... fais un truc"
     )
+
     assert "ventes_2026" in reponse.answer  # lu dans le catalogue
     assert "iris, titanic" in reponse.answer  # lu dans le registre
     assert reponse.answer.strip().endswith("?")  # on redemande quand même
@@ -239,7 +370,9 @@ def test_le_repli_rend_l_inventaire_reel(mini_csv: Path, registre: Registry, mon
 
 def test_une_question_sur_les_donnees_garde_sa_route(mini_csv: Path, registre: Registry):
     """Le témoin : la tournure ressemble à une question de schéma, la réponse
-    est un SELECT."""
+    est un SELECT. C'est le prompt de l'agent système qui trace la frontière —
+    « il répond sur ce que l'agent EST, jamais sur ce que les données
+    CONTIENNENT » — et la batterie live la mesure sur le vrai modèle."""
     llm = (
         ScriptedLLM()
         .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
@@ -254,11 +387,13 @@ def test_une_question_sur_les_donnees_garde_sa_route(mini_csv: Path, registre: R
         )
     )
     catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+
     reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
         "Quelles colonnes de la table mini contiennent des valeurs manquantes ?"
     )
+
     assert reponse.plan.capability == "query"
-    assert [s.node for s in reponse.trace] == ["plan", "retrieval", "synthesize"]
+    assert [s.node for s in reponse.trace] == ["system", "plan", "retrieval", "synthesize"]
 
 
 def test_un_tableau_intermediaire_n_est_pas_annonce_comme_une_source(
@@ -268,10 +403,13 @@ def test_un_tableau_intermediaire_n_est_pas_annonce_comme_une_source(
     l'annoncer comme telle induirait en erreur. Même distinction que dans
     ``PlanContext`` entre catalogue déclaré et catalogue effectif."""
     ConversationWorkspace(tmp_path, "fil").save_table(["a"], [[1]], "un tour précédent")
+    llm = agent_systeme("sources_de_donnees", {}, "Ma seule source est `mini`.")
     catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
-    reponse = orchestrateur(ScriptedLLM(), catalog=catalogue, registry=registre).ask(
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
         "Quelles sont tes sources de données ?", conversation_id="fil", workspace_root=tmp_path
     )
+
     assert "mini" in reponse.answer
     assert "resultat_1" not in reponse.answer
 
@@ -283,23 +421,41 @@ def test_les_colonnes_d_un_tableau_intermediaire_restent_lisibles(
     ConversationWorkspace(tmp_path, "fil").save_table(
         ["region", "chiffre"], [["nord", 12]], "un tour précédent"
     )
+    llm = agent_systeme(
+        "schema_d_une_source",
+        {"cible": "resultat_1"},
+        "La table `resultat_1` porte `region` et `chiffre`.",
+    )
     catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
-    reponse = orchestrateur(ScriptedLLM(), catalog=catalogue, registry=registre).ask(
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
         "Quelles colonnes a la table resultat_1 ?",
         conversation_id="fil",
         workspace_root=tmp_path,
     )
+
     assert "region" in reponse.answer
     assert "chiffre" in reponse.answer
 
 
-def test_un_noeud_systeme_qui_tombe_reste_garde(tmp_path: Path, registre: Registry):
-    """Le fichier de la source a disparu : une phrase et une référence
-    d'incident, pas une exception brute."""
-    catalogue = Catalog(sources=[FileSource(name="envolee", path=tmp_path / "absent.csv")])
-    reponse = orchestrateur(ScriptedLLM(), catalog=catalogue, registry=registre).ask(
-        "Quelles colonnes a la table envolee ?"
+def test_un_complement_de_features_ne_passe_pas_par_l_agent_systeme(
+    mini_csv: Path, registre: Registry
+):
+    """« 28 ans » répond à une question que l'agent a posée : il n'y a rien à
+    interpréter, et lui faire passer l'agent système coûterait un aller-retour
+    pour apprendre ce qu'on sait déjà — en lui donnant l'occasion de s'emparer
+    d'un message qui ne lui est pas adressé."""
+    from data_analyst_agent.orchestrator.graph import PendingInference
+
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [plan_response(Plan(capability="predict", dataset="titanic", features={"age": 28.0}))],
     )
-    assert "ma propre configuration" in reponse.answer
-    assert "incident" in reponse.answer
-    assert "FileNotFoundError" not in reponse.answer
+
+    reponse = orchestrateur(
+        llm, catalog=Catalog(sources=[FileSource(name="mini", path=mini_csv)]), registry=registre
+    ).ask("elle avait 28 ans", pending=PendingInference(dataset="titanic", features={}))
+
+    assert llm.prompts_for(SYSTEME) == []  # l'agent système n'a pas été appelé
+    detail = next(s for s in reponse.trace if s.node == "system").detail
+    assert "prédiction en attente" in detail

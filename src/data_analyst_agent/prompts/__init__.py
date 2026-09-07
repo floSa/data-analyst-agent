@@ -1,6 +1,6 @@
 """Prompts système de l'application, servis depuis des fichiers.
 
-Les quatre prompts vivaient en chaînes Python, dans quatre modules différents
+Les prompts vivaient en chaînes Python, dans quatre modules différents
 (`orchestrator/plan.py`, `agents/retrieval/agent.py`, `agents/analysis/agent.py`,
 `orchestrator/graph.py`). Ce dépôt est un socle : plusieurs cas d'usage seront
 bâtis dessus, et le prompt est le premier endroit qu'on voudra ajuster pour
@@ -40,6 +40,7 @@ PLANNER = "planner.txt"
 RETRIEVAL = "retrieval.txt"
 ANALYSIS = "analysis.txt"
 SYNTHESIS = "synthesis.txt"
+SYSTEME = "systeme.txt"
 
 
 @lru_cache

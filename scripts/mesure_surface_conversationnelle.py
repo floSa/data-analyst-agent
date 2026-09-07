@@ -442,6 +442,113 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             attendus_parmi=tuple(str(n) for n in vt.lignes.values()),
             clarification_admise=vt.sources,
         ),
+        # --- LES REFORMULATIONS DU PROPRIÉTAIRE, mesurées en usage réel
+        #
+        # Dix façons de poser LA MÊME question (« quelles données as-tu ? »),
+        # relevées par le propriétaire en se servant de l'application. Trois
+        # étaient court-circuitées par le lexique, sept partaient au
+        # planificateur — classées `query`, donc du SQL écrit pour répondre à
+        # une question de configuration, ou le repli. Les voici nommées : c'est
+        # la partie de la batterie qui juge le ROUTAGE, et non la réponse.
+        #
+        # Elles sont écrites TELLES QUELLES, fautes et accents manquants
+        # compris (« tu as acces à quelles données »). Les corriger mesurerait
+        # un utilisateur qui n'existe pas.
+        QuestionMeta(
+            "sources-acces-familier",
+            "sources",
+            "tu as acces à quelles données",
+            attendus_tous=vt.sources,
+        ),
+        QuestionMeta(
+            "sources-premiere-personne",
+            "sources",
+            "sur quoi je peux travailler ?",
+            attendus_tous=vt.sources,
+        ),
+        QuestionMeta(
+            "sources-perimetre",
+            "sources",
+            "c'est quoi ton périmètre ?",
+            attendus_tous=vt.sources,
+        ),
+        QuestionMeta(
+            "sources-disposes",
+            "sources",
+            "de quoi disposes-tu ?",
+            attendus_tous=vt.sources,
+        ),
+        QuestionMeta(
+            "sources-montre-moi",
+            "sources",
+            "montre-moi ce que tu as",
+            attendus_tous=vt.sources,
+        ),
+        QuestionMeta(
+            "sources-tu-bosses",
+            "sources",
+            "tu bosses sur quoi ?",
+            attendus_tous=vt.sources,
+        ),
+        QuestionMeta(
+            "sources-liste-bases",
+            "sources",
+            "liste tes bases",
+            attendus_tous=vt.sources,
+        ),
+        # --- huit reformulations de plus, sur les autres familles
+        #
+        # Le constat portait sur « quelles sources ? », mais rien ne dit que
+        # les autres familles tiennent mieux : leur lexique est écrit de la
+        # même main, et rien ne le mesurait hors des tournures qu'il connaît.
+        QuestionMeta(
+            "sources-comme-donnees",
+            "sources",
+            "qu'est-ce que tu as comme données ?",
+            attendus_tous=vt.sources,
+        ),
+        QuestionMeta(
+            "sources-consulter",
+            "sources",
+            "quelles infos tu peux consulter ?",
+            attendus_tous=vt.sources,
+        ),
+        QuestionMeta(
+            "capacites-demander-quoi",
+            "capacités",
+            "je peux te demander quoi ?",
+            attendus_tous=("analys", "predi"),
+        ),
+        QuestionMeta(
+            "capacites-capable",
+            "capacités",
+            "dis-moi ce dont tu es capable",
+            attendus_tous=("analys", "predi"),
+        ),
+        QuestionMeta(
+            "colonnes-familier",
+            "colonnes",
+            "il y a quoi comme colonnes dans passengers ?",
+            attendus_tous=vt.colonnes[passengers],
+        ),
+        QuestionMeta(
+            "colonnes-champs-classes",
+            "colonnes",
+            "c'est quoi les champs de la table classes ?",
+            attendus_tous=vt.colonnes["titanic.classes"],
+        ),
+        QuestionMeta(
+            "modeles-previsions",
+            "modèles",
+            "quel genre de prévisions tu peux faire ?",
+            attendus_tous=vt.datasets,
+        ),
+        QuestionMeta(
+            "features-familier",
+            "features",
+            "il te faut quoi pour deviner l'espèce d'un iris ?",
+            attendus_tous=vt.features["iris"],
+        ),
         # --- TÉMOINS : de vraies questions sur les données, qui doivent le rester
         QuestionMeta(
             "temoin-comptage",

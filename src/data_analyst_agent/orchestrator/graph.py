@@ -21,7 +21,7 @@ from typing import Annotated, TypedDict
 
 import pandas as pd
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, UnexpectedModelBehavior
+from pydantic_ai import Agent, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.models import Model
 
 from data_analyst_agent import prompts
@@ -61,6 +61,7 @@ from data_analyst_agent.orchestrator.plan import (
     planner_system_prompt,
     planner_template,
 )
+from data_analyst_agent.orchestrator.systeme import run_systeme
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
 
@@ -142,8 +143,7 @@ class OrchestratorState(TypedDict, total=False):
     batch: BatchInferenceOutcome | None
     pending_in: PendingInference | None
     pending_out: PendingInference | None
-    system_topic: str | None  # sujet d'une question SUR le système (cf. introspection)
-    system: str | None  # réponse déterministe à une question SUR le système
+    system: str | None  # réponse à une question SUR le système
     clarification: str | None
     workspace: ConversationWorkspace | None
     answer: str
@@ -330,7 +330,17 @@ class Orchestrator:
         builder.add_node("system", self._guarded("system", self._system_node))
         builder.add_node("synthesize", self._guarded("synthesize", self._synthesize_node))
 
-        builder.set_entry_point("plan")
+        # Le nœud `system` est en TÊTE, et c'est le changement de forme du
+        # graphe : la première question posée n'est plus « quelle capacité ? »
+        # mais « est-ce une question sur moi ? ». C'est le modèle qui y répond,
+        # en appelant — ou non — un outil de faits (cf. `orchestrator/systeme`).
+        # Il n'appelle rien : le tour repart au planificateur comme avant.
+        builder.set_entry_point("system")
+        builder.add_conditional_edges(
+            "system",
+            self._apres_le_systeme,
+            {"plan": "plan", "synthesize": "synthesize"},
+        )
         builder.add_conditional_edges(
             "plan",
             self._route,
@@ -339,12 +349,11 @@ class Orchestrator:
                 "analyze": "analysis",
                 "predict": "inference",
                 "fetch_then_predict": "fetch_predict",
-                "system": "system",
                 "clarify": "synthesize",
                 "error": "synthesize",
             },
         )
-        for node in ("retrieval", "analysis", "inference", "fetch_predict", "system"):
+        for node in ("retrieval", "analysis", "inference", "fetch_predict"):
             builder.add_edge(node, "synthesize")
         builder.add_edge("synthesize", END)
         return builder.compile()
@@ -355,19 +364,25 @@ class Orchestrator:
     _PREDICT_CAPABILITIES = ("predict", "fetch_then_predict")
 
     @staticmethod
-    def _route(state: OrchestratorState) -> str:
-        """Règle de routage : du code, pas du prompt (CADRAGE §4).
+    def _apres_le_systeme(state: OrchestratorState) -> str:
+        """Le nœud système a-t-il répondu, ou la question part-elle au plan ?
 
-        ``system_topic`` est examiné avant le plan, et il n'y a pas de plan à
-        examiner dans ce cas : une question SUR le système est reconnue avant
-        l'appel au planificateur, donc aucune capacité n'a été choisie. C'est
-        la seule branche du graphe qui ne vient pas d'un ``Plan`` — et c'est
-        aussi ce qui la rend gratuite.
+        Une seule chose est regardée : ``system`` est-il renseigné. Le nœud le
+        renseigne quand le modèle a appelé un outil de faits **et** que sa
+        formulation les porte, ou quand il faut servir les faits eux-mêmes. Il
+        le laisse vide dans tous les autres cas — question sur les données,
+        modèle qui n'a rien appelé, agent système indisponible — et le tour
+        suit alors le chemin d'avant, planificateur compris.
         """
         if state.get("error"):
+            return "synthesize"
+        return "synthesize" if state.get("system") is not None else "plan"
+
+    @staticmethod
+    def _route(state: OrchestratorState) -> str:
+        """Règle de routage : du code, pas du prompt (CADRAGE §4)."""
+        if state.get("error"):
             return "error"
-        if state.get("system_topic"):
-            return "system"
         if state.get("plan") is None:
             return "error"
         if state.get("clarification"):
@@ -790,58 +805,6 @@ class Orchestrator:
                 return question
         return None
 
-    def _court_circuit_meta(self, state: OrchestratorState, start: float) -> dict | None:
-        """Une question SUR le système, reconnue et routée SANS appeler le LLM.
-
-        Placé avant ``_peser_le_prompt``, et c'est tout l'intérêt : la réponse
-        à « quelles sources possèdes-tu ? » est entièrement déterminée par
-        ``sources/catalogue.yaml``. Elle est connue avant même que la question
-        soit lue — la faire classer par un modèle de langage, c'est payer un
-        aller-retour pour apprendre ce qu'on sait déjà. Mesuré avant
-        correction : 2,05 appels LLM par question méta, dont 16 dépensés par
-        les huit replis pour ne rien répondre du tout
-        (docs/surface-conversationnelle.md).
-
-        **Une règle de ``_REGLES_DU_PLAN`` n'aurait pas pu le faire.** Ces
-        règles ajustent un ``Plan`` que le LLM a DÉJÀ rendu : l'appel est
-        derrière elles. Élargir ``_regle_choisir_le_modele`` — le point
-        d'atterrissage que désignait ``axes-amelioration.md`` pour « quelles
-        features ? » — aurait donc gardé l'aller-retour, n'aurait rattrapé que
-        les demandes que le LLM avait su classer en ``predict``, et aurait
-        laissé dehors le cas réellement constaté : celui où il ne classe rien
-        et où le repli s'enclenche. Une règle dont le nom dit « choisir le
-        modèle » se serait en plus mise à répondre à des questions, ce qui
-        n'est pas son travail.
-
-        **Et le planificateur ne connaît pas cette capacité**, délibérément.
-        Elle lui a été proposée, puis retirée sur mesure : la cinquième valeur
-        dans son prompt coûtait 134 tokens à *chaque* requête et, sur la
-        batterie, a déplacé quatre questions d'une bonne réponse vers une
-        mauvaise sans en gagner une seule — « sur quelle période portent les
-        données ? » et « quelles colonnes contiennent des valeurs
-        manquantes ? » y étaient routées en ``describe_system`` alors que leur
-        réponse est un ``SELECT``. Le modèle en service généralise « décris-toi »
-        à toute question sur la forme des données. Le lexique, lui, s'abstient
-        (``MARQUEURS_DE_CALCUL``). Ce qu'il ne reconnaît pas suit donc le
-        chemin d'avant, dont le repli rend maintenant l'inventaire réel
-        (``_repli_du_planificateur``) : le routage reste du code, pas du prompt.
-
-        **Aucun ``Plan`` n'est fabriqué**, et ``ChatAnswer.plan`` reste donc
-        vide pour ces questions. Ce n'est pas un oubli : il n'y a pas eu de
-        planification, parce qu'il n'y avait rien à planifier. Mettre une
-        capacité de plus dans ``Capability`` pour la forme aurait coûté cher —
-        le Literal est le contrat de sortie du modèle, et l'élargir dégrade son
-        extraction sur les autres capacités (mesuré, cf. ``plan.py``). Le sujet
-        porté par le state suffit à router, et la trace le dit en clair.
-        """
-        sujet = introspection.sujet_de(state["question"])
-        if sujet is None:
-            return None
-        return {
-            "system_topic": sujet,
-            "trace": [self._step("plan", f"système ({sujet}) — sans appel LLM", start)],
-        }
-
     def _repli_du_planificateur(self, state: OrchestratorState) -> str:
         """Ce qu'on répond quand le planificateur n'a pas su classer la demande.
 
@@ -866,11 +829,10 @@ class Orchestrator:
             "visualisation, ou une prédiction ?"
         )
 
+    # -- le nœud du plan -------------------------------------------------------
+
     def _plan_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
-        meta = self._court_circuit_meta(state, start)
-        if meta is not None:
-            return meta
         system_prompt, mesures = self._peser_le_prompt(state)
         plan = self._demander_un_plan(system_prompt, state, mesures)
         if plan is None:
@@ -896,65 +858,101 @@ class Orchestrator:
             "trace": [self._step("plan", detail, start, **mesures)],
         }
 
-    def _ontologies(self, question: str, catalogue: Catalog) -> list[introspection.Ontologie]:
-        """Ce que les sources disent d'elles-mêmes — la source visée, ou toutes.
+    # -- le nœud système : « est-ce une question sur moi ? » -------------------
 
-        L'entrée/sortie est ici et non dans ``introspection`` : ouvrir une
-        connexion appartient à un nœud du graphe, comme pour toute autre
-        capacité. Le formateur, lui, reste pur et testable sans base.
+    @staticmethod
+    def _tour_deja_engage(state: OrchestratorState) -> str:
+        """Les tours où le message n'est pas à interpréter — ni à payer.
 
-        Quand la question nomme une source, une seule connexion est ouverte.
-        Sinon on les ouvre toutes — « quelles colonnes dans la table
-        passengers ? » ne nomme aucune source et n'est pourtant pas ambiguë,
-        et le catalogue compte une poignée d'entrées par construction.
+        Une prédiction en attente de features attend une réponse précise, et le
+        message en est une. Y faire passer l'agent système coûterait un
+        aller-retour pour apprendre ce qu'on sait déjà — et lui donnerait
+        l'occasion de s'emparer d'un « 28 ans » qui ne lui est pas adressé.
         """
-        visee = introspection.source_visee(question, catalogue)
-        sources = [visee] if visee is not None else list(catalogue.sources)
-        ontologies = []
-        for source in sources:
-            with closing(open_source(source)) as adapter:
-                schema = adapter.schema()
-            ontologies.append(introspection.Ontologie(source, schema, source.dictionary_text()))
-        return ontologies
+        if state.get("pending_in") is not None:
+            return "prédiction en attente de features — passe au planificateur"
+        return ""
 
     def _system_node(self, state: OrchestratorState) -> dict:
-        """Répond à une question SUR le système, depuis ses sources de vérité.
+        """« Est-ce une question sur moi ? » — et c'est le MODÈLE qui répond.
 
-        Aucun LLM ici : le catalogue, le registre, les schémas de features et
-        l'ontologie de la source disent tout, et une réponse rédigée par le
-        modèle serait une réponse qu'on ne peut plus vérifier — c'est
-        exactement le défaut corrigé par ``acfd8f5``, où « décris le dataset
-        iris » était répondu de mémoire, sans regarder la source.
+        Premier nœud du graphe. L'agent système reçoit la question avec cinq
+        outils qui rendent les faits du dépôt (cf. ``orchestrator/systeme``) ;
+        s'il en appelle un, la question était sur le système et il en formule
+        le résultat. S'il n'appelle rien, le tour repart au planificateur
+        exactement comme avant.
 
-        Le sujet vient du state, posé par ``_court_circuit_meta`` — le seul
-        chemin qui mène ici, le planificateur n'ayant aucune valeur pour y
-        router. Le redéduire donnerait un second point de décision à tenir
-        cohérent avec le premier, et une branche « sujet inconnu » que rien ne
-        pourrait atteindre.
+        **Ce qui a changé, et pourquoi.** La reconnaissance était un lexique de
+        tournures. Mesuré par le propriétaire sur dix formulations naturelles
+        de la même question (« quelles données as-tu ? ») : trois
+        court-circuitées, sept parties au planificateur, classées `query`, et
+        du SQL écrit pour répondre à une question de configuration. La famille
+        est ouverte — « c'est quoi ton périmètre ? », « tu bosses sur quoi ? »,
+        « montre-moi ce que tu as » — et un lexique est une liste. Le prix payé
+        est un appel LLM en tête de CHAQUE question, y compris celles sur les
+        données ; il est mesuré et assumé (§9 de
+        `docs/surface-conversationnelle.md`).
+
+        **Trois façons de ne pas servir le modèle**, et c'est la ceinture que
+        l'ancien chemin déterministe est devenu :
+
+        - aucun outil appelé — la question n'était pas pour lui ;
+        - la formulation invente un nom, ou en omet un rendu par l'outil : les
+          **faits** sont servis tels quels (``defaut_de_fondation``) ;
+        - l'agent système lui-même n'a pas abouti : le tour repart au
+          planificateur au lieu d'échouer.
+
+        Ce dernier cas est délibérément **fail-open**, et seulement pour ce que
+        le MODÈLE rate (sortie invalide, plafond d'allers-retours atteint) : un
+        planificateur qui aurait su répondre ne doit pas être privé de la
+        question par un incident de ce nœud-ci. Ce qu'un OUTIL rate — une
+        source injoignable, un catalogue illisible — n'est pas rattrapé : c'est
+        un vrai défaut de configuration, il remonte au garde-fou et il est dit.
         """
         start = time.monotonic()
-        question = state["question"]
-        sujet = state["system_topic"]
-        # Le catalogue DÉCLARÉ pour lister les sources : un tableau
-        # intermédiaire du fil n'est pas une source de données, et l'annoncer
-        # comme telle induirait en erreur. Le catalogue EFFECTIF pour aller
-        # lire un schéma, parce qu'un tableau mémorisé est bel et bien
-        # interrogeable — même distinction que dans ``PlanContext``.
-        if sujet == "sources":
-            answer = introspection.decrire_les_sources(self.catalog)
-        elif sujet == "modeles":
-            answer = introspection.decrire_les_modeles(self.registry)
-        elif sujet == "features":
-            answer = introspection.decrire_les_features(
-                self.registry, introspection.dataset_vise(question, self.registry)
+        engage = self._tour_deja_engage(state)
+        if engage:
+            return {"trace": [self._step("system", engage, start)]}
+        try:
+            resultat = run_systeme(
+                state["question"],
+                model=self.model,
+                catalogue_declare=self.catalog,
+                catalogue_effectif=self._effective_catalog(state),
+                registre=self.registry,
+                request_limit=self.settings.systeme_request_limit,
             )
-        elif sujet == "schema":
-            answer = introspection.decrire_le_schema(
-                question, self._ontologies(question, self._effective_catalog(state))
-            )
-        else:
-            answer = introspection.decrire_les_capacites(self.catalog, self.registry)
-        return {"system": answer, "trace": [self._step("system", f"sujet : {sujet}", start)]}
+        except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
+            incident = reference_dincident()
+            logger.warning("agent système écarté (incident %s) : %s", incident, exc)
+            return {
+                "trace": [
+                    self._step(
+                        "system",
+                        f"agent système écarté (incident {incident}) — passe au planificateur",
+                        start,
+                    )
+                ]
+            }
+        if not resultat.concerne_le_systeme:
+            return {
+                "trace": [
+                    self._step("system", "aucun outil appelé — passe au planificateur", start)
+                ]
+            }
+        outils = ", ".join(resultat.outils_appeles)
+        defaut = introspection.defaut_de_fondation(resultat.reponse, resultat.faits)
+        if defaut:
+            return {
+                "system": resultat.faits,
+                "trace": [
+                    self._step("system", f"{outils} — faits servis tels quels ({defaut})", start)
+                ],
+            }
+        return {
+            "system": resultat.reponse,
+            "trace": [self._step("system", f"{outils} — formulé par le modèle", start)],
+        }
 
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()

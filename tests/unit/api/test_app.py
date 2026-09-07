@@ -239,7 +239,15 @@ def test_flux_reel_predict_via_api(tmp_path):
     body = client.post("/chat", json={"message": "Prédis pour cette passagère..."}).json()
     assert "a survécu" in body["answer"]
     assert body["plan"]["capability"] == "predict"
-    assert [step["node"] for step in body["trace"]] == ["plan", "inference", "synthesize"]
+    # `system` est le premier nœud de tout tour : il demande au modèle si la
+    # question porte sur l'agent lui-même. Ici il décline (aucun outil appelé),
+    # et le tour suit son chemin.
+    assert [step["node"] for step in body["trace"]] == [
+        "system",
+        "plan",
+        "inference",
+        "synthesize",
+    ]
 
 
 # -- barre latérale : lister, reprendre, dupliquer, supprimer ---------------------

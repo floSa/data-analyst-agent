@@ -145,7 +145,7 @@ def test_golden_1_pct_femmes_premiere_classe(catalog, registry, settings):
     assert oracle == pytest.approx(96.81)
     # et la réponse en langage naturel cite la valeur
     assert "96,81" in answer.answer
-    assert [s.node for s in answer.trace] == ["plan", "retrieval", "synthesize"]
+    assert [s.node for s in answer.trace] == ["system", "plan", "retrieval", "synthesize"]
 
 
 # --- scénario golden n°2 : bar chart en sandbox -----------------------------------

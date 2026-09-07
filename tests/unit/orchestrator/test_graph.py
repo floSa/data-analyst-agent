@@ -104,7 +104,7 @@ def test_flux_predict_complet(registry: Registry):
     assert answer.error is None
     assert "a survécu" in answer.answer
     assert "88" in answer.answer  # probabilité citée
-    assert [s.node for s in answer.trace] == ["plan", "inference", "synthesize"]
+    assert [s.node for s in answer.trace] == ["system", "plan", "inference", "synthesize"]
     assert answer.plan.capability == "predict"
 
 
@@ -494,7 +494,7 @@ def test_predict_sans_features_chaine_sur_le_tableau_memorise(tmp_path: Path):
     assert answer.plan.capability == "fetch_then_predict"
     assert answer.plan.source == "resultat_1"
     assert "Prédiction (iris)" in answer.answer
-    assert [s.node for s in answer.trace] == ["plan", "fetch_predict", "synthesize"]
+    assert [s.node for s in answer.trace] == ["system", "plan", "fetch_predict", "synthesize"]
 
 
 def test_predict_sans_features_sans_tableau_utilisable_redemande(registry: Registry):
@@ -1041,7 +1041,7 @@ def test_chainage_fetch_then_predict(passager_csv: Path, registry: Registry):
     assert answer.error is None
     assert "a survécu" in answer.answer
     nodes = [s.node for s in answer.trace]
-    assert nodes == ["plan", "fetch_predict", "synthesize"]
+    assert nodes == ["system", "plan", "fetch_predict", "synthesize"]
 
 
 def test_chainage_colonnes_capitalisees(tmp_path: Path, registry: Registry):
@@ -1255,7 +1255,7 @@ def test_source_omise_catalogue_multi_sources(
     assert "passagers" in answer.answer
     assert answer.answer.strip().endswith("?")
     # la capacité n'a pas été exécutée : on s'arrête au plan puis on synthétise
-    assert [s.node for s in answer.trace] == ["plan", "synthesize"]
+    assert [s.node for s in answer.trace] == ["system", "plan", "synthesize"]
     assert answer.artifacts == []
 
 
@@ -1270,7 +1270,7 @@ def test_predict_sans_modele_multi_modeles_clarifie():
     for name in ("california_housing", "iris", "titanic"):
         assert name in answer.answer
     assert answer.answer.strip().endswith("?")
-    assert [s.node for s in answer.trace] == ["plan", "synthesize"]
+    assert [s.node for s in answer.trace] == ["system", "plan", "synthesize"]
 
 
 def test_predict_sans_modele_un_seul_modele_repli_auto(registry: Registry):
@@ -1327,7 +1327,7 @@ def test_source_inconnue_repond_par_clarification(mini_csv: Path, registry: Regi
     assert "introuvable" in answer.answer
     assert "mini" in answer.answer  # liste les sources connues
     assert answer.answer.strip().endswith("?")
-    assert [s.node for s in answer.trace] == ["plan", "synthesize"]
+    assert [s.node for s in answer.trace] == ["system", "plan", "synthesize"]
 
 
 def test_source_decoree_par_le_llm_est_normalisee(mini_csv: Path, registry: Registry):
@@ -1367,7 +1367,7 @@ def test_planificateur_illisible_repond_proprement(registry: Registry, monkeypat
     assert answer.error is None  # pas d'exception brute remontée
     assert "UnexpectedModelBehavior" not in answer.answer
     assert answer.answer.strip().endswith("?")  # on redemande de préciser
-    assert [s.node for s in answer.trace] == ["plan", "synthesize"]
+    assert [s.node for s in answer.trace] == ["system", "plan", "synthesize"]
 
 
 def test_source_forcee_par_l_utilisateur(mini_csv: Path, registry: Registry):

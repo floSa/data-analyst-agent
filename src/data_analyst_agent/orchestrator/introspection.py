@@ -1,4 +1,4 @@
-"""Répondre aux questions SUR le système — depuis ses sources de vérité.
+"""Les FAITS que le système peut dire de lui-même — lus dans ses artefacts.
 
 Les quatre capacités historiques (`query`, `analyze`, `predict`,
 `fetch_then_predict`) sont quatre actions **sur** les données. Aucune ne couvre
@@ -8,13 +8,28 @@ demandait tout en déclarant ne pas comprendre (mesuré :
 [docs/surface-conversationnelle.md](../../../docs/surface-conversationnelle.md),
 une question méta sur trois en repli).
 
-**Jamais depuis la mémoire du modèle.** Chaque réponse d'ici est construite à
+**Jamais depuis la mémoire du modèle.** Chaque texte d'ici est construit à
 partir d'un artefact du dépôt : le catalogue (`sources/catalogue.yaml`), le
 registre (`models/registry.yaml`), les schémas de features (`SCHEMAS`), et
 l'ontologie que la source rend elle-même. C'est le défaut corrigé par
 ``acfd8f5`` — « décris le dataset iris » répondu de mémoire, avec une jolie
 prose sur « un ensemble classique de classification floristique » et zéro
 requête — et il ne doit pas revenir par cette porte.
+
+**Ces textes ont deux emplois, et c'est délibéré.** Ils sont ce que rendent les
+outils de l'agent système (:mod:`data_analyst_agent.orchestrator.systeme`), donc
+la matière que le modèle formule ; et ils sont le **repli** servi tel quel quand
+la formulation du modèle ne les porte pas (``defaut_de_fondation``). Le même
+texte est donc la source du chemin principal et la ceinture — un gabarit qu'on
+garde justement parce qu'il vaut mieux qu'une invention.
+
+Le **lexique de mots-clés** qui vivait ici a été retiré. Il reconnaissait le
+sujet d'une question par des tournures écrites à la main, et sa précision était
+son plafond : mesuré sur dix formulations naturelles de la même question
+(« quelles données as-tu ? »), il en court-circuitait trois et laissait les sept
+autres partir au planificateur, qui les classait `query` et écrivait du SQL. Le
+sujet est désormais reconnu par le modèle, qui appelle l'outil qui porte les
+faits — cf. `surface-conversationnelle.md` §9.
 
 Ce module est **pur** : il ne lit ni fichier ni base. L'ontologie d'une source
 lui est passée, déjà lue par le nœud qui a ouvert la connexion — l'entrée/sortie
@@ -26,199 +41,29 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Literal, get_args
+from typing import get_args
 
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.inference.schemas import SCHEMAS, describe_features
 from data_analyst_agent.agents.retrieval.catalog import Catalog, Source
 from data_analyst_agent.agents.retrieval.sql import SchemaInfo, TableInfo
 
-Sujet = Literal["sources", "schema", "modeles", "features", "capacites"]
-
-# Les sujets dont la réponse exige l'ontologie de la source — donc une
-# connexion. Tous les autres sont entièrement déterminés par le catalogue, le
-# registre et les schémas de features : lisibles sans ouvrir quoi que ce soit.
-SUJETS_AVEC_ONTOLOGIE: tuple[Sujet, ...] = ("schema",)
-
 
 def _replie(texte: str) -> str:
-    """Minuscules, sans accents, ponctuation ramenée à des blancs.
+    """Minuscules, sans accents ni décoration, ponctuation ramenée à des blancs.
 
-    Le lexique est écrit une fois, sous cette forme, et n'a donc pas à
-    prévoir « À quelles bases… », « a quelles bases » et « À QUELLES BASES ».
-    L'apostrophe et le trait d'union deviennent des blancs : « qu'est-ce que
-    tu sais faire » et « qu est ce que tu sais faire » se valent, et c'est ce
-    qui évite d'écrire chaque tournure deux fois.
+    Sert à deux comparaisons de sens et non de typographie : reconnaître le nom
+    d'une source ou d'une table cité dans une question, et vérifier qu'une
+    réponse du modèle porte bien les faits qu'un outil lui a rendus.
+
+    La décoration Markdown tombe avec le reste, et ce n'est pas cosmétique :
+    le modèle écrit ``passenger\\_id`` — l'antislash échappe le blanc souligné
+    pour l'affichage — et une comparaison littérale ne reconnaîtrait plus le
+    nom de la colonne qu'il vient pourtant de citer correctement.
     """
     sans_accent = unicodedata.normalize("NFKD", texte.lower())
     nu = "".join(c for c in sans_accent if not unicodedata.combining(c))
-    return " " + re.sub(r"[^a-z0-9_]+", " ", nu).strip() + " "
-
-
-# Ce qui fait d'une question une question sur les DONNÉES, quelle que soit sa
-# tournure. Le lexique s'abstient dès qu'un de ces mots paraît et laisse le
-# planificateur trancher : « quelles colonnes de passengers contiennent des
-# valeurs manquantes ? » a exactement la tournure d'une question de schéma, et
-# la réponse est un SELECT. Mieux vaut rendre une question au planificateur que
-# lui voler une question sur les données — la première coûte un appel LLM, la
-# seconde donne une réponse fausse sans le dire.
-MARQUEURS_DE_CALCUL = (
-    " combien ",
-    " moyenne ",
-    " moyen ",
-    " mediane ",
-    " median ",
-    " somme ",
-    " pourcentage ",
-    " taux ",
-    " manquant",
-    " correlation ",
-    " histogramme ",
-    " graphique ",
-    " courbe ",
-    " camembert ",
-    " nuage de points ",
-    " maximum ",
-    " minimum ",
-    " classement ",
-    " repartition ",
-    " predis ",
-    " calcule ",
-)
-
-# Le lexique, par sujet. Des TOURNURES et non des mots isolés : « source » seul
-# attraperait « la source titanic contient combien de lignes ? ». L'ordre de ce
-# tuple est l'ordre de priorité — du sujet le plus précis au plus général,
-# parce que « de quoi as-tu besoin pour prédire ? » parle de features et non de
-# modèles, et que « capacites » est le sujet fourre-tout qui doit passer en
-# dernier.
-LEXIQUE: tuple[tuple[Sujet, tuple[str, ...]], ...] = (
-    (
-        "features",
-        (
-            "quels attributs",
-            "quelles features",
-            "quels champs attend",
-            "quelles variables attend",
-            "quelles informations te faut il",
-            "quelles informations il te faut",
-            "quelles donnees te faut il",
-            "de quels attributs as tu besoin",
-            "de quelles informations as tu besoin",
-            "de quoi as tu besoin",
-            "que te faut il pour predire",
-            "quelles mesures",
-            "quelles valeurs dois je",
-            "quelles valeurs faut il",
-            "que dois je te donner",
-        ),
-    ),
-    (
-        "schema",
-        (
-            "quelles tables",
-            "quels tables",
-            "les tables de la",
-            "quelles colonnes",
-            "quels champs",
-            "les colonnes de",
-            "quelle est la structure",
-            "comment est structuree",
-            "comment est structure",
-            "le schema de",
-            "quel est le schema",
-            "quel schema",
-            "decris le schema",
-            "que signifie la colonne",
-            "que veut dire la colonne",
-            "a quoi correspond la colonne",
-            "signification de la colonne",
-            "que contient la table",
-        ),
-    ),
-    (
-        "modeles",
-        (
-            "quels modeles",
-            "quel modele",
-            "tes modeles",
-            "vos modeles",
-            "modeles de prediction",
-            "modeles disponibles",
-            "tu sais faire des predictions",
-            "tu peux faire des predictions",
-            "peux tu faire des predictions",
-            "sais tu faire des predictions",
-            "que peux tu predire",
-            "que sais tu predire",
-            "sur quoi peux tu predire",
-            "quelles predictions",
-        ),
-    ),
-    (
-        "sources",
-        (
-            "sources de donnees",
-            "quelles sources",
-            "quels sources",
-            "tes sources",
-            "vos sources",
-            "quelles bases",
-            "bases de donnees as tu",
-            "sur quoi peux tu travailler",
-            "sur quoi sais tu travailler",
-            "sur quoi tu peux travailler",
-            "sur quelles donnees peux tu",
-            "a quelles bases",
-            "a quelles sources",
-            "ton catalogue",
-            "quels jeux de donnees",
-            "jeux de donnees disponibles",
-            "donnees disponibles",
-            "quelles donnees as tu",
-            "quelles donnees possedes tu",
-            "donnees tu possedes",
-            "donnees que tu possedes",
-        ),
-    ),
-    (
-        "capacites",
-        (
-            "que sais tu faire",
-            "que peux tu faire",
-            "qu est ce que tu sais faire",
-            "qu est ce que tu peux faire",
-            "a quoi sers tu",
-            "quel est ton role",
-            "tes capacites",
-            "quelles sont tes capacites",
-            "comment peux tu m aider",
-            "que fais tu",
-            "presente toi",
-            "qui es tu",
-            "aide moi a comprendre ce que tu",
-        ),
-    ),
-)
-
-
-def sujet_de(question: str) -> Sujet | None:
-    """Le sujet d'une question sur le système, ou ``None`` si ce n'en est pas une.
-
-    ``None`` n'est pas un échec : c'est « laisse le planificateur trancher ».
-    Le lexique est délibérément **précis plutôt qu'exhaustif** — il est le
-    chemin rapide (zéro appel LLM), et la capacité ``describe_system`` offerte
-    au planificateur est le filet qui rattrape les tournures qu'il ne connaît
-    pas. Se tromper de ce côté coûte un appel LLM ; se tromper de l'autre
-    donne une réponse fausse à une question sur les données.
-    """
-    plat = _replie(question)
-    if any(marqueur in plat for marqueur in MARQUEURS_DE_CALCUL):
-        return None
-    for sujet, tournures in LEXIQUE:
-        if any(tournure in plat for tournure in tournures):
-            return sujet
-    return None
+    return " " + re.sub(r"[^a-z0-9_]+", " ", nu.replace("\\", "")).strip() + " "
 
 
 # --- ce qu'on cherche à qualifier dans la question ---------------------------
@@ -281,24 +126,34 @@ CAPACITES_EN_CLAIR: dict[str, str] = {
 }
 
 # Celle-ci n'est pas une valeur de ``Capability``, et c'est voulu (cf. le
-# commentaire de ``plan.py``) : elle est routée par du code avant l'appel au
-# modèle, pas choisie par lui. Elle a sa place dans la réponse quand même —
-# c'est bel et bien quelque chose que l'agent sait faire.
+# commentaire de ``plan.py``) : elle n'est pas choisie par le planificateur mais
+# reconnue en amont, quand le modèle appelle un outil de faits. Elle a sa place
+# dans la réponse quand même — c'est bel et bien quelque chose que l'agent sait
+# faire.
 CAPACITE_SUR_SOI = (
     "**répondre sur moi-même** — mes sources, leurs tables et leurs colonnes, "
     "mes modèles et les attributs qu'ils attendent"
 )
 
 
-def decrire_les_sources(catalogue: Catalog) -> str:
-    """Le catalogue, rendu à l'utilisateur — noms, types, descriptions."""
-    if not catalogue.sources:
-        return "Je n'ai aucune source de données déclarée dans mon catalogue."
+AUCUNE_SOURCE = "Je n'ai aucune source de données déclarée dans mon catalogue."
+
+
+def _liste_des_sources(catalogue: Catalog) -> list[str]:
+    """L'inventaire des sources en lignes — nom, type, description déclarée."""
     lignes = [f"J'ai accès à {len(catalogue.sources)} source(s) de données :", ""]
     for source in catalogue.sources:
         description = source.description.strip() or "sans description"
         lignes.append(f"- **{source.name}** ({source.type}) — {description}")
-    lignes += [
+    return lignes
+
+
+def decrire_les_sources(catalogue: Catalog) -> str:
+    """Le catalogue, rendu à l'utilisateur — noms, types, descriptions."""
+    if not catalogue.sources:
+        return AUCUNE_SOURCE
+    lignes = [
+        *_liste_des_sources(catalogue),
         "",
         "Demande-moi les tables ou les colonnes de l'une d'elles "
         "(« quelles colonnes a la source "
@@ -567,3 +422,75 @@ def inventaire(catalogue: Catalog, registre: Registry) -> str:
     sources = ", ".join(s.name for s in catalogue.sources) or "aucune source déclarée"
     modeles = ", ".join(registre.datasets) or "aucun modèle"
     return f"Mes sources : {sources}. Mes modèles de prédiction : {modeles}."
+
+
+# --- la ceinture : une formulation qui ne porte pas les faits est écartée -----
+
+# Ce que le modèle doit répondre quand la question n'est PAS pour lui (cf.
+# `prompts/systeme.txt`). Elle ne sert qu'à raccourcir sa réponse : le signal
+# de routage est l'absence d'appel d'outil, pas ce mot — un modèle qui
+# paraphrase la consigne au lieu de la recopier ne doit pas pour autant voir
+# sa réponse servie à l'utilisateur.
+SENTINELLE_HORS_SUJET = "AUTRE"
+
+# Un identifiant technique : nom de source, de table, de colonne, de modèle.
+_FORME_D_IDENTIFIANT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Comment les faits le rendent : entre accents graves (`class_id`) ou en gras
+# (**titanic**). Ce sont NOS textes, donc les deux marques sont fiables.
+_ENTRE_ACCENTS = re.compile(r"`([^`\n]{1,64})`")
+_EN_GRAS = re.compile(r"\*\*([^*\n]{1,64})\*\*")
+# Ce qui, dans la réponse du MODÈLE, vaut affirmation d'un nom technique. Le
+# gras en est absent volontairement : le modèle met en gras des mots français
+# ordinaires, et les compter ferait écarter des réponses justes. Un jeton
+# contenant un blanc souligné, en revanche, n'est jamais de la prose française.
+_EN_SERPENT = re.compile(r"\b([A-Za-z]+(?:_[A-Za-z0-9]+)+)\b")
+
+
+def _identifiants(texte: str, *motifs: re.Pattern[str]) -> list[str]:
+    """Les identifiants que ``texte`` cite, dédoublonnés, en minuscules.
+
+    Les échappements Markdown du modèle sont retirés avant l'examen :
+    ``passenger\\_id`` est le nom ``passenger_id``, écrit pour l'affichage.
+    """
+    trouves: dict[str, None] = {}
+    for motif in motifs:
+        for brut in motif.findall(texte):
+            nom = brut.replace("\\", "").strip()
+            if _FORME_D_IDENTIFIANT.fullmatch(nom):
+                trouves.setdefault(nom.lower(), None)
+    return list(trouves)
+
+
+def defaut_de_fondation(reponse: str, faits: str) -> str:
+    """Ce qui interdit de servir la formulation du modèle — ``""`` si rien.
+
+    Le modèle formule, mais il ne décide pas de ce qui est vrai. Deux défauts
+    le disqualifient, et dans les deux cas ce sont les ``faits`` qui sont
+    servis à l'utilisateur (cf. l'en-tête du module) :
+
+    - **un nom qu'aucun fait ne porte.** C'est la reprise du défaut d'``acfd8f5``
+      par une autre porte : un modèle à qui l'on demande les tables d'une base
+      « familière » sait en citer de mémoire. Un nom inventé est plus nocif
+      qu'une réponse absente — il a l'air d'une lecture de la source.
+    - **un nom rendu par l'outil et absent de la réponse.** Une liste
+      incomplète n'est pas une réponse à « quelles colonnes ? », et c'est un
+      défaut mesuré : la version narrée par le modèle avait laissé tomber deux
+      colonnes sur dix (mesure du 2026-09-07, §4 de
+      `surface-conversationnelle.md`).
+
+    Le message rendu est destiné à la **trace**, pas à l'utilisateur : ce qu'il
+    lit, lui, est la réponse déterministe, qui ne dit pas qu'elle est un repli.
+    """
+    if not reponse.strip():
+        return "réponse vide"
+    if _replie(reponse).strip() == SENTINELLE_HORS_SUJET.lower():
+        return "réponse hors sujet"
+    attendus = _identifiants(faits, _ENTRE_ACCENTS, _EN_GRAS)
+    inventes = [n for n in _identifiants(reponse, _ENTRE_ACCENTS, _EN_SERPENT) if n not in attendus]
+    if inventes:
+        return "nom(s) qu'aucun fait ne porte : " + ", ".join(sorted(inventes))
+    plat = _replie(reponse)
+    omis = [n for n in attendus if f" {n} " not in plat]
+    if omis:
+        return "fait(s) omis : " + ", ".join(omis)
+    return ""
