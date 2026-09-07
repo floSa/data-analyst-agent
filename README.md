@@ -22,6 +22,8 @@ Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM 
 - [Démarrage](#démarrage)
 - [Configuration](#configuration)
 - [API / Endpoints](#api--endpoints)
+- [Le début d'une conversation : choisir la source](#le-début-dune-conversation--choisir-la-source)
+- [Ce que l'agent sait dire de lui-même](#ce-que-lagent-sait-dire-de-lui-même)
 - [Mémoire de conversation](#mémoire-de-conversation)
 - [Observabilité](#observabilité)
 - [Qualité](#qualité)
@@ -38,6 +40,8 @@ flowchart LR
     O --> R["① Récupération<br/>text-to-SQL à tools"]
     O --> A["② Analyse<br/>code stats/viz"]
     O --> I["③ Inférence gardée<br/>validation → predict"]
+    O --> Y["④ Répondre sur soi-même<br/>outils de faits, jamais de mémoire"]
+    Y --> C[("Catalogue · registre ·<br/>schémas · ontologies")]
     R --> D[("Postgres ·<br/>CSV/Excel via DuckDB")]
     A --> S["Sandbox Docker<br/>réseau coupé"]
     I --> M[("Modèles ML<br/>registry joblib")]
@@ -87,6 +91,7 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 | [docs/AUDIT-2026-09.md](docs/AUDIT-2026-09.md) | état des lieux mesuré et backlog priorisé (multi-utilisateurs, mémoire, moteur LLM, sécurité, qualité) |
 | [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
 | [docs/VLLM.md](docs/VLLM.md) | banc d'essai vLLM : le tool calling mesuré, ce qui casse sans les bonnes options, ce qui reste à vérifier |
+| [docs/surface-conversationnelle.md](docs/surface-conversationnelle.md) | ce que l'agent sait répondre **sur lui-même** : la batterie de mesure, les comptes avant/après, le coût en appels LLM, et les décisions déjà mesurées et retirées |
 | [docs/axes-amelioration.md](docs/axes-amelioration.md) | dette technique et chantiers ouverts, ancrés `fichier:ligne`, avec un récapitulatif priorisé |
 
 ## Démarrage
@@ -210,6 +215,53 @@ unicode NFKC, espaces de bord retirés, casse repliée (`casefold`). `floSa`,
 d'autant plus que le login est aussi le nom du dossier où vivent ses
 conversations. L'espace interne, le caractère de contrôle et le login de plus de
 64 caractères sont refusés ; l'unicode, lui, est accepté.
+
+## Le début d'une conversation : choisir la source
+
+Le catalogue peut déclarer plusieurs sources. Plutôt que de laisser le planificateur en deviner une à chaque tour, l'agent **propose**, l'utilisateur **valide**, et c'est celle sur laquelle on travaille ensuite.
+
+```
+> bonjour, je voudrais regarder des données
+  J'ai accès à 2 source(s) de données :
+  - **titanic** (postgres) — Base Titanic multi-tables (passengers + classes…)
+  - **iris** (file) — Dataset Iris (fichier CSV local)…
+  Donne-moi le nom de celle qui t'intéresse : je la garde pour la suite de la conversation.
+  Sur laquelle veux-tu travailler ?
+
+> titanic
+  Entendu : on travaille sur **titanic** (postgres) — Base Titanic multi-tables…
+
+> combien de lignes en tout ?          ← la source n'est plus nommée, et n'est plus devinée
+  Il y a un total de 891 lignes dans la table des passagers.
+
+> et dans iris, combien de lignes ?    ← une autre source nommée : on bascule, et on le dit
+  Je passe sur la source `iris` — on travaillait sur `titanic`.
+  La table `iris` contient un total de 150 lignes.
+```
+
+*(Transcription réelle, mesurée contre le serveur — cf. [docs/surface-conversationnelle.md](docs/surface-conversationnelle.md) §12.)*
+
+Ce qu'il faut savoir de ce mécanisme :
+
+- **S'il n'y a qu'une source, elle est annoncée** au lieu d'être demandée : « Je travaille sur la source `iris`. » Poser une question dont la réponse est déjà connue serait un tour perdu.
+- **La proposition n'arrive que si une source est nécessaire.** « Prédis pour une passagère de 1re classe, 28 ans… » n'interroge aucune source : la question est répondue directement.
+- **La validation ne coûte aucun appel LLM** : c'est le nom d'une source du catalogue, reconnu dans le message. Un message qui n'en nomme aucune n'est pas un choix et repart comme une question ordinaire — on ne reste pas coincé dans une question qu'on ne veut pas trancher.
+- **Un message qui nomme une source ET pose une question est traité comme la question qu'il est** : « et dans iris, combien de lignes ? » lie la source *en chemin* et répond, au lieu de se contenter d'accuser réception.
+- **La source est portée par la conversation** : elle se persiste dans `transcript.json` comme le propriétaire du fil, et la reprise d'un ancien fil la retrouve. Une conversation ouverte **avant** ce mécanisme fonctionne comme avant, sans migration.
+- **Nommer une autre source la remplace, et l'agent le dit** : « Je passe sur la source `iris` — on travaillait sur `titanic`. » Le choix a été de basculer plutôt que de refuser ou de redemander : refuser obligerait à ouvrir un fil pour une question d'une ligne. Ce qui est dangereux n'est pas de changer de source, c'est de changer sans le dire. Une source choisie par le *planificateur*, elle, ne fait jamais basculer quoi que ce soit — seul le texte de l'utilisateur compte.
+- Le champ `source` de `POST /chat` reste ce qu'il était : une source **imposée pour ce tour**, qui ne lie rien.
+
+## Ce que l'agent sait dire de lui-même
+
+« Quelles données as-tu ? », « c'est quoi ton périmètre ? », « quelles colonnes dans `passengers` ? », « de quels attributs as-tu besoin pour prédire ? », « que sais-tu faire ? » — ces questions ne portent pas *sur* les données mais **sur l'agent**, et elles sont le premier tour d'une conversation sur deux.
+
+Le premier nœud du graphe leur est consacré, et c'est le **modèle** qui décide : il reçoit la question avec cinq outils qui rendent les faits du dépôt — catalogue, registre des modèles, schémas d'attributs, schéma réel des sources — puis il les formule. S'il n'appelle aucun outil, la question repart au planificateur comme n'importe quelle question sur les données.
+
+**Rien ne vient de la mémoire du modèle**, et ce n'est pas une intention mais une vérification : une formulation qui cite un nom qu'aucun outil n'a rendu, ou qui oublie un nom qu'un outil a rendu, est **écartée** — ce sont alors les faits eux-mêmes qui partent à l'utilisateur. Un nom de table inventé est plus nocif qu'une réponse absente : il a l'air d'une lecture de la source.
+
+La frontière : l'agent répond sur ce qu'il **EST**, jamais sur ce que les données **CONTIENNENT**. « Combien de lignes dans `passengers` ? » et « sur quelle période portent les données ? » sont des `COUNT` et des `MIN`/`MAX` : elles suivent le chemin SQL.
+
+La mesure de cette surface — quarante formulations posées au vrai serveur, avant et après, avec le coût en appels LLM — est dans **[docs/surface-conversationnelle.md](docs/surface-conversationnelle.md)**.
 
 ## Mémoire de conversation
 
@@ -354,14 +406,15 @@ Les tests marqués `live` (LLM local requis) sont exclus par défaut : `uv run p
 src/data_analyst_agent/   # package
 ├── orchestrator/         # graphe, plan et ses règles, budget de contexte, mémoire des fils
 ├── agents/               # ① retrieval  ② analysis  ③ inference
+│                         #   (④ « répondre sur soi-même » vit dans orchestrator/)
 ├── auth/                 # comptes argon2id, sessions côté serveur, anti-force brute
-├── prompts/              # les 4 prompts système, hors du code (.txt)
+├── prompts/              # les 5 prompts système, hors du code (.txt)
 ├── sandbox/              # client durci + image/ (Dockerfile, bridge Jupyter)
 └── api/                  # app.py (HTTP seul) + templates/ (chat, connexion)
-docs/                     # ARCHITECTURE, CADRAGE, AUDIT, VLLM, spike-vanna
+docs/                     # ARCHITECTURE, CADRAGE, AUDIT, VLLM, spike-vanna, surface-conversationnelle
 models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
 sources/                  # catalogue des sources + datasets vendorisés
-scripts/                  # comptes, migration du workspace, seed Postgres, mesures, bancs
+scripts/                  # comptes, migration du workspace, seed Postgres, runners de mesure, bancs
 notebooks/                # entraînement des modèles jouets (jupytext .md + .ipynb)
 tests/                    # unit / integration / e2e golden / helpers / fakes / fixtures
 var/                      # NON versionné : comptes, sessions, conversations (0o700)

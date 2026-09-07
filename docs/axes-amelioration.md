@@ -92,7 +92,24 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 - **Résultat mesuré** : 21/21 correctes, **zéro repli**, et **9 appels LLM au lieu de 43**
   — dix-sept des vingt-et-une questions se répondent sans le moindre aller-retour, la
   réponse étant entièrement déterminée par la configuration.
-- **Statut** : **Corrigé.**
+- **Puis rouvert, et re-corrigé.** Le 21/21 mesurait le lexique contre la batterie qui
+  avait servi à l'écrire. Sur **quinze reformulations naturelles** de la même famille,
+  relevées par le propriétaire en usage réel, il n'en attrapait que trois — « c'est quoi
+  ton périmètre ? », « tu bosses sur quoi ? », « montre-moi ce que tu as » partaient au
+  planificateur, classées `query`, et recevaient du SQL ou le repli. Un lexique de
+  tournures est une liste ; la famille « parle-moi de toi » est ouverte.
+- **Correction retenue** : le lexique est retiré, et c'est le **modèle** qui reconnaît la
+  question — un agent à cinq **outils** (`orchestrator/systeme.py`) qui rendent les faits
+  du dépôt, l'appel d'un outil valant signal de routage. Le déterministe n'est pas jeté :
+  il est devenu la matière que le modèle formule, **et** la ceinture servie quand sa
+  formulation invente un nom ou en omet un (`defaut_de_fondation`).
+- **Résultat mesuré, seconde fois** : **36/36** sur la batterie élargie (contre 24/36),
+  **7/7** sur les sept formulations du constat (contre 0/7), et **30 des 36 réponses
+  formulées par le modèle** — c'était l'autre moitié du grief, « ce n'est même pas le LLM
+  qui répond ». Coût assumé : **un aller-retour de plus sur chaque question, y compris
+  celles sur les données**.
+- **Statut** : **Corrigé** (deux fois). Détail et rejeux :
+  [surface-conversationnelle.md](surface-conversationnelle.md) §9 à §11.
 
 ### La capacité système n'est pas dans `Capability`, et ne doit pas y revenir sans mesure
 
@@ -116,7 +133,36 @@ c'est la partie qu'on ne retrouve pas dans un diff.
   existant n'est affecté.
 - **Statut** : Fermé par décision, verrouillé par un test
   (`test_le_contrat_de_sortie_du_llm_reste_a_quatre_capacites`). À rouvrir seulement avec
-  une mesure sur un modèle plus solide.
+  une mesure sur un modèle plus solide. Le passage au routage par le modèle (§9 à §11) n'y
+  a rien changé : **un outil n'est pas une capacité**, il ne touche ni le `Literal` ni le
+  prompt du planificateur, qui n'a pas bougé d'un caractère.
+
+### La source choisie par l'utilisateur était perdue au tour suivant
+
+- **Où** : `Orchestrator._regle_choisir_la_source` et
+  [`orchestrator/conversations.py`](../src/data_analyst_agent/orchestrator/conversations.py)
+- **Problème** : le catalogue déclare plusieurs sources et le planificateur en devinait
+  une **à chaque tour**, sur leurs descriptions. Quand il n'y parvenait pas, une règle
+  posait la question — « Sur quelle source veux-tu travailler : titanic, iris ? » — deux
+  noms nus, sans un mot de contexte, et **la réponse n'était retenue nulle part** : le
+  tour suivant reposait la même question, ou repartait sur une devinette.
+- **Correction** : la proposition rend ce que le catalogue dit de chaque source ; la
+  réponse est reconnue **par du code** (le nom d'une source, et le fait que le message ne
+  dise presque rien d'autre) et **liée à la conversation**, persistée dans
+  `transcript.json` comme `owner`. Le planificateur la reçoit dans son contexte et une
+  règle la repose au plan. Une source nommée en cours de route **bascule**, et l'avis
+  part en tête de la réponse — le danger n'est pas de changer de source, c'est de changer
+  sans le dire.
+- **Ce que la mesure de bout en bout a montré**, et que la suite unitaire ne pouvait pas
+  voir : la reconnaissance dépendait d'abord d'un drapeau posé au tour précédent, et le
+  parcours réel l'a mise en défaut deux fois — un « titanic » de validation s'est fait
+  rendre l'inventaire du catalogue, et un « et dans iris, combien de lignes ? » a perdu sa
+  question. Un choix de source se lit dans le message, pas dans l'histoire ; le drapeau a
+  été retiré. Parcours mesuré :
+  [surface-conversationnelle.md](surface-conversationnelle.md) §12.
+- **Compatibilité** : aucune migration. Une transcription antérieure au champ le reçoit à
+  sa valeur par défaut — vide — et le fil se comporte comme avant.
+- **Statut** : **Corrigé.**
 
 ### Le repli citait les sources en dur
 
