@@ -224,6 +224,8 @@ ajoutée pour les questions méta doit laisser ces quatre-là exactement où ell
   sens du biais.
 - **La batterie porte sur deux sources et trois modèles.** Une source à quarante
   tables poserait un problème de volume de réponse que ce catalogue ne révèle pas.
+  Sur dix, la mesure a été faite depuis (§7) : le volume tient, mais trois défauts
+  de désignation en sont sortis.
 
 ---
 
@@ -448,7 +450,42 @@ un test unitaire le verrouille.
   reparu depuis le retour à quatre, ni sur six exécutions ciblées. Le runner
   enregistre désormais **la trace complète** dans son journal JSON, précisément pour
   qu'un échec vu une fois laisse de quoi être diagnostiqué au rejeu.
-- **Une source à quarante tables** n'est pas couverte par cette batterie : le tour
-  d'horizon (tables sans colonnes) est déjà là pour ça, mais le volume de la réponse
-  à « quelles colonnes a la source X ? » n'a été éprouvé que sur deux et dix
-  colonnes.
+- **Une source à quarante tables** n'est pas couverte par cette batterie. Elle l'a
+  été depuis sur **dix** — la base Maxizoo, schéma en étoile de dix tables et
+  soixante-dix-neuf colonnes, au report de `main` dans `maxizoo-durci`. Trois
+  défauts en sont sortis, que deux tables jouets ne pouvaient pas produire ; ils
+  sont corrigés, et les mesures sont ci-dessous.
+
+### Le tour d'horizon sur dix tables (mesuré sur la base Maxizoo réelle)
+
+| Question | Réponse | Taille | Verdict |
+|---|---|---|---|
+| « Quelles sources as-tu ? » | la source, son type, sa description | 659 c. / 5 l. | lisible |
+| « Quelles tables ? » | les dix noms, sur une ligne | 296 c. / 3 l. | lisible |
+| « Quelles colonnes dans la table sales_daily ? » | les 8 colonnes + l'extrait du dictionnaire | 1 157 c. / 20 l. | lisible |
+| « Quelles colonnes a la source maxizoo ? » | les 10 tables et leurs 79 colonnes | 4 979 c. / 72 l. / ~1 668 tokens | **long, et c'est ce qui est demandé** |
+
+Le seul cas volumineux est celui où l'utilisateur demande **toutes** les colonnes
+de **toute** la source : 72 lignes, l'équivalent d'un `\d+` sur dix tables. Le
+réduire serait répondre à côté. À quarante tables il faudrait probablement un
+palier de plus (les tables, puis les colonnes à la demande) ; à dix, la question
+et sa réponse sont de la même taille.
+
+### Les trois défauts que dix tables ont montrés
+
+1. **Le mot qui introduit la source était pris pour une colonne.** « Quelles
+   colonnes a la SOURCE maxizoo ? » répondait « dans la table `weather`, la
+   colonne `source` est de type VARCHAR » — `weather.source` existe. Réponse
+   fausse, sans le dire. Une base réelle a des colonnes qui portent les noms du
+   métier ; `titanic` et `iris` n'en avaient aucune.
+2. **Le sens d'une colonne exigeait le mot « colonne ».** « Que signifie
+   store_id ? » partait au planificateur, qui la classait en `query` et faisait
+   écrire un `SELECT` sur une colonne dont on demandait le SENS — qui n'est pas
+   dans les données, il est dans le dictionnaire.
+3. **Une clé répétée était décrite depuis n'importe quelle table.** `store_id`
+   vit dans six des dix tables ; décrit depuis `promo_calendar`, il ressortait
+   avec deux valeurs sur treize. Il est maintenant lu là où il est clé primaire.
+
+Le premier et le troisième donnaient une réponse **fausse sans le dire** — le
+défaut le plus cher de ce module, et celui que ce rapport était fait pour
+traquer.
