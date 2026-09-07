@@ -106,6 +106,38 @@ def source_nommee(question: str, catalogue: Catalog) -> str | None:
     return _nomme_dans(question, [s.name for s in catalogue.sources])
 
 
+# Au-delà de trois mots EN PLUS du nom de la source, le message dit autre chose
+# que « celle-là » : il porte une question, et c'est elle qu'il faut traiter.
+# Trois, parce que « va pour titanic, merci » en compte trois et « combien de
+# passagers dans titanic » quatre — la frontière est posée sur les formulations
+# réellement mesurées, pas sur une intuition.
+#
+# Se tromper ici ne coûte pas une réponse fausse : une source nommée est liée
+# de toute façon (``_regle_source_de_la_conversation``), et le seul écart est
+# un accusé de réception là où on aurait pu répondre du même coup.
+MOTS_EN_PLUS_D_UN_CHOIX = 3
+
+
+def choix_de_source(question: str, catalogue: Catalog) -> str | None:
+    """Le nom de source que ce message DÉSIGNE, s'il ne dit presque rien d'autre.
+
+    « titanic », « va pour titanic, merci » : l'utilisateur choisit, il ne
+    demande rien — on lie la source et on en accuse réception, sans le moindre
+    aller-retour. « et dans titanic, combien de lignes ? » nomme aussi une
+    source, mais porte une question : c'est elle qu'il faut traiter, et la
+    source se lie en chemin.
+
+    La distinction est mesurée, pas théorique : sans elle, le premier runner de
+    parcours a vu un « titanic » de validation recevoir le catalogue en réponse,
+    et un « et dans iris, combien de lignes ? » perdre sa question.
+    """
+    nom = source_nommee(question, catalogue)
+    if nom is None:
+        return None
+    reste = [mot for mot in _replie(question).split() if mot != _replie(nom).strip()]
+    return nom if len(reste) <= MOTS_EN_PLUS_D_UN_CHOIX else None
+
+
 def dataset_vise(question: str, registre: Registry) -> str | None:
     """Le modèle que la question nomme, ou l'unique modèle du registre."""
     nom = _nomme_dans(question, registre.datasets)
@@ -472,14 +504,22 @@ SENTINELLE_HORS_SUJET = "AUTRE"
 
 # Un identifiant technique : nom de source, de table, de colonne, de modèle.
 _FORME_D_IDENTIFIANT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# Comment les faits le rendent : entre accents graves (`class_id`) ou en gras
-# (**titanic**). Ce sont NOS textes, donc les deux marques sont fiables.
-_ENTRE_ACCENTS = re.compile(r"`([^`\n]{1,64})`")
-_EN_GRAS = re.compile(r"\*\*([^*\n]{1,64})\*\*")
+# Tout jeton de cette forme, où qu'il soit. Sert du côté des FAITS, et
+# généreusement : un nom que les faits portent en toutes lettres est un nom
+# connu, même s'ils ne l'ont pas décoré. `describe_features` rend ses champs
+# nus (« * sex — Sexe du passager »), et sans cette générosité un modèle
+# écrivant `sex` entre accents graves se faisait accuser de l'avoir inventé.
+_JETON = re.compile(rf"\b{_FORME_D_IDENTIFIANT.pattern}\b")
+# Comment les faits présentent un nom : entre accents graves (`class_id`) ou en
+# gras (**titanic**). Ce sont NOS textes, donc les deux marques sont fiables.
+_DECORE = re.compile(r"`([^`\n]{1,64})`|\*\*([^*\n]{1,64})\*\*")
+# Une puce d'énumération.
+_PUCE = re.compile(r"^\s*[-*]\s")
 # Ce qui, dans la réponse du MODÈLE, vaut affirmation d'un nom technique. Le
 # gras en est absent volontairement : le modèle met en gras des mots français
 # ordinaires, et les compter ferait écarter des réponses justes. Un jeton
 # contenant un blanc souligné, en revanche, n'est jamais de la prose française.
+_ENTRE_ACCENTS = re.compile(r"`([^`\n]{1,64})`")
 _EN_SERPENT = re.compile(r"\b([A-Za-z]+(?:_[A-Za-z0-9]+)+)\b")
 
 
@@ -491,11 +531,42 @@ def _identifiants(texte: str, *motifs: re.Pattern[str]) -> list[str]:
     """
     trouves: dict[str, None] = {}
     for motif in motifs:
-        for brut in motif.findall(texte):
-            nom = brut.replace("\\", "").strip()
+        for brut in motif.findall(texte.replace("\\", "")):
+            nom = (brut if isinstance(brut, str) else next(filter(None, brut), "")).strip()
             if _FORME_D_IDENTIFIANT.fullmatch(nom):
                 trouves.setdefault(nom.lower(), None)
     return list(trouves)
+
+
+def _enumeres(faits: str) -> list[str]:
+    """Ce dont chaque puce des faits PARLE — ce qui doit revenir entier.
+
+    La règle tient en une phrase : *ce qu'une puce nomme doit revenir, ce
+    qu'elle en dit est du contexte.* Le premier nom décoré de la ligne est son
+    sujet ; ce qui suit — le type d'une colonne, la cible d'un modèle — est un
+    détail qu'une bonne réponse a le droit de ne pas recopier.
+
+    Trois conséquences, et chacune corrige un rejet mesuré à tort :
+
+    - une ligne d'**en-tête** n'énumère rien (« La table `passengers` de la
+      source `titanic` : ») — exiger `titanic` d'une réponse qui listait
+      correctement les dix colonnes de `passengers` était pédant ;
+    - une puce dont la décoration n'est pas un nom (« - **interroger une source
+      en SQL** — … ») ne réclame rien : elle ne nomme aucun identifiant ;
+    - une puce **sans** décoration rend son premier jeton, ce qui rattrape les
+      champs nus de ``describe_features``.
+    """
+    noms: dict[str, None] = {}
+    for ligne in faits.splitlines():
+        if not _PUCE.match(ligne):
+            continue
+        decore = _DECORE.search(ligne.replace("\\", ""))
+        candidats = (
+            _identifiants(decore.group(0), _DECORE) if decore else _identifiants(ligne, _JETON)
+        )
+        if candidats:
+            noms.setdefault(candidats[0], None)
+    return list(noms)
 
 
 def defaut_de_fondation(reponse: str, faits: str) -> str:
@@ -522,12 +593,12 @@ def defaut_de_fondation(reponse: str, faits: str) -> str:
         return "réponse vide"
     if _replie(reponse).strip() == SENTINELLE_HORS_SUJET.lower():
         return "réponse hors sujet"
-    attendus = _identifiants(faits, _ENTRE_ACCENTS, _EN_GRAS)
-    inventes = [n for n in _identifiants(reponse, _ENTRE_ACCENTS, _EN_SERPENT) if n not in attendus]
+    connus = _identifiants(faits, _JETON)
+    inventes = [n for n in _identifiants(reponse, _ENTRE_ACCENTS, _EN_SERPENT) if n not in connus]
     if inventes:
         return "nom(s) qu'aucun fait ne porte : " + ", ".join(sorted(inventes))
     plat = _replie(reponse)
-    omis = [n for n in attendus if f" {n} " not in plat]
+    omis = [n for n in _enumeres(faits) if f" {n} " not in plat]
     if omis:
         return "fait(s) omis : " + ", ".join(omis)
     return ""

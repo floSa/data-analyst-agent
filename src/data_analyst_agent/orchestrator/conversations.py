@@ -33,7 +33,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from data_analyst_agent.orchestrator.graph import PendingInference, SourceDeTravail
+from data_analyst_agent.orchestrator.graph import PendingInference
 from data_analyst_agent.orchestrator.workspace import (
     conversation_lock,
     make_private_dir,
@@ -96,13 +96,13 @@ class Conversation(BaseModel):
     # multi-tours : prédiction en attente de features, persistée avec le fil pour
     # qu'une reprise après rechargement retrouve la question posée par l'agent.
     pending: PendingInference | None = None
-    # La source de données sur laquelle porte ce fil, validée par l'utilisateur.
+    # La source de données sur laquelle porte ce fil, choisie par l'utilisateur.
     # Persistée avec lui pour la même raison qu'``owner`` : elle appartient à la
     # conversation, pas au tour. Une transcription écrite AVANT ce champ le
-    # reçoit à sa valeur par défaut — aucune source liée — et le fil continue
-    # donc de fonctionner comme avant, le planificateur choisissant à chaque
+    # reçoit à sa valeur par défaut — vide, donc aucune source liée — et le fil
+    # continue de fonctionner comme avant, le planificateur choisissant à chaque
     # tour. C'est ce qui rend la migration inutile.
-    source_de_travail: SourceDeTravail = Field(default_factory=SourceDeTravail)
+    source_de_travail: str = ""
 
 
 class ConversationSummary(BaseModel):
@@ -262,7 +262,7 @@ class ConversationStore:
         artifacts: list[MimeOutput] | None = None,
         error: str | None = None,
         pending: PendingInference | None = None,
-        source_de_travail: SourceDeTravail | None = None,
+        source_de_travail: str | None = None,
     ) -> Conversation:
         """Ajoute le tour (question + réponse) au fil et met à jour son état.
 

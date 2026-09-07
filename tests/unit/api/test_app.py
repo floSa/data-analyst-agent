@@ -323,11 +323,8 @@ def test_la_source_validee_est_persistee_et_repassee_au_tour_suivant(
     repassé au tour d'après. Sans l'un des deux, la source serait redevinée à
     chaque tour — le défaut qu'on corrige.
     """
-    from data_analyst_agent.orchestrator.graph import SourceDeTravail
-
     fake_orchestrator.answer = ChatAnswer(
-        answer="Entendu : on travaille sur titanic.",
-        source_de_travail=SourceDeTravail(nom="titanic"),
+        answer="Entendu : on travaille sur titanic.", source_de_travail="titanic"
     )
     client = client_connecte(
         create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings),
@@ -338,13 +335,13 @@ def test_la_source_validee_est_persistee_et_repassee_au_tour_suivant(
 
     # elle est sur le disque, dans le fil
     fil = client.get(f"/conversations/{conversation_id}").json()
-    assert fil["source_de_travail"] == {"nom": "titanic", "a_valider": False}
+    assert fil["source_de_travail"] == "titanic"
 
     client.post(
         "/chat", json={"message": "combien de lignes ?", "conversation_id": conversation_id}
     )
 
-    assert fake_orchestrator.sources_de_travail[-1] == SourceDeTravail(nom="titanic")
+    assert fake_orchestrator.sources_de_travail[-1] == "titanic"
 
 
 def test_conversation_survit_a_un_redemarrage(

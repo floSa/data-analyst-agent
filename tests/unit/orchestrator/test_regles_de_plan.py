@@ -19,12 +19,7 @@ import pytest
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
 from data_analyst_agent.config import Settings
-from data_analyst_agent.orchestrator.graph import (
-    Orchestrator,
-    PendingInference,
-    PlanContext,
-    SourceDeTravail,
-)
+from data_analyst_agent.orchestrator.graph import Orchestrator, PendingInference, PlanContext
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from helpers.doubles import FakeClassifier, FakeRegressor
@@ -94,7 +89,7 @@ def contexte(
     declare: list[FileSource] | None = None,
     effectif: list[FileSource] | None = None,
     question: str = "une question quelconque",
-    source_de_travail: SourceDeTravail | None = None,
+    source_de_travail: str | None = None,
 ) -> PlanContext:
     """Un contexte de règles. ``effectif`` vaut ``declare`` à défaut.
 

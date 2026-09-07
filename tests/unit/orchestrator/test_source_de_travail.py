@@ -4,12 +4,16 @@ Le parcours demandé tient en trois tours, et chacun a son test ici : l'agent
 **propose** ses sources, l'utilisateur **en valide une**, et c'est celle sur
 laquelle on travaille **ensuite** — sans que le planificateur ait à la redeviner.
 
-Deux propriétés valent d'être dites, parce qu'elles sont ce qui rend le
+Trois propriétés valent d'être dites, parce qu'elles sont ce qui rend le
 mécanisme sûr plutôt que seulement pratique :
 
 - **la reconnaissance du choix est déterministe** (le nom d'une source du
-  catalogue, cité dans le message) : aucun aller-retour LLM pour comparer deux
-  chaînes de caractères ;
+  catalogue, et le fait que le message ne dise presque rien d'autre) : aucun
+  aller-retour LLM pour comparer deux chaînes de caractères ;
+- **elle ne dépend d'aucun état** — ni d'un drapeau posé au tour d'avant, ni de
+  l'ordre des tours. C'est une correction : le parcours mesuré de bout en bout
+  a vu un « titanic » de validation recevoir l'inventaire du catalogue, parce
+  que le tour précédent n'avait pas posé le drapeau attendu ;
 - **une bascule est annoncée**. Le risque n'est pas de changer de source, c'est
   de répondre sur d'autres données sans le dire.
 
@@ -27,7 +31,7 @@ from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.conversations import Conversation, ConversationStore
-from data_analyst_agent.orchestrator.graph import Orchestrator, SourceDeTravail
+from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from helpers.doubles import FakeClassifier
 from helpers.scripted_llm import PLANNER, RETRIEVAL, ScriptedLLM, plan_response, text, tool_call
@@ -89,14 +93,14 @@ def test_le_premier_tour_propose_les_sources_et_attend_une_reponse(
     """Deux sources déclarées, aucune désignée : on propose, avec ce que le
     catalogue dit de chacune — pas deux noms nus."""
     reponse = orchestrateur(une_requete(), deux_sources, registre).ask(
-        "combien de lignes ?", source_de_travail=SourceDeTravail()
+        "combien de lignes ?", source_de_travail=""
     )
 
     assert "ventes" in reponse.answer
     assert "La source clients." in reponse.answer  # la description déclarée
     assert reponse.answer.strip().endswith("?")
-    # une réponse est attendue au tour suivant, et le fil s'en souvient
-    assert reponse.source_de_travail == SourceDeTravail(nom="", a_valider=True)
+    # rien n'est lié : le tour suivant sera lu comme un choix s'il en est un
+    assert reponse.source_de_travail == ""
 
 
 def test_une_source_unique_est_annoncee_au_lieu_d_etre_demandee(tmp_path: Path, registre: Registry):
@@ -108,12 +112,12 @@ def test_une_source_unique_est_annoncee_au_lieu_d_etre_demandee(tmp_path: Path, 
     catalogue = Catalog(sources=[csv(tmp_path, "ventes")])
 
     reponse = orchestrateur(une_requete(), catalogue, registre).ask(
-        "combien de lignes ?", source_de_travail=SourceDeTravail()
+        "combien de lignes ?", source_de_travail=""
     )
 
     assert reponse.answer.startswith("Je travaille sur la source `ventes`.")
     assert "Deux lignes." in reponse.answer  # et la question est répondue au passage
-    assert reponse.source_de_travail == SourceDeTravail(nom="ventes")
+    assert reponse.source_de_travail == "ventes"
 
 
 def test_une_question_qui_ne_demande_aucune_source_ne_declenche_rien(
@@ -129,11 +133,11 @@ def test_une_question_qui_ne_demande_aucune_source_ne_declenche_rien(
     )
 
     reponse = orchestrateur(llm, deux_sources, registre).ask(
-        "prédis pour ce cas", source_de_travail=SourceDeTravail()
+        "prédis pour ce cas", source_de_travail=""
     )
 
     assert "Sur laquelle veux-tu travailler" not in reponse.answer
-    assert reponse.source_de_travail == SourceDeTravail(nom="")
+    assert reponse.source_de_travail == ""
 
 
 # --- tour 2 : la validation ----------------------------------------------------
@@ -142,18 +146,17 @@ def test_une_question_qui_ne_demande_aucune_source_ne_declenche_rien(
 def test_le_nom_donne_en_reponse_lie_la_source_sans_appel_llm(
     deux_sources: Catalog, registre: Registry
 ):
-    """La reconnaissance est du code : un nom du catalogue cité dans le message.
+    """La reconnaissance est du code : un nom du catalogue, et rien d'autre.
 
     Aucune réponse n'est scriptée — si un agent était appelé, la doublure
-    lèverait faute de script. C'est la preuve, pas l'illustration.
+    lèverait faute de script. C'est la preuve, pas l'illustration : ni le
+    planificateur ni l'agent système ne voient ce message.
     """
     llm = ScriptedLLM()
 
-    reponse = orchestrateur(llm, deux_sources, registre).ask(
-        "clients", source_de_travail=SourceDeTravail(nom="", a_valider=True)
-    )
+    reponse = orchestrateur(llm, deux_sources, registre).ask("clients", source_de_travail="")
 
-    assert reponse.source_de_travail == SourceDeTravail(nom="clients")
+    assert reponse.source_de_travail == "clients"
     assert "clients" in reponse.answer
     assert "La source clients." in reponse.answer
     assert llm.captured == []  # pas un seul aller-retour, agent système compris
@@ -167,10 +170,10 @@ def test_une_phrase_entiere_vaut_choix_si_elle_nomme_une_source(
 ):
     """« va pour ventes, merci » est une réponse : on n'exige pas un nom nu."""
     reponse = orchestrateur(ScriptedLLM(), deux_sources, registre).ask(
-        "va pour ventes, merci", source_de_travail=SourceDeTravail(nom="", a_valider=True)
+        "va pour ventes, merci", source_de_travail=""
     )
 
-    assert reponse.source_de_travail == SourceDeTravail(nom="ventes")
+    assert reponse.source_de_travail == "ventes"
 
 
 def test_un_message_qui_ne_choisit_rien_n_est_pas_piege_dans_la_question(
@@ -185,7 +188,7 @@ def test_un_message_qui_ne_choisit_rien_n_est_pas_piege_dans_la_question(
     """
     reponse = orchestrateur(une_requete("ventes"), deux_sources, registre).ask(
         "laisse tomber, combien de lignes en tout ?",
-        source_de_travail=SourceDeTravail(nom="", a_valider=True),
+        source_de_travail="",
     )
 
     assert "Deux lignes." in reponse.answer
@@ -197,22 +200,10 @@ def test_deux_sources_nommees_dans_le_meme_message_ne_valident_rien(
 ):
     """En choisir une serait deviner."""
     reponse = orchestrateur(une_requete("ventes"), deux_sources, registre).ask(
-        "ventes ou clients ?", source_de_travail=SourceDeTravail(nom="", a_valider=True)
+        "ventes ou clients ?", source_de_travail=""
     )
 
     assert reponse.plan is not None  # traité comme une question, pas comme un choix
-
-
-def test_la_question_en_suspens_ne_survit_pas_au_tour(deux_sources: Catalog, registre: Registry):
-    """``a_valider`` vaut un tour, et un seul : un utilisateur qui part sur autre
-    chose ne doit pas rester dans un état d'attente indéfini."""
-    reponse = orchestrateur(une_requete("ventes"), deux_sources, registre).ask(
-        "combien de lignes de ventes ?",
-        source_de_travail=SourceDeTravail(nom="", a_valider=True),
-    )
-
-    assert reponse.source_de_travail is not None
-    assert reponse.source_de_travail.a_valider is False
 
 
 # --- tour 3 et suivants : la source est portée par la conversation -------------
@@ -224,7 +215,7 @@ def test_le_planificateur_recoit_la_source_liee_et_n_a_plus_a_la_deviner(
     llm = une_requete(source=None)  # le modèle ne choisit rien
 
     reponse = orchestrateur(llm, deux_sources, registre).ask(
-        "combien de lignes ?", source_de_travail=SourceDeTravail(nom="clients")
+        "combien de lignes ?", source_de_travail="clients"
     )
 
     assert "cette conversation travaille sur la source 'clients'" in llm.systems_for(PLANNER)[0]
@@ -238,7 +229,7 @@ def test_la_source_liee_n_est_pas_reannoncee_a_chaque_tour(
 ):
     """Répéter « je travaille sur clients » à chaque réponse serait du bruit."""
     reponse = orchestrateur(une_requete(), deux_sources, registre).ask(
-        "combien de lignes ?", source_de_travail=SourceDeTravail(nom="clients")
+        "combien de lignes ?", source_de_travail="clients"
     )
 
     assert reponse.answer == "Deux lignes."
@@ -256,11 +247,11 @@ def test_une_supposition_du_planificateur_ne_fait_pas_basculer_la_source(
     l'utilisateur, pas dans le plan.
     """
     reponse = orchestrateur(une_requete(source="ventes"), deux_sources, registre).ask(
-        "combien de lignes ?", source_de_travail=SourceDeTravail(nom="clients")
+        "combien de lignes ?", source_de_travail="clients"
     )
 
     assert reponse.plan.source == "clients"
-    assert reponse.source_de_travail == SourceDeTravail(nom="clients")
+    assert reponse.source_de_travail == "clients"
 
 
 def test_une_source_nommee_par_l_utilisateur_fait_basculer_et_le_dit(
@@ -274,13 +265,13 @@ def test_une_source_nommee_par_l_utilisateur_fait_basculer_et_le_dit(
     de changer **sans le dire** — d'où l'avis, en tête de la réponse.
     """
     reponse = orchestrateur(une_requete(), deux_sources, registre).ask(
-        "et dans ventes, combien de lignes ?", source_de_travail=SourceDeTravail(nom="clients")
+        "et dans ventes, combien de lignes ?", source_de_travail="clients"
     )
 
     assert reponse.answer.startswith("Je passe sur la source `ventes` — on travaillait sur")
     assert "clients" in reponse.answer.splitlines()[0]
     assert reponse.plan.source == "ventes"
-    assert reponse.source_de_travail == SourceDeTravail(nom="ventes")
+    assert reponse.source_de_travail == "ventes"
 
 
 def test_une_source_imposee_par_l_appelant_ne_lie_rien(deux_sources: Catalog, registre: Registry):
@@ -289,11 +280,11 @@ def test_une_source_imposee_par_l_appelant_ne_lie_rien(deux_sources: Catalog, re
     reponse = orchestrateur(une_requete(), deux_sources, registre).ask(
         "combien de lignes ?",
         source="ventes",
-        source_de_travail=SourceDeTravail(nom="clients"),
+        source_de_travail="clients",
     )
 
     assert reponse.plan.source == "ventes"
-    assert reponse.source_de_travail == SourceDeTravail(nom="clients")
+    assert reponse.source_de_travail == "clients"
 
 
 def test_un_tableau_memorise_ne_remplace_pas_la_source_de_travail(
@@ -311,10 +302,10 @@ def test_un_tableau_memorise_ne_remplace_pas_la_source_de_travail(
         "combien de lignes dans ce tableau ?",
         conversation_id="fil",
         workspace_root=tmp_path,
-        source_de_travail=SourceDeTravail(nom="clients"),
+        source_de_travail="clients",
     )
 
-    assert reponse.source_de_travail == SourceDeTravail(nom="clients")
+    assert reponse.source_de_travail == "clients"
 
 
 # --- hors conversation, et compatibilité --------------------------------------
@@ -353,7 +344,7 @@ def test_une_transcription_ecrite_avant_le_champ_reste_lisible(tmp_path: Path):
     fil = magasin.load("ancien")
 
     assert fil is not None
-    assert fil.source_de_travail == SourceDeTravail()
+    assert fil.source_de_travail == ""
 
 
 def test_le_magasin_persiste_la_source_et_la_copie_la_suit(tmp_path: Path):
@@ -362,17 +353,15 @@ def test_le_magasin_persiste_la_source_et_la_copie_la_suit(tmp_path: Path):
     magasin = ConversationStore(tmp_path, "alice")
     magasin.create("fil")
 
-    magasin.record_turn(
-        "fil", "clients", "entendu", source_de_travail=SourceDeTravail(nom="clients")
-    )
-    assert magasin.load("fil").source_de_travail == SourceDeTravail(nom="clients")
+    magasin.record_turn("fil", "clients", "entendu", source_de_travail="clients")
+    assert magasin.load("fil").source_de_travail == "clients"
 
     # un tour qui ne se prononce pas ne défait pas la liaison
     magasin.record_turn("fil", "combien ?", "deux", source_de_travail=None)
-    assert magasin.load("fil").source_de_travail == SourceDeTravail(nom="clients")
+    assert magasin.load("fil").source_de_travail == "clients"
 
     copie = magasin.duplicate("fil")
-    assert copie.source_de_travail == SourceDeTravail(nom="clients")
+    assert copie.source_de_travail == "clients"
 
 
 def test_le_client_ne_choisit_pas_la_source_liee():
@@ -384,4 +373,78 @@ def test_le_client_ne_choisit_pas_la_source_liee():
 
 
 def test_un_fil_neuf_part_sans_source_liee():
-    assert Conversation(id="x").source_de_travail == SourceDeTravail()
+    assert Conversation(id="x").source_de_travail == ""
+
+
+# --- les deux défauts trouvés par la mesure de bout en bout --------------------
+
+
+def test_un_choix_de_source_ne_passe_pas_par_l_agent_systeme(
+    deux_sources: Catalog, registre: Registry
+):
+    """LE défaut du premier parcours mesuré, et sa correction.
+
+    Le tour 1 avait été répondu par l'agent système, qui avait énuméré les
+    sources — une bonne réponse — sans qu'aucun drapeau « une proposition
+    attend » soit posé. Le « titanic » du tour 2 n'était donc plus reconnu
+    comme un choix : il repartait chez l'agent système, qui lui rendait
+    l'inventaire du catalogue. L'utilisateur validait, et recevait la question.
+
+    La reconnaissance ne consulte plus aucun état de conversation. Ici encore,
+    rien n'est scripté : le moindre appel ferait tomber la doublure.
+    """
+    llm = ScriptedLLM()
+
+    reponse = orchestrateur(llm, deux_sources, registre).ask("ventes", source_de_travail="")
+
+    assert reponse.source_de_travail == "ventes"
+    assert llm.captured == []
+    assert "choix de source" in next(s for s in reponse.trace if s.node == "system").detail
+
+
+def test_un_message_qui_nomme_une_source_ET_pose_une_question_est_repondu(
+    deux_sources: Catalog, registre: Registry
+):
+    """Le second défaut : « et dans iris, combien de lignes ? » perdait sa question.
+
+    Le message nomme une source, mais il ne fait pas que ça. Il est donc traité
+    comme la question qu'il est — la source se lie en chemin, et la bascule est
+    annoncée en tête au lieu de remplacer la réponse.
+    """
+    reponse = orchestrateur(une_requete(), deux_sources, registre).ask(
+        "et dans ventes, combien de lignes en tout ?", source_de_travail="clients"
+    )
+
+    assert "Deux lignes." in reponse.answer  # la question a bien été répondue
+    assert reponse.answer.startswith("Je passe sur la source `ventes`")
+    assert reponse.source_de_travail == "ventes"
+
+
+def test_un_choix_qui_en_remplace_un_autre_dit_lequel(deux_sources: Catalog, registre: Registry):
+    """Un choix nu dans un fil déjà lié est une bascule : elle se dit aussi."""
+    reponse = orchestrateur(ScriptedLLM(), deux_sources, registre).ask(
+        "ventes", source_de_travail="clients"
+    )
+
+    assert reponse.source_de_travail == "ventes"
+    assert "on travaillait sur `clients`" in reponse.answer
+
+
+def test_une_source_liee_survit_a_un_noeud_qui_echoue(tmp_path: Path, registre: Registry):
+    """Un incident ne délie pas ce que l'utilisateur a validé.
+
+    C'est ce que garantit ``_source_retenue`` : une branche du graphe qui ne
+    s'est pas prononcée laisse la liaison telle quelle. Sans ça, une source
+    validée disparaîtrait au premier fichier introuvable, et l'utilisateur
+    devrait la revalider.
+    """
+    catalogue = Catalog(
+        sources=[csv(tmp_path, "clients"), FileSource(name="envolee", path=tmp_path / "absent.csv")]
+    )
+
+    reponse = orchestrateur(une_requete(), catalogue, registre).ask(
+        "combien de lignes ?", source_de_travail="envolee"
+    )
+
+    assert reponse.error is not None
+    assert reponse.source_de_travail == "envolee"

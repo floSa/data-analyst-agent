@@ -172,6 +172,55 @@ def test_un_echappement_markdown_ne_compte_pas_pour_un_oubli():
     )
 
 
+@pytest.mark.parametrize(
+    ("faits", "reponse"),
+    [
+        # UN : un nom que les faits portent SANS le décorer. `describe_features`
+        # rend ses champs nus (« * sex — Sexe du passager »), et le modèle les
+        # écrit entre accents graves : il ne les a pas inventés pour autant.
+        ("    * sex — Sexe du passager", "Il me faut `sex`."),
+        # DEUX : un nom que les faits portent dans un fragment plus large. La
+        # fiche d'une colonne écrit « elle référence `classes(class_id)` » — la
+        # portée entière n'est pas un identifiant, `classes` en est un.
+        (
+            "C'est une **clé étrangère** : elle référence `classes(class_id)`.",
+            "Elle pointe vers la table `classes`.",
+        ),
+        # TROIS : un nom que les faits mettent en EN-TÊTE et non dans une puce.
+        # « La table `passengers` de la source `titanic` : » suivie des dix
+        # colonnes — une réponse qui liste les dix sans redire `titanic` est
+        # complète.
+        (
+            "La table `passengers` de la source `titanic` :\n\n- **passengers** (1 colonne) :\n"
+            "    - `sex` (TEXT)",
+            "La table `passengers` a une colonne : `sex`.",
+        ),
+    ],
+)
+def test_trois_rejets_mesures_a_tort_ne_le_sont_plus(faits: str, reponse: str):
+    """Chacun venait de la mesure live du 2026-09-07, après correction.
+
+    La ceinture est là pour écarter une invention, pas pour rendre le
+    déterministe obligatoire. Ces trois-là faisaient servir le gabarit alors
+    que la formulation du modèle était juste — et le propriétaire ne veut
+    précisément pas du gabarit quand le modèle sait répondre.
+    """
+    assert introspection.defaut_de_fondation(reponse, faits) == ""
+
+
+def test_ce_qu_une_puce_dit_de_son_sujet_n_est_pas_exigible():
+    """« Quels modèles ? » — une réponse qui nomme les trois modèles sans
+    recopier la colonne cible de chacun est une réponse.
+
+    La règle : ce qu'une puce NOMME doit revenir, ce qu'elle en dit est du
+    contexte.
+    """
+    faits = "- **titanic** (classification) — cible `survived` — Survie d'un passager."
+
+    assert introspection.defaut_de_fondation("Je dispose de **titanic**.", faits) == ""
+    assert "titanic" in introspection.defaut_de_fondation("Je dispose d'un modèle.", faits)
+
+
 def test_une_reponse_vide_ou_hors_sujet_ne_se_sert_pas():
     assert introspection.defaut_de_fondation("   ", "- `titanic`") == "réponse vide"
     assert introspection.defaut_de_fondation("AUTRE", "- `titanic`") == "réponse hors sujet"

@@ -65,6 +65,13 @@ class SystemeDeps:
     catalogue_declare: Catalog
     catalogue_effectif: Catalog
     registre: Registry
+    # Le message de l'utilisateur, tel quel. Il complète l'argument que le
+    # modèle passe à l'outil de schéma : « class_id » seul ne désigne pas une
+    # colonne quand deux sources sont déclarées, alors que la phrase qui
+    # l'entoure nomme sa table. Mesuré — le modèle a passé `cible="passengers"`
+    # à « que signifie la colonne class_id ? » et a reçu la table entière au
+    # lieu de la fiche de la colonne.
+    question: str = ""
     # Ce que chaque outil a rendu, dans l'ordre des appels. C'est la matière de
     # la vérification d'après-coup, et le repli servi si elle échoue.
     faits: list[str] = field(default_factory=list)
@@ -124,9 +131,12 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         (« titanic »), de table (« passengers ») ou de colonne (« class_id »).
         Laisse vide pour le tour d'horizon de toutes les sources.
         """
+        # `cible` d'abord : ce que le modèle a explicitement désigné prime sur
+        # ce que la phrase de l'utilisateur laisse deviner.
+        precision = f"{cible} {ctx.deps.question}".strip()
         return ctx.deps.retenir(
             "schema_d_une_source",
-            introspection.decrire_le_schema(cible, _ontologies(cible, ctx.deps)),
+            introspection.decrire_le_schema(precision, _ontologies(precision, ctx.deps)),
         )
 
     @agent.tool
@@ -144,26 +154,31 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         `modele` : le nom du modèle (« titanic »). Laisse vide pour le tour
         d'horizon de ce que chaque modèle attend.
         """
+        # Même complément que pour le schéma, et pour la même raison : « il te
+        # faut quoi pour deviner l'espèce d'un iris ? » nomme le modèle dans la
+        # phrase, et le modèle laisse parfois l'argument vide. Le tour
+        # d'horizon reste rendu quand rien ne désigne un modèle en particulier.
+        precision = f"{modele} {ctx.deps.question}".strip()
         return ctx.deps.retenir(
             "attributs_d_un_modele",
             introspection.decrire_les_features(
-                ctx.deps.registre, introspection.dataset_vise(modele, ctx.deps.registre)
+                ctx.deps.registre, introspection.dataset_vise(precision, ctx.deps.registre)
             ),
         )
 
     return agent
 
 
-def _ontologies(cible: str, deps: SystemeDeps) -> list[introspection.Ontologie]:
+def _ontologies(precision: str, deps: SystemeDeps) -> list[introspection.Ontologie]:
     """Ce que les sources disent d'elles-mêmes — celle qui est visée, ou toutes.
 
-    Quand ``cible`` désigne une source, une seule connexion est ouverte. Sinon
+    Quand ``precision`` désigne une source, une seule connexion est ouverte. Sinon
     on les ouvre toutes : « quelles colonnes dans la table passengers ? » ne
     nomme aucune source et n'est pourtant pas ambiguë, et le catalogue compte
     une poignée d'entrées par construction.
     """
     catalogue = deps.catalogue_effectif
-    visee = introspection.source_visee(cible, catalogue)
+    visee = introspection.source_visee(precision, catalogue)
     sources = [visee] if visee is not None else list(catalogue.sources)
     ontologies = []
     for source in sources:
@@ -187,6 +202,7 @@ def run_systeme(
         catalogue_declare=catalogue_declare,
         catalogue_effectif=catalogue_effectif,
         registre=registre,
+        question=question,
     )
     run = build_systeme_agent().run_sync(
         question,
