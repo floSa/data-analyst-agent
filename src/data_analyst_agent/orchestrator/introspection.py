@@ -202,6 +202,61 @@ LEXIQUE: tuple[tuple[Sujet, tuple[str, ...]], ...] = (
 )
 
 
+# « Que signifie X ? » où X est un NOM, et non un groupe nominal. Le lexique
+# ci-dessus exige le mot « colonne » (« que signifie la colonne class_id ? ») :
+# personne ne l'écrit. On demande « que signifie store_id ? », et la question
+# partait au planificateur, qui la classait en `query` et faisait écrire un
+# SELECT sur une colonne dont on demandait le SENS — introuvable dans les
+# données, il est dans le dictionnaire.
+#
+# Le garde-fou est le mot qui SUIT : un déterminant ou une préposition annonce
+# un groupe nominal, donc une question sur les données (« que signifie une
+# progression de 12 % ? », « que signifie ce pic de novembre ? »), et on
+# s'abstient. Un nom nu (`store_id`, `revenue`) désigne un champ.
+DEMANDES_DE_SENS = (
+    "que signifie",
+    "que veut dire",
+    "a quoi correspond",
+    "quel est le sens de",
+    "signification de",
+)
+
+# Ce qui, juste après, annonce une tournure et non un nom de champ.
+ANNONCEURS_DE_GROUPE = (
+    "le",
+    "la",
+    "les",
+    "l",
+    "un",
+    "une",
+    "des",
+    "du",
+    "de",
+    "d",
+    "ce",
+    "cet",
+    "cette",
+    "ces",
+    "mon",
+    "ton",
+    "son",
+    "cela",
+    "ca",
+)
+
+
+def _demande_le_sens_d_un_nom(plat: str) -> bool:
+    """La question demande-t-elle le sens d'un nom nu (et non d'un groupe) ?"""
+    for demande in DEMANDES_DE_SENS:
+        marque = f" {demande} "
+        if marque not in plat:
+            continue
+        suite = plat.split(marque, 1)[1].split()
+        if suite and suite[0] not in ANNONCEURS_DE_GROUPE:
+            return True
+    return False
+
+
 def sujet_de(question: str) -> Sujet | None:
     """Le sujet d'une question sur le système, ou ``None`` si ce n'en est pas une.
 
@@ -218,7 +273,7 @@ def sujet_de(question: str) -> Sujet | None:
     for sujet, tournures in LEXIQUE:
         if any(tournure in plat for tournure in tournures):
             return sujet
-    return None
+    return "schema" if _demande_le_sens_d_un_nom(plat) else None
 
 
 # --- ce qu'on cherche à qualifier dans la question ---------------------------
@@ -498,6 +553,45 @@ def _dedoublonne(noms) -> list[str]:
     return list(vus)
 
 
+# Les mots communs par lesquels une question INTRODUIT un nom : « la source
+# maxizoo », « la table stores ». Ils appartiennent à la question, pas aux
+# données — et une base réelle a des colonnes qui portent les noms du métier.
+INTRODUCTEURS = ("source", "sources", "base", "bases", "table", "tables", "colonne", "colonnes")
+
+
+def _demande_les_tables(question: str) -> bool:
+    """La question porte-t-elle sur les TABLES, et non sur les colonnes ?
+
+    Les deux sont le sujet ``schema``, et ce n'est pas la même réponse.
+    « Quelles colonnes… » veut le détail ; « quelles tables… » veut la liste.
+    """
+    plat = _replie(question)
+    if any(mot in plat for mot in (" colonne ", " colonnes ", " champ ", " champs ")):
+        return False
+    return any(mot in plat for mot in (" table ", " tables "))
+
+
+def _sans_les_introducteurs(question: str, noms: list[str]) -> str:
+    """La question, privée du mot commun qui introduit chacun des ``noms`` cités.
+
+    Mesuré sur la base Maxizoo, dix tables : « quelles colonnes a la SOURCE
+    maxizoo ? » répondait « dans la table `weather`, la colonne `source` est de
+    type VARCHAR » — parce que `weather.source` existe, et que le mot qui
+    désignait la source a été pris pour lui. La réponse était fausse et ne le
+    disait pas. Deux tables jouets ne pouvaient pas montrer ça ; un schéma en
+    étoile de soixante-dix-neuf colonnes le montre au premier essai.
+
+    On ne retire que l'introducteur ACCOLÉ à un nom réellement cité : « que
+    signifie la colonne source ? » ne nomme ni source ni table, rien n'est
+    retiré, et la colonne `source` reste trouvable.
+    """
+    plat = _replie(question)
+    for nom in noms:
+        cible = re.escape(_replie(nom).strip())
+        plat = re.sub(rf" (?:{'|'.join(INTRODUCTEURS)}) (?={cible} )", " ", plat)
+    return plat
+
+
 def decrire_le_schema(question: str, ontologies: list[Ontologie]) -> str:
     """Les tables, les colonnes ou le sens d'une colonne — au bon niveau de détail.
 
@@ -525,9 +619,14 @@ def decrire_le_schema(question: str, ontologies: list[Ontologie]) -> str:
         return "\n".join(lignes)
 
     schema = cible.schema
-    table_visee = _nomme_dans(question, schema.table_names())
+    # Le détail se cherche dans la question DÉBARRASSÉE des mots qui ne servent
+    # qu'à désigner la source et ses tables : sans quoi le « source » de « la
+    # source maxizoo » passe pour la colonne du même nom (cf.
+    # ``_sans_les_introducteurs``).
+    detail = _sans_les_introducteurs(question, [cible.source.name, *schema.table_names()])
+    table_visee = _nomme_dans(detail, schema.table_names())
     tables = [t for t in schema.tables if t.name == table_visee] if table_visee else schema.tables
-    colonne_visee = _nomme_dans(question, _dedoublonne(c.name for t in tables for c in t.columns))
+    colonne_visee = _nomme_dans(detail, _dedoublonne(c.name for t in tables for c in t.columns))
 
     if colonne_visee:
         porteuse = next(t for t in tables if any(c.name == colonne_visee for c in t.columns))
@@ -537,6 +636,19 @@ def decrire_le_schema(question: str, ontologies: list[Ontologie]) -> str:
         lignes = [f"La table `{table_visee}` de la source `{cible.source.name}` :", ""]
         lignes += _decrire_la_table(tables[0])
         terme = table_visee
+    elif _demande_les_tables(question):
+        # « Quelles tables ? » demande des TABLES. Déplier leurs colonnes au
+        # passage rend 79 lignes de schéma là où dix noms répondaient — mesuré
+        # sur Maxizoo : 4 979 caractères contre 590. Ce n'est pas une question
+        # de goût, c'est la question qui n'était pas lue.
+        lignes = [
+            f"La source `{cible.source.name}` contient {len(schema.tables)} table(s) "
+            f"({schema.dialect}) : " + ", ".join(f"`{t.name}`" for t in tables) + ".",
+            "",
+            "Demande-moi l'une d'elles pour en voir les colonnes "
+            f"(« quelles colonnes dans la table {tables[0].name} ? »).",
+        ]
+        terme = None
     else:
         lignes = [
             f"La source `{cible.source.name}` contient {len(schema.tables)} table(s) "

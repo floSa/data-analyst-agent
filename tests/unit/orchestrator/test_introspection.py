@@ -120,6 +120,10 @@ def ontologie_titanic() -> introspection.Ontologie:
         ("Comment est structurée la base titanic ?", "schema"),
         ("Quelles colonnes y a-t-il dans la table passengers ?", "schema"),
         ("Que signifie la colonne class_id ?", "schema"),
+        # le nom NU, sans le mot « colonne » : personne ne l'écrit
+        ("Que signifie store_id ?", "schema"),
+        ("que veut dire revenue", "schema"),
+        ("À quoi correspond quantity ?", "schema"),
         # modèles
         ("Quels modèles de prédiction sais-tu utiliser ?", "modeles"),
         ("Est-ce que tu sais faire des prédictions, et sur quoi ?", "modeles"),
@@ -152,6 +156,11 @@ def test_les_questions_meta_sont_reconnues(question: str, sujet: str):
         # le piège : la tournure d'une question de schéma pour une question de contenu
         "Quelles colonnes de la table passengers contiennent des valeurs manquantes ?",
         "Quelle est la répartition des colonnes par type ?",
+        # « que signifie » suivi d'un GROUPE nominal : c'est une question sur
+        # les données, pas sur un champ — le nom nu seul déclenche
+        "Que signifie une progression de 12 % sur ce mois ?",
+        "Que signifie ce pic de novembre ?",
+        "Que signifie cela ?",
     ],
 )
 def test_les_questions_sur_les_donnees_ne_sont_pas_volees(question: str):
@@ -167,6 +176,73 @@ def test_un_marqueur_de_calcul_fait_abandonner_le_lexique():
     """« quelles colonnes » est une tournure de schéma — « combien » tranche."""
     assert introspection.sujet_de("Quelles colonnes a la table passengers ?") == "schema"
     assert introspection.sujet_de("Combien de colonnes a la table passengers ?") is None
+
+
+# --- une base réelle : ses colonnes portent les noms du métier -----------------
+
+
+@pytest.fixture
+def ontologie_etoile() -> introspection.Ontologie:
+    """Une source dont une colonne s'appelle `source` — comme la vraie Maxizoo.
+
+    `weather.source` existe : c'est le mot par lequel on désigne une source de
+    données, et c'est aussi un nom de colonne. Deux tables jouets ne pouvaient
+    pas montrer la collision.
+    """
+    return introspection.Ontologie(
+        source=FileSource(name="maxizoo", path=Path("m.duckdb")),
+        schema=SchemaInfo(
+            dialect="duckdb",
+            tables=[
+                TableInfo(
+                    name="weather",
+                    columns=[
+                        ColumnInfo(name="date", type="DATE", nullable=False),
+                        ColumnInfo(name="source", type="VARCHAR", values=["open-meteo"]),
+                    ],
+                ),
+                TableInfo(
+                    name="stores",
+                    columns=[ColumnInfo(name="store_id", type="VARCHAR", nullable=False)],
+                ),
+            ],
+        ),
+    )
+
+
+def test_le_mot_qui_introduit_la_source_n_est_pas_pris_pour_une_colonne(ontologie_etoile):
+    """« la SOURCE maxizoo » désignait la colonne `weather.source` — réponse fausse."""
+    reponse = introspection.decrire_le_schema(
+        "Quelles colonnes a la source maxizoo ?", [ontologie_etoile]
+    )
+
+    assert reponse.startswith("La source `maxizoo` contient 2 table(s)")
+    assert "`store_id`" in reponse  # tout le schéma, et non une colonne isolée
+
+
+def test_une_colonne_qui_porte_un_mot_du_cadre_reste_trouvable(ontologie_etoile):
+    """Le retrait ne vaut que pour l'introducteur ACCOLÉ à un nom réellement cité."""
+    reponse = introspection.decrire_le_schema(
+        "Que signifie la colonne source ?", [ontologie_etoile]
+    )
+
+    assert reponse.startswith("Dans la table `weather`, la colonne `source`")
+
+
+def test_une_question_sur_les_tables_ne_deplie_pas_les_colonnes(ontologie_etoile):
+    """« Quelles tables ? » demande des tables. Sur dix tables, la nuance se voit."""
+    reponse = introspection.decrire_le_schema("Quelles tables as-tu ?", [ontologie_etoile])
+
+    assert "`weather`, `stores`" in reponse
+    assert "store_id" not in reponse  # les colonnes ne sont pas dépliées
+    assert "quelles colonnes dans la table weather" in reponse  # on dit comment les avoir
+
+
+def test_une_question_sur_les_colonnes_les_deplie_bien(ontologie_etoile):
+    reponse = introspection.decrire_le_schema("Quelles colonnes as-tu ?", [ontologie_etoile])
+
+    assert "`store_id`" in reponse
+    assert "`open-meteo`" in reponse or "'open-meteo'" in reponse
 
 
 # --- ce qu'on cherche à qualifier ----------------------------------------------
