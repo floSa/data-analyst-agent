@@ -559,6 +559,20 @@ def _dedoublonne(noms) -> list[str]:
 INTRODUCTEURS = ("source", "sources", "base", "bases", "table", "tables", "colonne", "colonnes")
 
 
+def _porteuse(tables: list[TableInfo], colonne: str) -> TableInfo:
+    """La table depuis laquelle décrire ``colonne`` : celle qui la DÉFINIT.
+
+    Sur un schéma en étoile, une clé se répète partout : `store_id` vit dans six
+    des dix tables de Maxizoo. Prendre la première venue donnait « dans la table
+    `promo_calendar`, la colonne `store_id` … valeurs présentes : 'S09', 'S12' »
+    — deux magasins sur treize, parce que `promo_calendar` ne porte que les
+    promos locales. Exact, et trompeur. La table dont elle est la clé primaire
+    est celle où son sens est défini, et où ses valeurs sont toutes là.
+    """
+    porteuses = [t for t in tables if any(c.name == colonne for c in t.columns)]
+    return next((t for t in porteuses if [colonne] == t.primary_key), porteuses[0])
+
+
 def _demande_les_tables(question: str) -> bool:
     """La question porte-t-elle sur les TABLES, et non sur les colonnes ?
 
@@ -629,7 +643,7 @@ def decrire_le_schema(question: str, ontologies: list[Ontologie]) -> str:
     colonne_visee = _nomme_dans(detail, _dedoublonne(c.name for t in tables for c in t.columns))
 
     if colonne_visee:
-        porteuse = next(t for t in tables if any(c.name == colonne_visee for c in t.columns))
+        porteuse = _porteuse(tables, colonne_visee)
         lignes = _decrire_la_colonne(porteuse, colonne_visee)
         terme = colonne_visee
     elif table_visee:

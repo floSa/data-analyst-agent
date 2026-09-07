@@ -238,6 +238,38 @@ def test_une_question_sur_les_tables_ne_deplie_pas_les_colonnes(ontologie_etoile
     assert "quelles colonnes dans la table weather" in reponse  # on dit comment les avoir
 
 
+def test_une_cle_repetee_est_decrite_depuis_la_table_qui_la_definit():
+    """Sur une étoile, une clé vit partout : c'est là où elle est PK qu'on la lit.
+
+    `store_id` est dans six des dix tables de Maxizoo. Décrit depuis
+    `promo_calendar`, il n'avait que deux valeurs sur treize — cette table ne
+    porte que les promos locales. Exact, et trompeur.
+    """
+    faits = TableInfo(
+        name="promo_calendar",
+        columns=[ColumnInfo(name="store_id", type="VARCHAR", values=["S09", "S12"])],
+        foreign_keys=[ForeignKeyInfo(column="store_id", ref_table="stores", ref_column="store_id")],
+    )
+    referentiel = TableInfo(
+        name="stores",
+        columns=[
+            ColumnInfo(name="store_id", type="VARCHAR", nullable=False, values=["ONLINE", "S01"])
+        ],
+        primary_key=["store_id"],
+    )
+    ontologie = introspection.Ontologie(
+        source=FileSource(name="maxizoo", path=Path("m.duckdb")),
+        # `promo_calendar` d'abord : c'est l'ordre qui piégeait
+        schema=SchemaInfo(dialect="duckdb", tables=[faits, referentiel]),
+    )
+
+    reponse = introspection.decrire_le_schema("Que signifie store_id ?", [ontologie])
+
+    assert reponse.startswith("Dans la table `stores`")
+    assert "clé primaire" in reponse
+    assert "'ONLINE'" in reponse
+
+
 def test_une_question_sur_les_colonnes_les_deplie_bien(ontologie_etoile):
     reponse = introspection.decrire_le_schema("Quelles colonnes as-tu ?", [ontologie_etoile])
 
