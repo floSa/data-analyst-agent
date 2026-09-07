@@ -23,10 +23,16 @@ class SourceBase(BaseModel):
     """Ce que toute source déclare : un nom, une description, un dictionnaire.
 
     ``dictionary`` désigne un fichier Markdown décrivant la base — sens des
-    colonnes, valeurs admises, et surtout les pièges de modélisation. Le schéma
-    seul ne dit pas qu'une ligne à ``quantity = 0`` est un vrai jour sans vente,
-    ni que le e-commerce est une ligne de ``stores`` : ça ne s'infère d'aucun
-    DDL, et c'est pourtant ce qui sépare un SQL juste d'un SQL plausible.
+    colonnes, valeurs admises, et surtout les pièges de modélisation. Le DDL
+    dit les types ; le dictionnaire dit ce que les données VEULENT dire, et
+    c'est lui qu'on cite quand on demande « que signifie cette colonne ? ». Le
+    schéma seul ne dit pas qu'une ligne à ``quantity = 0`` est un vrai jour
+    sans vente, ni que le e-commerce est une ligne de ``stores`` : ça ne
+    s'infère d'aucun DDL, et c'est pourtant ce qui sépare un SQL juste d'un SQL
+    plausible.
+
+    Facultatif : une source qui n'en déclare pas se décrit par son ontologie
+    seule.
     """
 
     name: str

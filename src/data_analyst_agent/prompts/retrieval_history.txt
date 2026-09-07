@@ -1,0 +1,8 @@
+
+--- Contexte de la conversation ---
+{history}
+Le message courant peut S'APPUYER sur ce tour précédent : un « ceux-là », un
+« et pour... », une année ou un filtre différent sous-entendent la MÊME mesure
+et la MÊME logique que la requête précédente. Résous ces sous-entendus toi-même
+à partir du contexte ci-dessus ; ne demande pas de préciser ce qu'il rappelle.
+--- fin du contexte ---

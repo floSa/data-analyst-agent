@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from data_analyst_agent.agents.retrieval.duckdb_source import DuckDBAdapter, sanitize_table_name
-from data_analyst_agent.agents.retrieval.sql import QueryError
+from data_analyst_agent.agents.retrieval.sql import MAX_DISTINCT_VALUES, QueryError
 
 
 @pytest.fixture
@@ -110,7 +110,7 @@ def test_schema_expose_les_valeurs_dune_colonne_texte(csv_ventes: Path):
 def test_schema_ignore_une_colonne_texte_a_forte_cardinalite(tmp_path: Path):
     """Au-delà du seuil, c'est du texte libre : inutile et coûteux dans le prompt."""
     fichier = tmp_path / "gros.csv"
-    lignes = "\n".join(f"nom{i},{i}" for i in range(DuckDBAdapter.MAX_DISTINCT_VALUES + 5))
+    lignes = "\n".join(f"nom{i},{i}" for i in range(MAX_DISTINCT_VALUES + 5))
     fichier.write_text(f"nom,valeur\n{lignes}\n", encoding="utf-8")
 
     schema = DuckDBAdapter.from_file(fichier).schema()

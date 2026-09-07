@@ -24,7 +24,7 @@ from data_analyst_agent.agents.retrieval.duckdb_source import DuckDBAdapter
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.context_budget import estimate_tokens
 from data_analyst_agent.orchestrator.graph import Orchestrator
-from data_analyst_agent.orchestrator.plan import Plan
+from data_analyst_agent.orchestrator.plan import Plan, planner_template
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput, SandboxResult
 from helpers.doubles import FakeRegressor, ScriptedSandbox
@@ -365,7 +365,15 @@ def test_reponse_de_memoire_sans_aucune_requete_est_ecartee(mini_csv: Path, regi
 
 
 def test_reponse_fondee_sur_le_schema_seul_reste_acceptee(mini_csv: Path, registry: Registry):
-    """« quelles colonnes ? » se répond avec get_schema, sans run_sql : c'est fondé."""
+    """Une réponse tirée de get_schema seul, sans run_sql, reste fondée.
+
+    La question était « quelles colonnes y a-t-il ? » — devenue une question
+    SUR le système, à qui l'introspection répond désormais sans LLM ni
+    récupération (cf. ``test_les_colonnes_passent_par_le_systeme``). Ce qui
+    est vérifié ici est autre chose, et tient toujours : quand l'agent de
+    récupération n'appelle QUE get_schema, sa réponse est fondée sur la
+    source, et la synthèse ne l'écarte pas.
+    """
     llm = (
         ScriptedLLM()
         .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
@@ -376,7 +384,7 @@ def test_reponse_fondee_sur_le_schema_seul_reste_acceptee(mini_csv: Path, regist
     )
     catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
     orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
-    answer = orchestrator.ask("quelles colonnes y a-t-il ?")
+    answer = orchestrator.ask("résume-moi ce fichier")
 
     assert answer.answer == "La table mini a deux colonnes : sexe, survie."
 
@@ -905,8 +913,17 @@ BUDGET_AU_DESSUS_DU_PLANCHER = 1600
 def test_le_budget_borne_le_prompt_reellement_envoye(
     tmp_path: Path, mini_csv: Path, registry: Registry
 ):
-    """Le budget se décompte sur le prompt réel, et il est tenu."""
+    """Le budget se décompte sur le prompt réel, et il est tenu.
+
+    Le budget doit rester AU-DESSUS du plancher incompressible du prompt
+    (gabarit + catalogue + modèles + question) : en dessous, évincer tous les
+    tableaux ne suffit plus, et le test ne mesure plus l'éviction mais la
+    longueur du fichier de prompt. Il était à huit tokens du plancher — donc à
+    un mot près de tomber sur n'importe quelle retouche de prompt, ce qui est
+    arrivé. D'où la marge, et l'assertion qui la garde explicite.
+    """
     budget = BUDGET_AU_DESSUS_DU_PLANCHER
+    assert estimate_tokens(planner_template()) < budget  # le plancher tient dans le budget
     llm, answer = _tour_de_requete(
         tmp_path,
         mini_csv,
@@ -1258,9 +1275,9 @@ def test_extrait_tronque_est_annonce_au_code_genere(
     orchestrator.ask("fais-moi la somme")
 
     prompt = llm.prompts_for(ANALYSIS)[0]
-    assert "TRONQUÉS" in prompt
-    assert "gros (10 lignes seulement)" in prompt
-    assert "n'annonce jamais un agrégat comme s'il valait pour toute la source" in prompt
+    assert "Données tronquées : gros" in prompt
+    assert "10 lignes" in prompt
+    assert "décrit cet échantillon, pas la table entière" in prompt
 
 
 # --- fetch_then_predict ---------------------------------------------------------

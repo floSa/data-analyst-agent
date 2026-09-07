@@ -3,9 +3,11 @@
 # - duckdb   : base DuckDB (fichier .duckdb), relatif à ce fichier.
 # - file     : chemin CSV/Excel, relatif à ce fichier.
 #
-# `dictionary` : Markdown décrivant la base, chargé dans le contexte de l'agent
-# SQL. Le DDL dit les types ; le dictionnaire dit ce que les données veulent
-# dire — c'est lui qui porte les pièges de modélisation.
+# `dictionary` (facultatif) : Markdown décrivant la source, relatif à ce fichier,
+# chargé dans le contexte de l'agent SQL comme de l'agent d'analyse. Le DDL dit les
+# types ; le dictionnaire dit ce que les données VEULENT dire — c'est lui qui porte
+# les pièges de modélisation, et c'est lui qu'on cite quand on demande le sens d'une
+# colonne.
 #
 # La base n'est pas versionnée (180 Mo). Construisez-la avant usage :
 #     python scripts/load_maxizoo_duckdb.py --export ../base_demo

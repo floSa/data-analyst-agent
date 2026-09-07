@@ -16,6 +16,7 @@ from data_analyst_agent.agents.retrieval.sql import (
     TableInfo,
     assert_read_only,
     build_result,
+    mask_literals,
     normalize_value,
 )
 
@@ -59,6 +60,84 @@ def test_requetes_ecriture_refusees(query):
 def test_nom_de_colonne_contenant_un_mot_cle_accepte():
     # "created_at" contient "create" mais n'est pas le mot-clé isolé
     assert_read_only("SELECT created_at, updated_by FROM t")
+
+
+# --- ce qui vit dans un littéral, un identifiant cité ou un commentaire ---------
+#
+# Le garde-fou lisait le texte brut : « SELECT ';' AS x » était refusé comme
+# deux instructions, et toute question portant sur une valeur contenant un
+# point-virgule était bloquée — le modèle rebouclait jusqu'à épuiser sa limite
+# d'allers-retours sans jamais savoir pourquoi (audit §5.1). Même mécanique pour
+# un mot-clé d'écriture qui n'est qu'une donnée.
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT * FROM t WHERE nom = 'a;b'",  # le cas de l'audit
+        "SELECT ';' AS point_virgule",
+        "SELECT * FROM t WHERE nom = 'l''été; ok'",  # apostrophe doublée
+        'SELECT "colonne;bizarre" FROM t',  # identifiant cité
+        'SELECT "identifiant ""double"" ; ok" FROM t',  # guillemet double doublé
+        "SELECT 'guillemet \"double\" dedans ; ok' AS x",
+        "SELECT * FROM t WHERE action = 'DELETE'",  # mot-clé, mais donnée
+        'SELECT * FROM "drop"',  # table nommée comme un mot-clé
+        "SELECT 1 -- un point-virgule ; en commentaire",
+        "SELECT 1 /* ; DROP TABLE t */",
+        "-- commentaire d'entête\nSELECT 1",  # le SELECT reste le premier mot
+    ],
+)
+def test_point_virgule_et_mots_cles_dans_une_donnee_sont_acceptes(query):
+    assert_read_only(query)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT 'a'; DROP TABLE t",
+        "SELECT 'a;b'; DROP TABLE t",  # littéral ET vraie seconde instruction
+        'SELECT "c" ; DROP TABLE t',
+        "SELECT 1 -- commentaire\n; DROP TABLE t",  # le ; est APRÈS le commentaire
+        "SELECT 1 /* commentaire */; DROP TABLE t",
+        "SELECT E'a\\'; DROP TABLE t --'",  # l'antislash n'échappe rien : refusé
+    ],
+)
+def test_un_point_virgule_hors_litteral_reste_interdit(query):
+    """Le correctif ne doit pas ouvrir de brèche : c'est le sens qui compte."""
+    with pytest.raises(QueryError, match="une seule instruction"):
+        assert_read_only(query)
+
+
+@pytest.mark.parametrize("query", ["-- rien qu'un commentaire", "/* rien */", "  ;  "])
+def test_une_requete_sans_sql_executable_est_vide(query):
+    with pytest.raises(QueryError, match="requête vide"):
+        assert_read_only(query)
+
+
+def test_la_requete_rendue_est_l_originale_intacte():
+    """Le masque sert à décider ; c'est la requête d'origine qui part au moteur."""
+    query = "SELECT * FROM t WHERE nom = 'a;b';"
+
+    assert assert_read_only(query) == "SELECT * FROM t WHERE nom = 'a;b'"
+
+
+def test_le_masque_preserve_longueur_et_lignes():
+    """Un masque de même longueur garde les positions exploitables (messages, offsets)."""
+    query = "SELECT 'a;b' -- x\nFROM t"
+
+    masque = mask_literals(query)
+
+    # le littéral (5 caractères) et le commentaire (4) blanchis, le reste intact
+    assert masque == "SELECT " + " " * 5 + " " + " " * 4 + "\nFROM t"
+    assert len(masque) == len(query)
+    assert masque.count("\n") == query.count("\n")
+
+
+def test_un_litteral_non_referme_masque_tout_ce_qui_suit():
+    """Choix conservateur : la requête est alors invalide, le moteur la rejette."""
+    query = "SELECT 'a; DROP TABLE t"
+
+    assert mask_literals(query) == "SELECT " + " " * len("'a; DROP TABLE t")
 
 
 # --- normalisation et résultats ------------------------------------------------

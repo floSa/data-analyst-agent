@@ -14,69 +14,14 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
-from data_analyst_agent.agents.retrieval.sql import DatabaseAdapter, QueryError, QueryResult
+from data_analyst_agent import prompts
+from data_analyst_agent.agents.retrieval.sql import (
+    DatabaseAdapter,
+    QueryError,
+    QueryResult,
+)
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
-
-SYSTEM_PROMPT = """\
-Tu es un expert SQL (dialecte : {dialect}). On te pose une question sur des
-données ; tu y réponds en interrogeant la base, en LECTURE SEULE.
-
-Règle absolue : tu ne SAIS RIEN de ces données avant de les avoir regardées.
-Même si le jeu de données t'est familier (iris, titanic…), n'utilise JAMAIS tes
-connaissances générales : la source réelle peut différer de ce que tu crois.
-Toute réponse doit s'appuyer sur get_schema et/ou run_sql — pour une
-« description », lis le schéma ET compte les lignes.
-
-Démarche :
-1. Appelle get_schema pour connaître les tables, colonnes et relations.
-2. Écris UNE requête SELECT qui répond à la question (jointures si besoin).
-   - Si on te demande de LISTER / AFFICHER des individus (« donne-moi… »,
-     « liste… », « quelles sont les lignes… »), sélectionne TOUTES les colonnes
-     pertinentes (en pratique `SELECT *`), pour que le résultat reste
-     réutilisable ; n'emploie DISTINCT que si on demande des valeurs uniques.
-   - Réserve les projections restreintes (une seule colonne) et les agrégats
-     (COUNT, AVG…) aux questions qui les demandent explicitement.
-3. Exécute-la avec run_sql.
-4. Si run_sql renvoie une erreur SQL, corrige ta requête et réessaie.
-5. Quand le résultat est correct, réponds par une TRÈS courte synthèse en
-   français (1 à 2 phrases). Le tableau des résultats est affiché séparément à
-   l'utilisateur : NE recopie donc PAS les lignes une à une ; contente-toi de
-   décrire ce que montre le résultat (et, au besoin, une ou deux valeurs clés
-   comme un total). N'invente aucun chiffre.
-"""
-
-# Le dictionnaire passe AVANT la question, et non en réponse à un tool : les
-# pièges qu'il décrit doivent être connus au moment d'écrire la requête, pas
-# après. Un modèle qui apprend en 3e tour que le e-commerce est une ligne de
-# `stores` a déjà rendu son top magasins.
-DICTIONARY_PROMPT = """\
-
---- Dictionnaire de la source ---
-Ce document décrit la base que tu interroges : le sens de chaque colonne, les
-valeurs admises, et les pièges de modélisation. Il fait autorité sur le schéma
-brut — le DDL dit les types, le dictionnaire dit ce que les données VEULENT
-DIRE. Lis-le avant d'écrire ta requête, et respecte ses mises en garde même
-quand le SQL « évident » semble marcher : c'est justement là qu'il est faux.
-
-{dictionary}
---- fin du dictionnaire ---
-"""
-
-# Le contexte du tour précédent, pour résoudre les anaphores : « affiche ceux
-# des autres années » n'a de sens qu'en sachant que « ceux » = le chiffre
-# d'affaires demandé juste avant. Sans lui, l'agent SQL reçoit une phrase
-# incomplète et répond « demande trop vague » au lieu d'écrire la requête.
-HISTORY_PROMPT = """\
-
---- Contexte de la conversation ---
-{history}
-Le message courant peut S'APPUYER sur ce tour précédent : un « ceux-là », un
-« et pour... », une année ou un filtre différent sous-entendent la MÊME mesure
-et la MÊME logique que la requête précédente. Résous ces sous-entendus toi-même
-à partir du contexte ci-dessus ; ne demande pas de préciser ce qu'il rappelle.
---- fin du contexte ---
-"""
 
 
 class ExecutedQuery(BaseModel):
@@ -124,11 +69,17 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
 
     @agent.system_prompt
     def system_prompt(ctx: RunContext[RetrievalDeps]) -> str:
-        prompt = SYSTEM_PROMPT.format(dialect=ctx.deps.adapter.dialect)
+        # Le dictionnaire passe AVANT la question, et non en réponse à un tool :
+        # les pièges qu'il décrit doivent être connus au moment d'écrire la
+        # requête, pas après. Un modèle qui apprend en 3e tour que le e-commerce
+        # est une ligne de `stores` a déjà rendu son top magasins. Le contexte
+        # du tour précédent, lui, résout les anaphores : « affiche ceux des
+        # autres années » n'a de sens qu'en sachant ce qu'était « ceux ».
+        prompt = prompts.render(prompts.RETRIEVAL, dialect=ctx.deps.adapter.dialect)
         if ctx.deps.dictionary:
-            prompt += DICTIONARY_PROMPT.format(dictionary=ctx.deps.dictionary)
+            prompt += prompts.render(prompts.RETRIEVAL_DICTIONARY, dictionary=ctx.deps.dictionary)
         if ctx.deps.history:
-            prompt += HISTORY_PROMPT.format(history=ctx.deps.history)
+            prompt += prompts.render(prompts.RETRIEVAL_HISTORY, history=ctx.deps.history)
         return prompt
 
     @agent.tool

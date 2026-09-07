@@ -1,0 +1,10 @@
+
+--- Dictionnaire de la source ---
+Ce document décrit la base que tu interroges : le sens de chaque colonne, les
+valeurs admises, et les pièges de modélisation. Il fait autorité sur le schéma
+brut — le DDL dit les types, le dictionnaire dit ce que les données VEULENT
+DIRE. Lis-le avant d'écrire ta requête, et respecte ses mises en garde même
+quand le SQL « évident » semble marcher : c'est justement là qu'il est faux.
+
+{dictionary}
+--- fin du dictionnaire ---

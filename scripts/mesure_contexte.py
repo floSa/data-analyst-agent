@@ -24,11 +24,11 @@ import argparse
 import tempfile
 from pathlib import Path
 
+from data_analyst_agent import prompts
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.inference.schemas import SCHEMAS, describe_features
 from data_analyst_agent.agents.retrieval.catalog import Catalog, load_catalog
 from data_analyst_agent.config import Settings, get_settings
-from data_analyst_agent.orchestrator.plan import PLANNER_SYSTEM_PROMPT
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 
 # Un tableau réaliste : c'est ce que produit une question « query » courante.
@@ -47,7 +47,7 @@ def _description_fixe(settings: Settings) -> str:
         datasets = "\n".join(_ligne_dataset(registre, d) for d in registre.datasets)
     except Exception:
         datasets = "(aucun modèle)"
-    return PLANNER_SYSTEM_PROMPT.format(sources=catalogue.describe(), datasets=datasets)
+    return prompts.render(prompts.PLANNER, sources=catalogue.describe(), datasets=datasets)
 
 
 def _ligne_dataset(registre: Registry, dataset: str) -> str:

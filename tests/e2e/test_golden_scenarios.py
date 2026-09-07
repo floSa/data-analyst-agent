@@ -109,7 +109,7 @@ def registry() -> Registry:
 @pytest.fixture(scope="module")
 def catalog(settings: Settings, tmp_path_factory):
     from sqlalchemy import create_engine
-    from testcontainers.postgres import PostgresContainer
+    from testcontainers.community.postgres import PostgresContainer
 
     ensure_image(settings)  # l'image sandbox doit exister pour le scénario n°2
     with PostgresContainer("postgres:16-alpine", driver="pg8000") as container:

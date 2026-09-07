@@ -15,6 +15,7 @@ import tempfile
 import time
 import uuid
 from contextlib import closing
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -23,6 +24,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models import Model
 
+from data_analyst_agent import prompts
 from data_analyst_agent.agents.analysis.agent import AnalysisResult, SandboxLike, run_analysis
 from data_analyst_agent.agents.inference.predict import (
     BatchInferenceOutcome,
@@ -44,6 +46,7 @@ from data_analyst_agent.agents.retrieval.catalog import (
 from data_analyst_agent.agents.retrieval.sql import QueryResult, SchemaInfo
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
+from data_analyst_agent.orchestrator import introspection
 from data_analyst_agent.orchestrator.context_budget import (
     CONTEXT_REFUSAL_ERROR,
     CONTEXT_REFUSAL_MESSAGE,
@@ -55,10 +58,10 @@ from data_analyst_agent.orchestrator.context_budget import (
     is_context_refusal,
 )
 from data_analyst_agent.orchestrator.plan import (
-    PLANNER_SYSTEM_PROMPT,
     Plan,
     planner_agent,
     planner_system_prompt,
+    planner_template,
 )
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
@@ -85,6 +88,7 @@ ERREURS_UTILISATEUR = {
     "analysis": "l'analyse n'a pas pu être menée",
     "inference": "la prédiction n'a pas pu être lancée",
     "fetch_predict": "les données de la prédiction n'ont pas pu être récupérées",
+    "system": "je n'ai pas pu relire ma propre configuration",
     "synthesize": "la réponse n'a pas pu être composée",
 }
 ERREUR_UTILISATEUR_PAR_DEFAUT = "une étape interne a échoué"
@@ -99,14 +103,6 @@ def reference_dincident() -> str:
     collisionner dans un journal, assez court pour être recopié à l'oral.
     """
     return uuid.uuid4().hex[:8]
-
-
-SYNTHESIS_SYSTEM_PROMPT = """\
-Tu rédiges la réponse finale pour l'utilisateur, en français, à partir du
-travail effectué par le système (résultats fournis ci-après). Cite les valeurs
-obtenues sans en inventer ; si une figure a été produite, mentionne-la
-(« ci-joint »). Reste concis : 1 à 4 phrases.
-"""
 
 
 class TraceStep(BaseModel):
@@ -148,12 +144,36 @@ class OrchestratorState(TypedDict, total=False):
     batch: BatchInferenceOutcome | None
     pending_in: PendingInference | None
     pending_out: PendingInference | None
+    system_topic: str | None  # sujet d'une question SUR le système (cf. introspection)
+    system: str | None  # réponse déterministe à une question SUR le système
     clarification: str | None
     workspace: ConversationWorkspace | None
     answer: str
     error: str | None
     artifacts: Annotated[list[MimeOutput], operator.add]
     trace: Annotated[list[TraceStep], operator.add]
+
+
+@dataclass(frozen=True)
+class PlanContext:
+    """Ce que les règles d'ajustement du plan ont le droit de regarder.
+
+    Figé, et calculé une fois pour toutes : les règles s'enchaînent sur un même
+    tour et aucune ne modifie ce qu'une autre lit — seul le ``Plan`` passe de
+    main en main. Le donner explicitement remplace les lectures répétées du
+    state éparpillées dans l'ancien bloc unique, où l'on relisait deux fois le
+    même ``workspace`` et recalculait trois fois le même catalogue effectif.
+
+    La distinction entre les deux catalogues n'est pas décorative : deux règles
+    voisines ne lisent pas le même, et c'est délibéré (cf. leurs docstrings).
+    """
+
+    # source tranchée par l'appelant (paramètre `source` de `ask()`)
+    source_imposee: str | None
+    pending: PendingInference | None
+    workspace: ConversationWorkspace | None
+    catalogue_declare: Catalog  # le YAML seul
+    catalogue_effectif: Catalog  # + les tableaux mémorisés du fil
 
 
 class ChatAnswer(BaseModel):
@@ -169,9 +189,22 @@ class ChatAnswer(BaseModel):
     conversation_id: str | None = None  # renseigné par l'API
 
 
-def _table_artifact(result: QueryResult) -> MimeOutput:
-    payload = {"columns": result.columns, "rows": result.rows, "truncated": result.truncated}
+def _json_table(columns: list[str], rows: list[list], truncated: bool) -> MimeOutput:
+    """L'artefact « tableau » que la page sait afficher : colonnes, lignes, troncature.
+
+    Un seul point de fabrication. Le contrat est lu par le front, qui n'attend
+    que ces trois clés : deux ``json.dumps`` séparés, c'étaient deux occasions
+    de renommer une clé d'un côté seulement, ou d'oublier ``ensure_ascii=False``
+    — auquel cas les accents partent en ``\u00e9`` dans la moitié des tableaux
+    (audit §5.2).
+    """
+    payload = {"columns": columns, "rows": rows, "truncated": truncated}
     return MimeOutput(mime="application/json", data=json.dumps(payload, ensure_ascii=False))
+
+
+def _table_artifact(result: QueryResult) -> MimeOutput:
+    """Le tableau d'une requête, tel quel."""
+    return _json_table(result.columns, result.rows, result.truncated)
 
 
 class Orchestrator:
@@ -296,6 +329,7 @@ class Orchestrator:
         builder.add_node("analysis", self._guarded("analysis", self._analysis_node))
         builder.add_node("inference", self._guarded("inference", self._inference_node))
         builder.add_node("fetch_predict", self._guarded("fetch_predict", self._fetch_predict_node))
+        builder.add_node("system", self._guarded("system", self._system_node))
         builder.add_node("synthesize", self._guarded("synthesize", self._synthesize_node))
 
         builder.set_entry_point("plan")
@@ -307,11 +341,12 @@ class Orchestrator:
                 "analyze": "analysis",
                 "predict": "inference",
                 "fetch_then_predict": "fetch_predict",
+                "system": "system",
                 "clarify": "synthesize",
                 "error": "synthesize",
             },
         )
-        for node in ("retrieval", "analysis", "inference", "fetch_predict"):
+        for node in ("retrieval", "analysis", "inference", "fetch_predict", "system"):
             builder.add_edge(node, "synthesize")
         builder.add_edge("synthesize", END)
         return builder.compile()
@@ -323,8 +358,19 @@ class Orchestrator:
 
     @staticmethod
     def _route(state: OrchestratorState) -> str:
-        """Règle de routage : du code, pas du prompt (CADRAGE §4)."""
-        if state.get("error") or state.get("plan") is None:
+        """Règle de routage : du code, pas du prompt (CADRAGE §4).
+
+        ``system_topic`` est examiné avant le plan, et il n'y a pas de plan à
+        examiner dans ce cas : une question SUR le système est reconnue avant
+        l'appel au planificateur, donc aucune capacité n'a été choisie. C'est
+        la seule branche du graphe qui ne vient pas d'un ``Plan`` — et c'est
+        aussi ce qui la rend gratuite.
+        """
+        if state.get("error"):
+            return "error"
+        if state.get("system_topic"):
+            return "system"
+        if state.get("plan") is None:
             return "error"
         if state.get("clarification"):
             return "clarify"
@@ -502,22 +548,30 @@ class Orchestrator:
             return Plan(capability=ctx.last_capability, source=ctx.last_source)
         return None
 
-    def _plan_node(self, state: OrchestratorState) -> dict:
-        start = time.monotonic()
-        pending = state.get("pending_in")
-        sources_description = self.catalog.describe()
+    # -- le plan et ses règles d'ajustement -----------------------------------
+
+    def _peser_le_prompt(self, state: OrchestratorState) -> tuple[str, dict]:
+        """Compose le prompt du planificateur et décompte ce qu'il coûte.
+
+        L'ordre est contraint et non arbitraire : le budget se décompte AVANT
+        l'appel, donc avant de savoir ce que la mémoire de conversation pourra
+        garder — et le prompt final ne peut être composé qu'après cet arbitrage.
+
+        Rend le prompt et les mesures du tour (tokens estimés, troncatures
+        constatées), que la suite du nœud complète et recopie dans la trace.
+        """
         workspace = state.get("workspace")
+        sources_description = self.catalog.describe()
         datasets_description = self._datasets_description()
-        pending_context = self._pending_context(pending)
+        pending_context = self._pending_context(state.get("pending_in"))
         history_context = workspace.describe_context() if workspace is not None else None
-        # Budget décompté AVANT l'appel. Tout ce qui précède est incompressible
-        # ici : le gabarit, le catalogue déclaré, les modèles, le tour
-        # précédent, la question. Le seul poste qui cède est le catalogue des
-        # objets intermédiaires, et il cède par les plus ANCIENS. (Le gabarit est
-        # pesé avec ses marqueurs `{sources}`/`{datasets}` : quelques caractères
-        # de trop, du bon côté.)
+        # Tout ce qui suit est incompressible ici : le gabarit, le catalogue
+        # déclaré, les modèles, le tour précédent, la question. Le seul poste qui
+        # cède est le catalogue des objets intermédiaires, et il cède par les
+        # plus ANCIENS. (Le gabarit est pesé avec ses marqueurs
+        # `{sources}`/`{datasets}` : quelques caractères de trop, du bon côté.)
         fixe = estimate_tokens(
-            PLANNER_SYSTEM_PROMPT,
+            planner_template(),
             sources_description,
             datasets_description,
             history_context,
@@ -541,124 +595,375 @@ class Orchestrator:
         # dernier constat avant l'envoi : au-delà de la fenêtre du serveur, un
         # échec de sortie structurée ne laissera RIEN à mesurer au retour.
         self._ajoute_avis(mesures, exceeds_model_window(mesures["prompt_tokens"], self.limits))
+        return system_prompt, mesures
+
+    def _demander_un_plan(
+        self, system_prompt: str, state: OrchestratorState, mesures: dict
+    ) -> Plan | None:
+        """Le plan du planificateur, ou son repli — ``None`` s'il n'y en a pas.
+
+        ``None`` veut dire « je n'ai pas de plan à ajuster » : l'appelant
+        demandera de préciser. Jamais d'exception : le planificateur qui rate sa
+        sortie structurée est un cas courant, pas un incident.
+
+        ``mesures`` est complété au passage (ce que le serveur dit avoir évalué,
+        et le débordement qu'on en déduit).
+        """
         planner = planner_agent(system_prompt)
-        serveur: int | None = None
         try:
             resultat = planner.run_sync(state["question"], model=self.model)
         except UnexpectedModelBehavior:
             # le LLM n'a pas su produire un Plan structuré (retries épuisés). Si on
             # a un tour précédent, on suppose un AJUSTEMENT et on reprend sa
-            # capacité/source ; sinon on demande de préciser (jamais de crash).
-            fallback = self._fallback_plan(workspace)
-            if fallback is None:
-                # Les sources sont NOMMÉES depuis le catalogue, jamais codées en
-                # dur : un message qui citerait des sources disparues enverrait
-                # l'utilisateur vers des données qui n'existent plus.
-                connues = ", ".join(s.name for s in self.catalog.sources)
-                perimetre = f" ({connues})" if connues else ""
-                return self._clarify(
-                    Plan(capability="query"),
-                    "Je n'ai pas bien compris ta demande. Peux-tu préciser ce que tu veux "
-                    f"faire — interroger une source{perimetre}, une analyse ou une "
-                    "visualisation, ou une prédiction — et sur quelles données ?",
-                    start,
-                    **mesures,
-                )
-            plan = fallback
-        else:
-            plan = resultat.output
-            # le budget est une prévision, `prompt_eval_count` est une mesure :
-            # c'est elle qui prouve qu'un serveur a tronqué sans le dire.
-            serveur = resultat.usage.input_tokens
-            debordement = detect_overflow(mesures["prompt_tokens"], serveur, self.limits)
-            if debordement is not None:
-                self._ajoute_avis(mesures, debordement.message())
-        mesures["server_prompt_tokens"] = serveur
-        if state.get("source_name"):
-            plan.source = state["source_name"]
-        if plan.capability == "fetch_then_predict" and not self._effective_catalog(state).sources:
-            # aucune source à interroger (ni déclarée, ni en mémoire de
-            # conversation) : on dégrade en predict, la validation relancera
-            # l'utilisateur sur ce qui manque (jamais de crash)
+            # capacité/source ; sinon l'appelant demande de préciser.
+            mesures["server_prompt_tokens"] = None
+            return self._fallback_plan(state.get("workspace"))
+        # le budget est une prévision, `prompt_eval_count` est une mesure :
+        # c'est elle qui prouve qu'un serveur a tronqué sans le dire.
+        mesures["server_prompt_tokens"] = resultat.usage.input_tokens
+        debordement = detect_overflow(
+            mesures["prompt_tokens"], mesures["server_prompt_tokens"], self.limits
+        )
+        if debordement is not None:
+            self._ajoute_avis(mesures, debordement.message())
+        return resultat.output
+
+    def _regle_source_imposee(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """La source passée à ``ask()`` prime sur celle qu'a choisie le modèle.
+
+        En premier, et c'est le point : l'utilisateur (ou l'appelant d'API) a
+        tranché explicitement, toutes les règles suivantes doivent raisonner sur
+        SA source, pas sur celle du planificateur.
+        """
+        if ctx.source_imposee:
+            plan.source = ctx.source_imposee
+        return None
+
+    def _regle_degrader_faute_de_source(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """Pas de source à interroger : ``fetch_then_predict`` retombe en ``predict``.
+
+        Ni déclarée, ni en mémoire de conversation — il n'y a rien à aller
+        chercher. On dégrade plutôt que d'échouer : la validation relancera
+        l'utilisateur sur les features qui manquent.
+        """
+        if plan.capability == "fetch_then_predict" and not ctx.catalogue_effectif.sources:
             plan.capability = "predict"
-        if pending is not None and plan.capability == "predict":
-            # fusion multi-tours : l'acquis d'abord, le nouveau message prime
-            plan.dataset = plan.dataset or pending.dataset
-            if plan.dataset == pending.dataset:
-                plan.features = {**pending.features, **plan.features}
-        elif plan.capability == "predict" and workspace is not None:
+        return None
+
+    def _regle_reprendre_les_features_acquises(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """Fusionne à une prédiction ce que les tours précédents ont déjà donné.
+
+        Deux acquis possibles, et **jamais les deux** : la prédiction restée en
+        attente de features (le cas normal du slot-filling) l'emporte sur celle
+        qui avait abouti. Dans les deux cas le nouveau message prime sur
+        l'acquis — c'est ce qui permet de corriger une valeur refusée — et seul
+        le MÊME dataset est repris : une digression n'hérite de rien.
+
+        Après ``_regle_degrader_faute_de_source``, sans quoi un
+        ``fetch_then_predict`` dégradé n'hériterait pas de l'acquis.
+        """
+        if ctx.pending is not None and plan.capability == "predict":
+            plan.dataset = plan.dataset or ctx.pending.dataset
+            if plan.dataset == ctx.pending.dataset:
+                plan.features = {**ctx.pending.features, **plan.features}
+        elif plan.capability == "predict" and ctx.workspace is not None:
             # ajustement d'une prédiction déjà ABOUTIE (« et si elle était en 3e
             # classe ? ») : le pending est vidé dès qu'une prédiction réussit, donc
             # sans cet acquis le tour repartait de zéro et redemandait des features
-            # déjà données. Même règle que ci-dessus : le nouveau message prime, et
-            # seul le MÊME dataset est repris (une digression n'hérite de rien).
-            acquis = workspace.last_features_for(plan.dataset)
+            # déjà données.
+            acquis = ctx.workspace.last_features_for(plan.dataset)
             if acquis:
                 plan.features = {**acquis, **plan.features}
-        # source désignée mais introuvable : le LLM décore parfois le nom (ex.
-        # « maxizoo (duckdb) » recopié depuis la description au lieu de
-        # « maxizoo ») -> on normalise ; si vraiment inconnue, on demande plutôt
-        # que de laisser fuir un KeyError brut.
-        if plan.source:
-            resolved = self._match_source_name(plan.source, self._effective_catalog(state))
-            if resolved is None:
-                names = (
-                    ", ".join(s.name for s in self._effective_catalog(state).sources) or "(aucune)"
-                )
-                return self._clarify(
-                    plan,
-                    f"La source « {plan.source} » est introuvable. Sur quelle source "
-                    f"veux-tu travailler : {names} ?",
-                    start,
-                    **mesures,
-                )
-            plan.source = resolved
-        # ambiguïté de source : la capacité interroge une source, aucune n'est
-        # choisie et le catalogue en contient plusieurs -> on demande à
-        # l'utilisateur de préciser plutôt que de deviner ou de planter.
+        return None
+
+    def _regle_normaliser_le_nom_de_source(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """Le nom de source désigné est ramené à un nom du catalogue, ou on demande.
+
+        Le LLM décore parfois le nom (« maxizoo (duckdb) », recopié depuis la
+        description au lieu de « maxizoo ») : on normalise. Si la source est
+        vraiment inconnue, on demande — plutôt que de laisser fuir un
+        ``KeyError`` brut depuis le nœud de capacité.
+
+        Sur le catalogue EFFECTIF : un tableau intermédiaire du fil est une
+        source désignable comme une autre.
+        """
+        if not plan.source:
+            return None
+        resolved = self._match_source_name(plan.source, ctx.catalogue_effectif)
+        if resolved is None:
+            names = ", ".join(s.name for s in ctx.catalogue_effectif.sources) or "(aucune)"
+            return (
+                f"La source « {plan.source} » est introuvable. Sur quelle source "
+                f"veux-tu travailler : {names} ?"
+            )
+        plan.source = resolved
+        return None
+
+    def _regle_choisir_la_source(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """Aucune source choisie et le catalogue en contient plusieurs : on demande.
+
+        Deviner serait répondre sur les mauvaises données sans le dire. Sur le
+        catalogue DÉCLARÉ, et non l'effectif : un fil qui a mémorisé des
+        tableaux ne doit pas se faire poser la question à chaque tour, alors que
+        l'unique source déclarée reste le choix évident.
+
+        Le repli sur l'unique source, lui, appartient au nœud de capacité
+        (``_resolve_source``) : il n'y a rien à demander dans ce cas.
+        """
         if (
             plan.capability in self._SOURCE_CAPABILITIES
             and not plan.source
-            and len(self.catalog.sources) > 1
+            and len(ctx.catalogue_declare.sources) > 1
         ):
-            names = ", ".join(s.name for s in self.catalog.sources)
-            return self._clarify(
-                plan, f"Sur quelle source veux-tu travailler : {names} ?", start, **mesures
-            )
-        # modèle de prédiction manquant : repli auto s'il n'y en a qu'un, sinon
-        # on demande lequel plutôt que de propager un KeyError ('' -> inconnu).
-        if plan.capability in self._PREDICT_CAPABILITIES and not plan.dataset:
-            datasets = self.registry.datasets
-            if len(datasets) == 1:
-                plan.dataset = datasets[0]
-            elif len(datasets) > 1:
-                names = ", ".join(datasets)
-                return self._clarify(
-                    plan, f"Sur quel modèle veux-tu prédire : {names} ?", start, **mesures
-                )
-        # « prédis ces lignes » : le LLM route parfois en 'predict' sans features
-        # au lieu de fetch_then_predict. Si le dernier tableau mémorisé fournit
-        # exactement les features du modèle, on chaîne dessus plutôt que de
-        # redemander des valeurs déjà affichées.
-        workspace = state.get("workspace")
+            names = ", ".join(s.name for s in ctx.catalogue_declare.sources)
+            return f"Sur quelle source veux-tu travailler : {names} ?"
+        return None
+
+    def _regle_choisir_le_modele(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """Prédiction sans modèle désigné : repli s'il n'y en a qu'un, sinon on demande.
+
+        Laisser `dataset` vide propagerait un ``KeyError`` ('' -> modèle
+        inconnu) jusqu'au nœud d'inférence.
+        """
+        if plan.capability not in self._PREDICT_CAPABILITIES or plan.dataset:
+            return None
+        datasets = self.registry.datasets
+        if len(datasets) == 1:
+            plan.dataset = datasets[0]
+        elif len(datasets) > 1:
+            return f"Sur quel modèle veux-tu prédire : {', '.join(datasets)} ?"
+        return None
+
+    def _regle_chainer_sur_le_dernier_tableau(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """« Prédis ces lignes » : promeut ``predict`` en ``fetch_then_predict``.
+
+        Le LLM route parfois en 'predict' sans features au lieu de
+        fetch_then_predict. Si le dernier tableau mémorisé fournit exactement
+        les features du modèle, on chaîne dessus plutôt que de redemander des
+        valeurs déjà affichées.
+
+        En dernier, et il faut qu'elle y reste : elle a besoin du dataset
+        résolu par ``_regle_choisir_le_modele`` et des features rassemblées par
+        ``_regle_reprendre_les_features_acquises`` — c'est leur absence qui
+        déclenche le chaînage.
+        """
         if (
-            plan.capability == "predict"
-            and not plan.features
-            and plan.dataset in SCHEMAS
-            and workspace is not None
-            and workspace.injected
+            plan.capability != "predict"
+            or plan.features
+            or plan.dataset not in SCHEMAS
+            or ctx.workspace is None
+            or not ctx.workspace.injected
         ):
-            latest = workspace.injected[-1]
-            needed = set(get_schema(plan.dataset).model_fields)
-            if needed <= {c.lower() for c in latest.columns}:
-                plan.capability = "fetch_then_predict"
-                plan.source = latest.name
-                plan.data_question = plan.data_question or f"toutes les lignes de {latest.name}"
+            return None
+        latest = ctx.workspace.injected[-1]
+        schema = get_schema(plan.dataset)
+        # `align_keys` et non un `.lower()` : c'est le même réalignement qu'au
+        # nœud `fetch_predict`, et il doit trancher pareil des deux côtés. Un
+        # `.lower()` ne suffit que tant que les features tiennent en un seul mot
+        # ("Sex" -> sex) ; sur "Base Price" il ne reconnaît plus `base_price`, et
+        # la règle refusait de chaîner sur un tableau que le nœud, lui, aurait
+        # su aligner — un tour perdu à redemander des valeurs déjà affichées.
+        couvertes = set(align_keys(schema, dict.fromkeys(latest.columns)))
+        if set(schema.model_fields) <= couvertes:
+            plan.capability = "fetch_then_predict"
+            plan.source = latest.name
+            plan.data_question = plan.data_question or f"toutes les lignes de {latest.name}"
+        return None
+
+    # L'ORDRE EST SIGNIFICATIF. Il l'a toujours été — il était simplement
+    # implicite, réparti sur cent cinquante lignes d'un seul bloc où rien ne
+    # distinguait une règle de la suivante ni ne disait pourquoi celle-ci
+    # passait avant celle-là. Chaque règle porte désormais son nom, sa raison
+    # d'être (un incident réel, pour la plupart) et sa place dans cette liste,
+    # qui est la seule chose à lire pour connaître l'ordre.
+    _REGLES_DU_PLAN = (
+        _regle_source_imposee,
+        _regle_degrader_faute_de_source,
+        _regle_reprendre_les_features_acquises,
+        _regle_normaliser_le_nom_de_source,
+        _regle_choisir_la_source,
+        _regle_choisir_le_modele,
+        _regle_chainer_sur_le_dernier_tableau,
+    )
+
+    def _appliquer_les_regles(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """Passe le plan dans les règles, dans l'ordre ; s'arrête à la première question.
+
+        Une règle qui rend une question court-circuite les suivantes : on ne
+        continue pas d'ajuster un plan qu'on va renvoyer à l'utilisateur pour
+        qu'il le précise.
+        """
+        for regle in self._REGLES_DU_PLAN:
+            question = regle(self, plan, ctx)
+            if question is not None:
+                return question
+        return None
+
+    def _court_circuit_meta(self, state: OrchestratorState, start: float) -> dict | None:
+        """Une question SUR le système, reconnue et routée SANS appeler le LLM.
+
+        Placé avant ``_peser_le_prompt``, et c'est tout l'intérêt : la réponse
+        à « quelles sources possèdes-tu ? » est entièrement déterminée par
+        ``sources/catalogue.yaml``. Elle est connue avant même que la question
+        soit lue — la faire classer par un modèle de langage, c'est payer un
+        aller-retour pour apprendre ce qu'on sait déjà. Mesuré avant
+        correction : 2,05 appels LLM par question méta, dont 16 dépensés par
+        les huit replis pour ne rien répondre du tout
+        (docs/surface-conversationnelle.md).
+
+        **Une règle de ``_REGLES_DU_PLAN`` n'aurait pas pu le faire.** Ces
+        règles ajustent un ``Plan`` que le LLM a DÉJÀ rendu : l'appel est
+        derrière elles. Élargir ``_regle_choisir_le_modele`` — le point
+        d'atterrissage que désignait ``axes-amelioration.md`` pour « quelles
+        features ? » — aurait donc gardé l'aller-retour, n'aurait rattrapé que
+        les demandes que le LLM avait su classer en ``predict``, et aurait
+        laissé dehors le cas réellement constaté : celui où il ne classe rien
+        et où le repli s'enclenche. Une règle dont le nom dit « choisir le
+        modèle » se serait en plus mise à répondre à des questions, ce qui
+        n'est pas son travail.
+
+        **Et le planificateur ne connaît pas cette capacité**, délibérément.
+        Elle lui a été proposée, puis retirée sur mesure : la cinquième valeur
+        dans son prompt coûtait 134 tokens à *chaque* requête et, sur la
+        batterie, a déplacé quatre questions d'une bonne réponse vers une
+        mauvaise sans en gagner une seule — « sur quelle période portent les
+        données ? » et « quelles colonnes contiennent des valeurs
+        manquantes ? » y étaient routées en ``describe_system`` alors que leur
+        réponse est un ``SELECT``. Le modèle en service généralise « décris-toi »
+        à toute question sur la forme des données. Le lexique, lui, s'abstient
+        (``MARQUEURS_DE_CALCUL``). Ce qu'il ne reconnaît pas suit donc le
+        chemin d'avant, dont le repli rend maintenant l'inventaire réel
+        (``_repli_du_planificateur``) : le routage reste du code, pas du prompt.
+
+        **Aucun ``Plan`` n'est fabriqué**, et ``ChatAnswer.plan`` reste donc
+        vide pour ces questions. Ce n'est pas un oubli : il n'y a pas eu de
+        planification, parce qu'il n'y avait rien à planifier. Mettre une
+        capacité de plus dans ``Capability`` pour la forme aurait coûté cher —
+        le Literal est le contrat de sortie du modèle, et l'élargir dégrade son
+        extraction sur les autres capacités (mesuré, cf. ``plan.py``). Le sujet
+        porté par le state suffit à router, et la trace le dit en clair.
+        """
+        sujet = introspection.sujet_de(state["question"])
+        if sujet is None:
+            return None
+        return {
+            "system_topic": sujet,
+            "trace": [self._step("plan", f"système ({sujet}) — sans appel LLM", start)],
+        }
+
+    def _repli_du_planificateur(self, state: OrchestratorState) -> str:
+        """Ce qu'on répond quand le planificateur n'a pas su classer la demande.
+
+        L'ancien message était absurde : il déclarait ne pas comprendre **en
+        nommant les sources** — et il les nommait en dur, « titanic, iris… »
+        recopiés dans la chaîne, donc faux dès qu'un déploiement change de
+        catalogue. S'il est capable de nommer la source, il est capable de
+        répondre à la question qui la demande : le repli rend maintenant
+        l'inventaire réel, lu dans le catalogue et le registre.
+
+        Il reste une demande de précision — on n'a effectivement pas compris —
+        mais il ne repart plus les mains vides, et il **finit** par la question
+        plutôt que de commencer par elle : ce qu'on lit en dernier est ce à
+        quoi on répond.
+        """
+        return (
+            "Je n'ai pas bien compris ta demande.\n\n"
+            f"{introspection.inventaire(self.catalog, self.registry)}\n"
+            "Je peux aussi te dire ce que je sais faire, les tables et les colonnes "
+            "d'une source, ou les attributs qu'attend un modèle.\n\n"
+            "Que veux-tu faire — interroger une source, une analyse ou une "
+            "visualisation, ou une prédiction ?"
+        )
+
+    def _plan_node(self, state: OrchestratorState) -> dict:
+        start = time.monotonic()
+        meta = self._court_circuit_meta(state, start)
+        if meta is not None:
+            return meta
+        system_prompt, mesures = self._peser_le_prompt(state)
+        plan = self._demander_un_plan(system_prompt, state, mesures)
+        if plan is None:
+            return self._clarify(
+                Plan(capability="query"),
+                self._repli_du_planificateur(state),
+                start,
+                **mesures,
+            )
+        ctx = PlanContext(
+            source_imposee=state.get("source_name"),
+            pending=state.get("pending_in"),
+            workspace=state.get("workspace"),
+            catalogue_declare=self.catalog,
+            catalogue_effectif=self._effective_catalog(state),
+        )
+        question = self._appliquer_les_regles(plan, ctx)
+        if question is not None:
+            return self._clarify(plan, question, start, **mesures)
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         return {
             "plan": plan,
             "trace": [self._step("plan", detail, start, **mesures)],
         }
+
+    def _ontologies(self, question: str, catalogue: Catalog) -> list[introspection.Ontologie]:
+        """Ce que les sources disent d'elles-mêmes — la source visée, ou toutes.
+
+        L'entrée/sortie est ici et non dans ``introspection`` : ouvrir une
+        connexion appartient à un nœud du graphe, comme pour toute autre
+        capacité. Le formateur, lui, reste pur et testable sans base.
+
+        Quand la question nomme une source, une seule connexion est ouverte.
+        Sinon on les ouvre toutes — « quelles colonnes dans la table
+        passengers ? » ne nomme aucune source et n'est pourtant pas ambiguë,
+        et le catalogue compte une poignée d'entrées par construction.
+        """
+        visee = introspection.source_visee(question, catalogue)
+        sources = [visee] if visee is not None else list(catalogue.sources)
+        ontologies = []
+        for source in sources:
+            with closing(open_source(source)) as adapter:
+                schema = adapter.schema()
+            ontologies.append(introspection.Ontologie(source, schema, source.dictionary_text()))
+        return ontologies
+
+    def _system_node(self, state: OrchestratorState) -> dict:
+        """Répond à une question SUR le système, depuis ses sources de vérité.
+
+        Aucun LLM ici : le catalogue, le registre, les schémas de features et
+        l'ontologie de la source disent tout, et une réponse rédigée par le
+        modèle serait une réponse qu'on ne peut plus vérifier — c'est
+        exactement le défaut corrigé par ``acfd8f5``, où « décris le dataset
+        iris » était répondu de mémoire, sans regarder la source.
+
+        Le sujet vient du state, posé par ``_court_circuit_meta`` — le seul
+        chemin qui mène ici, le planificateur n'ayant aucune valeur pour y
+        router. Le redéduire donnerait un second point de décision à tenir
+        cohérent avec le premier, et une branche « sujet inconnu » que rien ne
+        pourrait atteindre.
+        """
+        start = time.monotonic()
+        question = state["question"]
+        sujet = state["system_topic"]
+        # Le catalogue DÉCLARÉ pour lister les sources : un tableau
+        # intermédiaire du fil n'est pas une source de données, et l'annoncer
+        # comme telle induirait en erreur. Le catalogue EFFECTIF pour aller
+        # lire un schéma, parce qu'un tableau mémorisé est bel et bien
+        # interrogeable — même distinction que dans ``PlanContext``.
+        if sujet == "sources":
+            answer = introspection.decrire_les_sources(self.catalog)
+        elif sujet == "modeles":
+            answer = introspection.decrire_les_modeles(self.registry)
+        elif sujet == "features":
+            answer = introspection.decrire_les_features(
+                self.registry, introspection.dataset_vise(question, self.registry)
+            )
+        elif sujet == "schema":
+            answer = introspection.decrire_le_schema(
+                question, self._ontologies(question, self._effective_catalog(state))
+            )
+        else:
+            answer = introspection.decrire_les_capacites(self.catalog, self.registry)
+        return {"system": answer, "trace": [self._step("system", f"sujet : {sujet}", start)]}
 
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
@@ -736,10 +1041,37 @@ class Orchestrator:
         extra = "Objets intermédiaires de la conversation (réutilisables) :\n" + "\n".join(lines)
         return f"{data_context}\n\n{extra}" if data_context else extra
 
+    def _avis_de_troncature(self, tables: list[str]) -> str:
+        """Ce qu'on dit d'une table matérialisée AMPUTÉE ("" si rien n'a été coupé).
+
+        ``analysis_table_max_rows`` est le seul endroit du code qui livre à
+        l'analyse une donnée incomplète, et il le fait sans laisser de trace
+        dans ce qu'il livre : un ``SELECT *`` coupé à 10 000 lignes donne un CSV
+        parfaitement lisible où rien ne dit qu'il manque des lignes. Le code
+        généré y calcule alors une somme, une moyenne ou un comptage en le
+        prenant pour la table entière, et la réponse cite le chiffre sans
+        réserve. C'est le seul chemin de ce nœud qui produit un résultat FAUX au
+        lieu d'une erreur.
+
+        Un seul message pour deux destinataires : le contexte du code généré,
+        pour qu'il sache sur quoi il travaille, et la trace — d'où la réponse
+        rendue le reprend (cf. ``_with_context_notices``), parce que la trace
+        n'est pas dépliée par défaut.
+        """
+        if not tables:
+            return ""
+        return (
+            f"Données tronquées : {', '.join(tables)} coupée(s) à "
+            f"{self.settings.analysis_table_max_rows} lignes (réglage "
+            "DAA_ANALYSIS_TABLE_MAX_ROWS) — tout agrégat qui porte sur elles "
+            "(somme, moyenne, comptage) décrit cet échantillon, pas la table entière."
+        )
+
     def _analysis_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
         source = self._resolve_source(plan, self._effective_catalog(state))
+        avis = ""
         with tempfile.TemporaryDirectory(prefix="daa-analysis-") as tmp:
             if isinstance(source, FileSource):
                 data_files = {source.path: source.path.name}
@@ -754,17 +1086,17 @@ class Orchestrator:
                     data_context = self._duckdb_context(source, adapter.schema())
             else:
                 # source SQL : matérialise chaque table en CSV pour la sandbox
+                tronquees: list[str] = []
                 with closing(open_source(source)) as adapter:
                     schema = adapter.schema()
                     data_files = {}
-                    tronquees = []
                     for table in schema.tables:
                         result = adapter.run(
                             f"SELECT * FROM {table.name}",
                             max_rows=self.settings.analysis_table_max_rows,
                         )
                         if result.truncated:
-                            tronquees.append(f"{table.name} ({result.row_count} lignes seulement)")
+                            tronquees.append(table.name)
                         csv_path = Path(tmp) / f"{table.name}.csv"
                         pd.DataFrame(result.rows, columns=result.columns).to_csv(
                             csv_path, index=False
@@ -774,20 +1106,9 @@ class Orchestrator:
                 # les CSV matérialisés, il n'a plus rien à demander à la source, et
                 # une analyse dure bien plus longtemps qu'une extraction.
                 data_context = schema.to_prompt()
-                if tronquees:
-                    # Une table coupée à analysis_table_max_rows produit des
-                    # agrégats FAUX qu'aucun garde-fou ne rattrape : « le CA
-                    # total » calculé sur 10 000 des 1,4 M de lignes est
-                    # crédible, précis au centime, et hors de trois ordres de
-                    # grandeur. Le taire serait mentir ; on l'annonce au code
-                    # généré pour qu'il le dise à son tour.
-                    data_context += (
-                        "\n\nATTENTION — extraits TRONQUÉS : "
-                        + ", ".join(tronquees)
-                        + ". Tout total, moyenne ou comptage porte sur CET EXTRAIT, pas sur la "
-                        "table entière. Dis-le explicitement dans ta sortie ; n'annonce jamais "
-                        "un agrégat comme s'il valait pour toute la source."
-                    )
+                avis = self._avis_de_troncature(tronquees)
+                if avis:
+                    data_context = f"{data_context}\n\n{avis}"
             # Le dictionnaire va AUSSI à l'agent d'analyse, pas seulement à
             # l'agent SQL. Sans lui, le code généré filtrait « store_id = 'Lyon' »
             # — or Lyon est un store_name, le store_id vaut 'S03' — et ne trouvait
@@ -830,7 +1151,7 @@ class Orchestrator:
         return {
             "analysis": outcome,
             "artifacts": images,
-            "trace": [self._step("analysis", detail, start)],
+            "trace": [self._step("analysis", detail, start, truncated=bool(avis), truncation=avis)],
         }
 
     def _inference_node(self, state: OrchestratorState) -> dict:
@@ -944,8 +1265,7 @@ class Orchestrator:
                 label = f"écartée ({fields})"
                 confidence = None
             rows.append([*source_row, label, confidence])
-        payload = {"columns": columns, "rows": rows, "truncated": result.truncated}
-        return MimeOutput(mime="application/json", data=json.dumps(payload, ensure_ascii=False))
+        return _json_table(columns, rows, result.truncated)
 
     def _synthesize_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
@@ -957,6 +1277,12 @@ class Orchestrator:
         elif state.get("clarification"):
             answer = state["clarification"]
             mode = "clarification"
+        elif state.get("system") is not None:
+            # Déterministe et rendue TELLE QUELLE : la faire reformuler par le
+            # LLM rouvrirait la porte à une réponse qui n'est plus celle du
+            # catalogue, et c'est tout ce qu'on cherche à empêcher ici.
+            answer = state["system"]
+            mode = "système (déterministe)"
         elif inference is not None and inference.status == "invalid":
             answer = inference.reask or "Il manque des informations pour prédire."
             mode = "relance"
@@ -1051,7 +1377,7 @@ class Orchestrator:
             f"Sorties du code exécuté :\n{analysis.execution.stdout or '(pas de sortie texte)'}\n\n"
             f"Figures produites : {figures}"
         )
-        agent = Agent(system_prompt=SYNTHESIS_SYSTEM_PROMPT)
+        agent = Agent(system_prompt=prompts.gabarit(prompts.SYNTHESIS))
         return agent.run_sync(context, model=self.model).output
 
     @staticmethod

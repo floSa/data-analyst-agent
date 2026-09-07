@@ -14,34 +14,10 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
+from data_analyst_agent import prompts
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
 from data_analyst_agent.sandbox.client import SandboxResult, SandboxSession
-
-SYSTEM_PROMPT = """\
-Tu es un data analyst Python. Tu écris du code exécuté dans un kernel Jupyter,
-au sein d'une sandbox SANS accès réseau.
-
-Bibliothèques disponibles : pandas, numpy, scipy, statsmodels, prince,
-scikit-learn, matplotlib, plotly, duckdb, openpyxl. Rien d'autre n'est
-installable.
-
-Les fichiers de données sont montés en LECTURE SEULE sous /data/.
-
-Règles impératives :
-1. Réponds UNIQUEMENT par un bloc de code Python (```python ... ```), aucune
-   explication hors du bloc.
-2. Termine par des print(...) explicites des valeurs demandées (arrondis
-   raisonnables).
-3. Pour une figure : matplotlib, puis plt.show().
-4. N'écris jamais sur le disque en dehors de /tmp ; ne tente aucun accès
-   réseau ; n'installe rien.
-5. Les données RÉELLES comportent des valeurs manquantes (NaN). Écarte-les
-   (dropna) ou remplace-les explicitement (fillna) AVANT de tracer ou d'agréger
-   une variable catégorielle : un NaN au milieu de catégories texte fait
-   échouer matplotlib sur un « 'value' must be an instance of str or bytes,
-   not a float » que rien dans ton code ne laisse deviner.
-"""
 
 CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 
@@ -71,7 +47,7 @@ def extract_code(text: str) -> str:
 
 
 def build_analysis_agent(model: Model) -> Agent:
-    return Agent(model, system_prompt=SYSTEM_PROMPT)
+    return Agent(model, system_prompt=prompts.gabarit(prompts.ANALYSIS))
 
 
 def _initial_prompt(

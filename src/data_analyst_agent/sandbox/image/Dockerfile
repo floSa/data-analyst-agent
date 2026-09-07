@@ -11,7 +11,10 @@ RUN uv pip install --system --no-cache -r /opt/sandbox/requirements.txt
 
 COPY bridge.py /opt/sandbox/bridge.py
 
-# Utilisateur non privilégié (le client force aussi --user au run)
+# Utilisateur non privilégié. C'est ICI, et nulle part ailleurs, que la propriété
+# tient : `docker_run_command` ne passe PAS de `--user` — le commentaire d'origine
+# l'affirmait, c'était faux. Conséquence à connaître : une image tierce désignée par
+# DAA_SANDBOX_IMAGE tournerait en root, le client ne l'en empêcherait pas.
 RUN useradd --create-home --uid 1000 sandbox
 USER 1000:1000
 
