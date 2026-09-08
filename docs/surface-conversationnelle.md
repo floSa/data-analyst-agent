@@ -1195,15 +1195,15 @@ réponse, et ne se répète jamais.
 Coût mesuré : **16 appels LLM** pour 5 tours (moyenne 3.20 par tour).
 
 Les cinq tours font ce qu'ils annoncent, et deux chiffres suffisent à le prouver :
-le tour 4 répond **3 666 lignes** — le volume de l'échantillon — là où le tour 3
-travaillait sur les 1 363 726 lignes de la base complète, et le tour 5 rend les
-huit colonnes de `sales_daily`, la seule table de l'échantillon. La bascule a
+le tour 4 répond **3 666 lignes**, qui est le volume de l'échantillon et non
+celui de la base complète (1 363 726), et le tour 5 rend les huit colonnes de
+`sales_daily`, la seule table de l'échantillon. La bascule a
 bien eu lieu, elle a été annoncée, et elle a tenu au tour suivant sans être
 renommée.
 
 **La validation coûte zéro appel LLM**, et c'était l'engagement du §12 :
 reconnaître le nom d'une source du catalogue dans un message est du code. Trois
-millisecondes.
+millisecondes, contre huit à trente-neuf secondes pour les quatre autres tours.
 
 **La proposition du tour 1 n'est pas venue de `_regle_choisir_la_source`.** C'est
 l'agent système qui s'est emparé de « bonjour, je voudrais regarder des
