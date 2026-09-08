@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     # Borne d'allers-retours LLM (tools compris) : coupe les boucles infinies.
     retrieval_request_limit: int = 10
 
+    # --- Agent Système (questions SUR l'agent : cf. orchestrator/systeme.py) ---
+    # Bien plus court que celui de la récupération, et pour une raison : l'agent
+    # système n'a pas de boucle de correction à mener. Un appel pour choisir
+    # l'outil, un pour formuler ce qu'il a rendu ; deux de marge pour une
+    # question qui couvre deux sujets. Au-delà, il tourne en rond, et ce tour
+    # de trop est en tête de CHAQUE question posée à l'application.
+    systeme_request_limit: int = 4
+
     # --- Agent Analyse (docs/CADRAGE.md §7-②) ---
     analysis_max_attempts: int = 3
     # Nb max de lignes matérialisées par table quand on analyse une source SQL.

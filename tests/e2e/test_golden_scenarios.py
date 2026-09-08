@@ -178,7 +178,7 @@ def test_golden_1_ca_par_magasin(catalog, registry, settings):
     # recopier — c'est le résumé déterministe, pas la prose du LLM.
     assert "3 lignes" in answer.answer
     assert "tableau" in answer.answer
-    assert [s.node for s in answer.trace] == ["plan", "retrieval", "synthesize"]
+    assert [s.node for s in answer.trace] == ["system", "plan", "retrieval", "synthesize"]
 
 
 def test_golden_1_meme_resultat_sur_duckdb(catalog, registry, settings):

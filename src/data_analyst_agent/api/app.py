@@ -351,6 +351,10 @@ def create_app(
             # la MÊME racine que celle où le magasin écrit la transcription :
             # les tableaux intermédiaires du fil doivent atterrir à côté d'elle.
             workspace_root=magasin.base_dir,
+            # la source validée par l'utilisateur pour ce fil, relue du disque à
+            # chaque tour comme la prédiction en attente — le client ne l'envoie
+            # pas, et `ChatRequest` ne porte pas de champ pour ça.
+            source_de_travail=conversation.source_de_travail,
         )
         magasin.record_turn(
             conversation.id,
@@ -359,6 +363,7 @@ def create_app(
             artifacts=answer.artifacts,
             error=answer.error,
             pending=answer.pending,
+            source_de_travail=answer.source_de_travail,
         )
         answer.conversation_id = conversation.id
         return answer

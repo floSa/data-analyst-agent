@@ -24,6 +24,8 @@ La base de démonstration livrée est un **jeu retail animalerie** (1,66 M de li
 - [Démarrage](#démarrage)
 - [Configuration](#configuration)
 - [API / Endpoints](#api--endpoints)
+- [Le début d'une conversation : choisir la source](#le-début-dune-conversation--choisir-la-source)
+- [Ce que l'agent sait dire de lui-même](#ce-que-lagent-sait-dire-de-lui-même)
 - [Mémoire de conversation](#mémoire-de-conversation)
 - [Observabilité](#observabilité)
 - [Qualité](#qualité)
@@ -40,6 +42,8 @@ flowchart LR
     O --> R["① Récupération<br/>text-to-SQL à tools"]
     O --> A["② Analyse<br/>code stats/viz"]
     O --> I["③ Inférence gardée<br/>validation → predict"]
+    O --> Y["④ Répondre sur soi-même<br/>outils de faits, jamais de mémoire"]
+    Y --> C[("Catalogue · registre ·<br/>schémas · ontologies")]
     R --> D[("Postgres ·<br/>DuckDB · CSV/Excel")]
     A --> S["Sandbox Docker<br/>réseau coupé"]
     I --> M[("Modèles ML<br/>registry joblib")]
@@ -89,6 +93,7 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 | [docs/AUDIT-2026-09.md](docs/AUDIT-2026-09.md) | état des lieux mesuré et backlog priorisé (multi-utilisateurs, mémoire, moteur LLM, sécurité, qualité) |
 | [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
 | [docs/VLLM.md](docs/VLLM.md) | banc d'essai vLLM : le tool calling mesuré, ce qui casse sans les bonnes options, ce qui reste à vérifier |
+| [docs/surface-conversationnelle.md](docs/surface-conversationnelle.md) | ce que l'agent sait répondre **sur lui-même** : la batterie de mesure, les comptes avant/après, le coût en appels LLM, et les décisions déjà mesurées et retirées |
 | [docs/axes-amelioration.md](docs/axes-amelioration.md) | dette technique et chantiers ouverts, ancrés `fichier:ligne`, avec un récapitulatif priorisé |
 
 ## Démarrage
@@ -271,6 +276,46 @@ Deux choix méritent d'être connus avant de s'en servir :
 
 **Ce qu'il a appris, et ce qu'il n'a pas appris.** Il capte la présence d'une campagne (uplift ~×1,6, dans la fourchette de ce qu'on mesure dans les données brutes) mais **pas la profondeur de la remise** : sa prévision est quasi plate de −15 % à −30 %. Ce n'est pas un défaut de modélisation — l'uplift empirique par palier de remise n'est lui-même pas monotone (×1,43 à 15 %, ×1,34 à 25 %, ×1,95 à 30 %), avec 25 à 100 campagnes par palier et une saisonnalité confondue avec la remise (les −30 % sont les Black Friday, donc novembre). En clair : il répond bien à « combien vendra-t-on pendant une campagne ? », et mal à « faut-il remiser à 20 ou à 30 % ? » — cette seconde question demanderait un plan d'expérience, pas ce jeu d'observations.
 
+## La source de travail d'une conversation
+
+Le catalogue peut déclarer plusieurs sources. Plutôt que de laisser le planificateur en deviner une à chaque tour, l'agent **propose**, l'utilisateur **valide**, et c'est celle sur laquelle on travaille ensuite. La source est portée par le fil, persistée dans `transcript.json` comme son propriétaire.
+
+Ici, le catalogue n'en déclare **qu'une** — `maxizoo` — et le mécanisme se replie sur son cas dégénéré, qui est aussi le plus utile : au lieu de poser une question dont la réponse est connue d'avance, l'agent **annonce** la source qu'il prend et la garde.
+
+```
+> Quel est le chiffre d'affaires 2024 ?
+  Je travaille sur la source `maxizoo`.        ← annoncée une fois, puis plus jamais répétée
+
+  Le chiffre d'affaires 2024 s'élève à 34 787 976,80 €.
+
+> et 2025 ?                                     ← la source n'est plus devinée à chaque tour
+  Le chiffre d'affaires 2025 s'élève à 36 268 022,89 €.
+```
+
+Ce qu'il faut savoir de ce mécanisme :
+
+- **S'il n'y a qu'une source, elle est annoncée** au lieu d'être demandée. Avec deux sources ou plus, l'agent énumère ce que le catalogue dit de chacune et demande laquelle prendre.
+- **La proposition n'arrive que si une source est nécessaire.** « Combien vendra-t-on un samedi de novembre en promo −30 % ? » n'interroge aucune source : la question est répondue directement.
+- **La validation ne coûte aucun appel LLM** : c'est le nom d'une source du catalogue, reconnu dans le message. Un message qui n'en nomme aucune n'est pas un choix et repart comme une question ordinaire — on ne reste pas coincé dans une question qu'on ne veut pas trancher.
+- **Un message qui nomme une source ET pose une question est traité comme la question qu'il est** : il lie la source *en chemin* et répond, au lieu de se contenter d'accuser réception.
+- **Nommer une autre source la remplace, et l'agent le dit** : « Je passe sur la source `X` — on travaillait sur `Y`. » Refuser obligerait à ouvrir un fil pour une question d'une ligne ; ce qui est dangereux n'est pas de changer de source, c'est de changer sans le dire. Une source choisie par le *planificateur*, elle, ne fait jamais basculer quoi que ce soit — seul le texte de l'utilisateur compte.
+- **Une conversation ouverte avant ce mécanisme** fonctionne comme avant, sans migration.
+- Le champ `source` de `POST /chat` reste ce qu'il était : une source **imposée pour ce tour**, qui ne lie rien.
+
+Le parcours complet — proposition, validation, question sans nommer la source, bascule — est mesuré contre le serveur réel dans **[docs/surface-conversationnelle.md](docs/surface-conversationnelle.md)**.
+
+## Ce que l'agent sait dire de lui-même
+
+« Quelles données as-tu ? », « c'est quoi ton périmètre ? », « quelles colonnes a `sales_daily` ? », « que signifie `store_id` ? », « de quels attributs as-tu besoin pour prédire ? », « que sais-tu faire ? » — ces questions ne portent pas *sur* les données mais **sur l'agent**, et elles sont le premier tour d'une conversation sur deux.
+
+Le premier nœud du graphe leur est consacré, et c'est le **modèle** qui décide : il reçoit la question avec cinq outils qui rendent les faits du dépôt — catalogue, registre des modèles, schémas d'attributs, schéma réel de la source et son dictionnaire — puis il les formule. S'il n'appelle aucun outil, la question repart au planificateur comme n'importe quelle question sur les données.
+
+**Rien ne vient de la mémoire du modèle**, et ce n'est pas une intention mais une vérification : une formulation qui cite un nom qu'aucun outil n'a rendu, ou qui oublie un nom qu'un outil a rendu, est **écartée** — ce sont alors les faits eux-mêmes qui partent à l'utilisateur. Un nom de table inventé est plus nocif qu'une réponse absente : il a l'air d'une lecture de la source.
+
+La frontière : l'agent répond sur ce qu'il **EST**, jamais sur ce que les données **CONTIENNENT**. « Combien de lignes dans `sales_daily` ? » et « sur quelle période portent les données ? » sont des `COUNT` et des `MIN`/`MAX` : elles suivent le chemin SQL.
+
+La mesure de cette surface — les formulations posées au vrai serveur, sur les dix tables réelles, avec le coût en appels LLM — est dans **[docs/surface-conversationnelle.md](docs/surface-conversationnelle.md)**.
+
 ## Mémoire de conversation
 
 Chaque conversation (`conversation_id`) dispose d'un espace de travail qui **persiste les tableaux intermédiaires en CSV** (`DAA_WORKSPACE_DIR`). Aux tours suivants, ces objets sont réexposés : interrogeables comme des sources (« et pour les femmes ? »), réutilisables pour une prédiction (« prédis **ces** lignes ») et **montés dans la sandbox** pour que le code d'analyse généré les relise (`pd.read_csv('/data/resultat_1.csv')`).
@@ -414,15 +459,16 @@ Les tests marqués `live` (LLM local requis) sont exclus par défaut : `uv run p
 src/data_analyst_agent/   # package
 ├── orchestrator/         # graphe, plan et ses règles, budget de contexte, mémoire des fils
 ├── agents/               # ① retrieval  ② analysis  ③ inference
+│                         #   (④ « répondre sur soi-même » vit dans orchestrator/)
 ├── auth/                 # comptes argon2id, sessions côté serveur, anti-force brute
-├── prompts/              # les 4 prompts système et leurs fragments, hors du code (.txt)
+├── prompts/              # les 5 prompts système et leurs fragments, hors du code (.txt)
 ├── sandbox/              # client durci + image/ (Dockerfile, bridge Jupyter)
 └── api/                  # app.py (HTTP seul) + templates/ (chat, connexion)
-docs/                     # ARCHITECTURE, CADRAGE, AUDIT, VLLM, spike-vanna
+docs/                     # ARCHITECTURE, CADRAGE, AUDIT, VLLM, spike-vanna, surface-conversationnelle
 models/                   # maxizoo_sales.joblib + registry.yaml
 sources/                  # catalogue ; la base et son dictionnaire (non versionnés) atterrissent ici
 notebooks/                # entraînement du modèle (jupytext .md + .ipynb)
-scripts/                  # comptes, migration du workspace, chargement de la base, échantillon, batterie live, banc vLLM
+scripts/                  # comptes, migration du workspace, chargement de la base, échantillon, runners de mesure, bancs
 tests/                    # unit / integration / e2e golden / helpers
 tests/fixtures/maxizoo_mini/  # échantillon versionné (425 Ko) : la base réelle en miniature
 var/                      # NON versionné : comptes, sessions, conversations (0o700)

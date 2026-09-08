@@ -37,6 +37,9 @@ class FakeOrchestrator:
         # la racine reçue au dernier appel : c'est elle qui doit être celle de
         # l'utilisateur de la session, et pas la racine commune.
         self.workspace_roots: list[Path | None] = []
+        # la source liée au fil, telle que l'API l'a relue du disque : c'est ce
+        # qui prouve qu'elle est repassée à chaque tour, comme le `pending`.
+        self.sources_de_travail: list[object] = []
 
     def ask(
         self,
@@ -45,9 +48,11 @@ class FakeOrchestrator:
         pending=None,
         conversation_id=None,
         workspace_root: Path | None = None,
+        source_de_travail=None,
     ) -> ChatAnswer:
         self.calls.append((question, source, pending))
         self.workspace_roots.append(workspace_root)
+        self.sources_de_travail.append(source_de_travail)
         return self.answer
 
 
@@ -250,7 +255,15 @@ def test_flux_reel_predict_via_api(tmp_path):
     body = client.post("/chat", json={"message": "Prédis les ventes de ce produit..."}).json()
     assert "4.1391" in body["answer"]
     assert body["plan"]["capability"] == "predict"
-    assert [step["node"] for step in body["trace"]] == ["plan", "inference", "synthesize"]
+    # `system` est le premier nœud de tout tour : il demande au modèle si la
+    # question porte sur l'agent lui-même. Ici il décline (aucun outil appelé),
+    # et le tour suit son chemin.
+    assert [step["node"] for step in body["trace"]] == [
+        "system",
+        "plan",
+        "inference",
+        "synthesize",
+    ]
 
 
 # -- barre latérale : lister, reprendre, dupliquer, supprimer ---------------------
@@ -310,6 +323,37 @@ def test_reprise_repasse_le_pending_a_lorchestrateur(
     pending_du_2e_tour = fake_orchestrator.calls[-1][2]
     assert pending_du_2e_tour.dataset == "maxizoo_sales"
     assert pending_du_2e_tour.features == {"store_type": "grand"}
+
+
+def test_la_source_validee_est_persistee_et_repassee_au_tour_suivant(
+    fake_orchestrator: FakeOrchestrator, settings: Settings, mot_de_passe: str
+):
+    """Elle est portée par la CONVERSATION, comme ``owner`` et ``pending``.
+
+    Ce test tient les deux bouts du chemin : ce que l'orchestrateur rend est
+    écrit dans la transcription, et ce que la transcription porte lui est
+    repassé au tour d'après. Sans l'un des deux, la source serait redevinée à
+    chaque tour — le défaut qu'on corrige.
+    """
+    fake_orchestrator.answer = ChatAnswer(
+        answer="Entendu : on travaille sur titanic.", source_de_travail="titanic"
+    )
+    client = client_connecte(
+        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings),
+        settings,
+        mot_de_passe,
+    )
+    conversation_id = client.post("/chat", json={"message": "titanic"}).json()["conversation_id"]
+
+    # elle est sur le disque, dans le fil
+    fil = client.get(f"/conversations/{conversation_id}").json()
+    assert fil["source_de_travail"] == "titanic"
+
+    client.post(
+        "/chat", json={"message": "combien de lignes ?", "conversation_id": conversation_id}
+    )
+
+    assert fake_orchestrator.sources_de_travail[-1] == "titanic"
 
 
 def test_conversation_survit_a_un_redemarrage(

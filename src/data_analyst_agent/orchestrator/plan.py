@@ -17,9 +17,10 @@ from data_analyst_agent import prompts
 # planificateur, et rien d'autre : ce que le LLM a le droit de choisir.
 #
 # Une question SUR le système (« quelles sources possèdes-tu ? ») est aussi une
-# capacité de l'agent, et elle n'est volontairement PAS ici : elle est routée
-# par du code avant l'appel, vers le nœud `system` (cf.
-# `Orchestrator._court_circuit_meta`). La raison est mesurée, pas esthétique —
+# capacité de l'agent, et elle n'est volontairement PAS ici : elle est reconnue
+# EN AMONT du planificateur, par un agent qui dispose d'outils rendant les faits
+# du dépôt (`orchestrator/systeme.py`, nœud `system` en tête du graphe). La
+# raison est mesurée, pas esthétique —
 # ce Literal EST le JSON Schema de sortie, que le modèle lit même quand le
 # prompt ne dit rien de la valeur ajoutée. Constaté en live sur gemma4:e4b, de
 # façon reproductible : avec une cinquième valeur, « prédis la survie d'une
@@ -58,6 +59,7 @@ def planner_system_prompt(
     datasets_description: str,
     pending_context: str | None = None,
     history_context: str | None = None,
+    source_context: str | None = None,
 ) -> str:
     """Compose le prompt système du planificateur.
 
@@ -65,6 +67,13 @@ def planner_system_prompt(
     features — le message courant est probablement un complément d'information.
     ``history_context`` : décrit le tour précédent (question + action) pour
     qu'un ajustement (« mets des couleurs plus vives ») soit rattaché à lui.
+    ``source_context`` : nomme la source de travail validée par l'utilisateur,
+    pour que le planificateur n'ait plus à la deviner quand elle est connue.
+
+    Le **gabarit ne bouge pas** : ces contextes sont ajoutés à la suite, comme
+    des faits de conversation. C'est la propriété qui rend le chemin des
+    questions sur les données insensible à ce qu'on ajoute ici — cf. la mesure
+    du coût d'une cinquième valeur de ``Capability``, plus haut.
 
     Composé à part de l'agent parce que l'orchestrateur doit pouvoir le **peser
     avant de l'envoyer** : un budget de tokens se décompte sur le prompt réel,
@@ -73,7 +82,7 @@ def planner_system_prompt(
     system_prompt = prompts.render(
         prompts.PLANNER, sources=sources_description, datasets=datasets_description
     )
-    for extra in (history_context, pending_context):
+    for extra in (history_context, source_context, pending_context):
         if extra:
             system_prompt = f"{system_prompt}\n{extra}"
     return system_prompt

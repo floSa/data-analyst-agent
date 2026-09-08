@@ -16,7 +16,13 @@ import pytest
 from data_analyst_agent import prompts
 from data_analyst_agent.orchestrator.plan import planner_system_prompt, planner_template
 
-TOUS = (prompts.PLANNER, prompts.RETRIEVAL, prompts.ANALYSIS, prompts.SYNTHESIS)
+TOUS = (
+    prompts.PLANNER,
+    prompts.RETRIEVAL,
+    prompts.ANALYSIS,
+    prompts.SYNTHESIS,
+    prompts.SYSTEME,
+)
 
 
 # --- lecture ---------------------------------------------------------------------
@@ -94,7 +100,7 @@ def test_un_marqueur_est_une_portion_stable_du_prompt_rendu(nom: str):
     assert marqueur in rendu
 
 
-def test_les_marqueurs_distinguent_bien_les_quatre_agents():
+def test_les_marqueurs_distinguent_bien_chaque_agent():
     """Un marqueur présent dans deux prompts enverrait les réponses au mauvais agent."""
     for nom in TOUS:
         marqueur = prompts.marqueur(nom)
@@ -123,6 +129,7 @@ def test_le_helper_de_test_derive_ses_marqueurs_des_fichiers():
         scripted_llm.RETRIEVAL,
         scripted_llm.ANALYSIS,
         scripted_llm.SYNTHESIS,
+        scripted_llm.SYSTEME,
     )
     assert derives == tuple(prompts.marqueur(nom) for nom in TOUS)
 

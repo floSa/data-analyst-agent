@@ -21,7 +21,7 @@ from typing import Annotated, TypedDict
 
 import pandas as pd
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, UnexpectedModelBehavior
+from pydantic_ai import Agent, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.models import Model
 
 from data_analyst_agent import prompts
@@ -63,6 +63,7 @@ from data_analyst_agent.orchestrator.plan import (
     planner_system_prompt,
     planner_template,
 )
+from data_analyst_agent.orchestrator.systeme import run_systeme
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput
 
@@ -134,6 +135,21 @@ class PendingInference(BaseModel):
     features: dict = Field(default_factory=dict)
 
 
+# La source de travail d'une conversation est un simple NOM, et elle se persiste
+# avec le fil comme ``owner`` (cf. `Conversation.source_de_travail`). Elle a
+# porté un instant un second champ — « une proposition attend une réponse » —
+# retiré après mesure : l'état n'était pas nécessaire, puisque reconnaître un
+# choix de source ne demande que de lire le message
+# (``introspection.choix_de_source``), et il créait une dépendance à l'ordre
+# des tours qui a fait perdre un message de validation sur le parcours mesuré.
+#
+# Vide = aucune source liée. C'est l'état d'une conversation ANTÉRIEURE à ce
+# mécanisme, dont la transcription ne porte pas le champ : elle continue de
+# fonctionner exactement comme avant, le planificateur choisissant la source à
+# chaque tour. ``None`` (dans le state et dans ``ChatAnswer``) veut dire tout
+# autre chose : il n'y a pas de conversation du tout.
+
+
 class OrchestratorState(TypedDict, total=False):
     question: str
     source_name: str | None
@@ -144,8 +160,10 @@ class OrchestratorState(TypedDict, total=False):
     batch: BatchInferenceOutcome | None
     pending_in: PendingInference | None
     pending_out: PendingInference | None
-    system_topic: str | None  # sujet d'une question SUR le système (cf. introspection)
-    system: str | None  # réponse déterministe à une question SUR le système
+    source_in: str | None  # la source liée au fil, telle que reçue
+    source_out: str | None  # ce que le fil retient de ce tour
+    avis_de_source: str  # « je travaille sur X », mis en tête de la réponse
+    system: str | None  # réponse à une question SUR le système
     clarification: str | None
     workspace: ConversationWorkspace | None
     answer: str
@@ -174,6 +192,15 @@ class PlanContext:
     workspace: ConversationWorkspace | None
     catalogue_declare: Catalog  # le YAML seul
     catalogue_effectif: Catalog  # + les tableaux mémorisés du fil
+    # Le message de ce tour, tel que l'utilisateur l'a écrit. Une règle a besoin
+    # de savoir si c'est LUI qui a nommé une source, et non le planificateur :
+    # une désignation explicite fait basculer la conversation, une supposition
+    # du modèle ne doit pas.
+    question: str
+    # La source liée au fil, ou ``None`` hors conversation (appel direct à
+    # ``ask()`` sans ``conversation_id``) — dans ce cas rien n'est lié ni
+    # proposé, et le comportement est celui d'avant ce mécanisme.
+    source_de_travail: str | None
 
 
 class ChatAnswer(BaseModel):
@@ -186,6 +213,9 @@ class ChatAnswer(BaseModel):
     trace: list[TraceStep] = Field(default_factory=list)
     # multi-tours : à repasser tel quel au prochain ask() de la conversation
     pending: PendingInference | None = None
+    # La source que la conversation retient après ce tour, à persister avec le
+    # fil et à repasser au prochain ``ask()`` — comme ``pending``.
+    source_de_travail: str | None = None
     conversation_id: str | None = None  # renseigné par l'API
 
 
@@ -243,6 +273,7 @@ class Orchestrator:
         pending: PendingInference | None = None,
         conversation_id: str | None = None,
         workspace_root: Path | None = None,
+        source_de_travail: str | None = None,
     ) -> ChatAnswer:
         """Répond à une question, dans la mémoire de ``conversation_id`` s'il y en a une.
 
@@ -253,6 +284,13 @@ class Orchestrator:
         être sûr est que les deux couches lisent la même valeur plutôt que de
         la recalculer chacune de son côté. À défaut, on retombe sur
         ``workspace_dir`` — le cas des appels directs, hors session.
+
+        ``source_de_travail`` est la source liée à la conversation, lue dans sa
+        transcription et repassée ici à chaque tour — comme ``pending``.
+        ``None`` (le défaut) veut dire « pas de conversation, ou pas encore de
+        source liée » : le tour se déroule alors comme avant ce mécanisme.
+        Distinct de ``source`` : celui-là est une source **imposée par
+        l'appelant** pour ce tour-ci, il ne lie rien.
         """
         # mémoire de conversation : les tableaux intermédiaires produits sont
         # persistés et réexposés aux tours suivants (cf. workspace.py)
@@ -267,6 +305,7 @@ class Orchestrator:
                 "question": question,
                 "source_name": source,
                 "pending_in": pending,
+                "source_in": source_de_travail,
                 "workspace": workspace,
                 "artifacts": [],
                 "trace": [],
@@ -296,7 +335,20 @@ class Orchestrator:
             error=state.get("error"),
             trace=state.get("trace", []),
             pending=state.get("pending_out"),
+            source_de_travail=self._source_retenue(state, source_de_travail),
         )
+
+    @staticmethod
+    def _source_retenue(state: OrchestratorState, entree: str | None) -> str | None:
+        """Ce que la conversation garde de ce tour à propos de sa source.
+
+        Un seul endroit, pour que la source liée survive à toute branche du
+        graphe qui ne s'est pas prononcée : un nœud qui échoue, une
+        clarification, une question sur le système ne doivent pas délier ce
+        que l'utilisateur a validé.
+        """
+        retenue = state.get("source_out")
+        return retenue if retenue is not None else entree
 
     @staticmethod
     def _with_context_notices(answer: str, trace: list[TraceStep]) -> str:
@@ -332,7 +384,17 @@ class Orchestrator:
         builder.add_node("system", self._guarded("system", self._system_node))
         builder.add_node("synthesize", self._guarded("synthesize", self._synthesize_node))
 
-        builder.set_entry_point("plan")
+        # Le nœud `system` est en TÊTE, et c'est le changement de forme du
+        # graphe : la première question posée n'est plus « quelle capacité ? »
+        # mais « est-ce une question sur moi ? ». C'est le modèle qui y répond,
+        # en appelant — ou non — un outil de faits (cf. `orchestrator/systeme`).
+        # Il n'appelle rien : le tour repart au planificateur comme avant.
+        builder.set_entry_point("system")
+        builder.add_conditional_edges(
+            "system",
+            self._apres_le_systeme,
+            {"plan": "plan", "synthesize": "synthesize"},
+        )
         builder.add_conditional_edges(
             "plan",
             self._route,
@@ -341,12 +403,11 @@ class Orchestrator:
                 "analyze": "analysis",
                 "predict": "inference",
                 "fetch_then_predict": "fetch_predict",
-                "system": "system",
                 "clarify": "synthesize",
                 "error": "synthesize",
             },
         )
-        for node in ("retrieval", "analysis", "inference", "fetch_predict", "system"):
+        for node in ("retrieval", "analysis", "inference", "fetch_predict"):
             builder.add_edge(node, "synthesize")
         builder.add_edge("synthesize", END)
         return builder.compile()
@@ -357,23 +418,36 @@ class Orchestrator:
     _PREDICT_CAPABILITIES = ("predict", "fetch_then_predict")
 
     @staticmethod
+    def _apres_le_systeme(state: OrchestratorState) -> str:
+        """Le nœud système a-t-il répondu, ou la question part-elle au plan ?
+
+        Une seule chose est regardée : ``system`` est-il renseigné. Le nœud le
+        renseigne quand le modèle a appelé un outil de faits **et** que sa
+        formulation les porte, ou quand il faut servir les faits eux-mêmes. Il
+        le laisse vide dans tous les autres cas — question sur les données,
+        modèle qui n'a rien appelé, agent système indisponible — et le tour
+        suit alors le chemin d'avant, planificateur compris.
+        """
+        if state.get("error"):
+            return "synthesize"
+        return "synthesize" if state.get("system") is not None else "plan"
+
+    @staticmethod
     def _route(state: OrchestratorState) -> str:
         """Règle de routage : du code, pas du prompt (CADRAGE §4).
 
-        ``system_topic`` est examiné avant le plan, et il n'y a pas de plan à
-        examiner dans ce cas : une question SUR le système est reconnue avant
-        l'appel au planificateur, donc aucune capacité n'a été choisie. C'est
-        la seule branche du graphe qui ne vient pas d'un ``Plan`` — et c'est
-        aussi ce qui la rend gratuite.
+        La clarification est examinée AVANT l'absence de plan, et ce n'est pas
+        un détail d'ordre : la validation d'une source (« titanic ») se répond
+        sans planifier quoi que ce soit, donc sans ``Plan``. Comme pour le nœud
+        système, ``ChatAnswer.plan`` reste vide dans ce cas — exact plutôt
+        qu'incomplet.
         """
         if state.get("error"):
             return "error"
-        if state.get("system_topic"):
-            return "system"
-        if state.get("plan") is None:
-            return "error"
         if state.get("clarification"):
             return "clarify"
+        if state.get("plan") is None:
+            return "error"
         return state["plan"].capability
 
     def _guarded(self, name: str, fn):
@@ -514,6 +588,26 @@ class Orchestrator:
         )
 
     @staticmethod
+    def _contexte_de_source(source_de_travail: str | None) -> str | None:
+        """Dit au planificateur sur quelle source la conversation travaille.
+
+        « Le planificateur ne doit plus avoir à la deviner quand elle est déjà
+        connue » : c'est ce que fait cette ligne. Elle ne remplace pas
+        ``_regle_source_de_la_conversation``, qui repose la source quoi qu'il
+        arrive — elle évite au modèle d'avoir à choisir, ce qui lui laisse plus
+        d'attention pour la capacité et les features. Le reste du prompt ne
+        bouge pas d'un caractère, comme pour le contexte de prédiction en
+        attente et celui du tour précédent.
+        """
+        if not source_de_travail:
+            return None
+        return (
+            "CONTEXTE DE CONVERSATION : cette conversation travaille sur la source "
+            f"'{source_de_travail}'. Prends-la comme `source`, sauf si le message "
+            "en désigne explicitement une autre."
+        )
+
+    @staticmethod
     def _ajoute_avis(mesures: dict, avis: str) -> None:
         """Cumule un constat de troncature dans les mesures du tour.
 
@@ -564,6 +658,7 @@ class Orchestrator:
         sources_description = self.catalog.describe()
         datasets_description = self._datasets_description()
         pending_context = self._pending_context(state.get("pending_in"))
+        source_context = self._contexte_de_source(state.get("source_in"))
         history_context = workspace.describe_context() if workspace is not None else None
         # Tout ce qui suit est incompressible ici : le gabarit, le catalogue
         # déclaré, les modèles, le tour précédent, la question. Le seul poste qui
@@ -576,6 +671,7 @@ class Orchestrator:
             datasets_description,
             history_context,
             pending_context,
+            source_context,
             state["question"],
         )
         trim = workspace.fit_to_budget(fixe) if workspace is not None else ContextTrim()
@@ -590,6 +686,7 @@ class Orchestrator:
             datasets_description,
             pending_context=pending_context,
             history_context=history_context,
+            source_context=source_context,
         )
         mesures["prompt_tokens"] = estimate_tokens(system_prompt, state["question"])
         # dernier constat avant l'envoi : au-delà de la fenêtre du serveur, un
@@ -650,6 +747,47 @@ class Orchestrator:
             plan.capability = "predict"
         return None
 
+    def _regle_source_de_la_conversation(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """La source liée au fil s'impose au plan ; celle que l'utilisateur NOMME la remplace.
+
+        C'est ce qui fait que le planificateur n'a plus à deviner une source
+        déjà connue : il la reçoit dans son contexte (cf.
+        ``_contexte_de_source``) et, quoi qu'il en fasse, elle est reposée ici.
+        Un tour qui ne parle pas de source travaille donc sur celle qui a été
+        validée, au lieu de rouvrir la question à chaque fois.
+
+        **Une source nommée par l'utilisateur l'emporte, et fait basculer la
+        conversation.** Refuser aurait obligé à ouvrir un fil pour une question
+        d'une ligne ; poser une question de confirmation aurait dépensé un tour
+        pour une intention déjà écrite noir sur blanc. La bascule est en
+        revanche **annoncée** dans la réponse (``_lier_la_source``) : ce qui est
+        dangereux n'est pas de changer de source, c'est de changer sans le dire.
+
+        La désignation est lue dans le TEXTE de l'utilisateur
+        (``introspection.source_nommee``) et non dans ``plan.source`` : le
+        planificateur choisit une source à chaque tour, souvent au hasard des
+        descriptions, et sa supposition ne doit pas faire basculer le travail
+        de quelqu'un.
+
+        Après ``_regle_degrader_faute_de_source``, qui peut retirer à ce tour la
+        capacité même qui réclame une source.
+        """
+        if ctx.source_imposee or ctx.source_de_travail is None:
+            return None
+        if plan.capability not in self._SOURCE_CAPABILITIES:
+            return None
+        nommee = introspection.source_nommee(ctx.question, ctx.catalogue_declare)
+        if nommee:
+            plan.source = nommee
+        elif ctx.source_de_travail:
+            plan.source = ctx.source_de_travail
+        elif len(ctx.catalogue_declare.sources) == 1:
+            # « S'il n'y en a qu'une, il l'annonce au lieu de poser une question
+            # inutile » : on la lie ici pour que ``_lier_la_source`` l'annonce,
+            # là où ``_resolve_source`` la choisissait sans le dire.
+            plan.source = ctx.catalogue_declare.sources[0].name
+        return None
+
     def _regle_reprendre_les_features_acquises(self, plan: Plan, ctx: PlanContext) -> str | None:
         """Fusionne à une prédiction ce que les tours précédents ont déjà donné.
 
@@ -700,24 +838,33 @@ class Orchestrator:
         return None
 
     def _regle_choisir_la_source(self, plan: Plan, ctx: PlanContext) -> str | None:
-        """Aucune source choisie et le catalogue en contient plusieurs : on demande.
+        """Aucune source choisie et le catalogue en contient plusieurs : on PROPOSE.
 
         Deviner serait répondre sur les mauvaises données sans le dire. Sur le
         catalogue DÉCLARÉ, et non l'effectif : un fil qui a mémorisé des
         tableaux ne doit pas se faire poser la question à chaque tour, alors que
         l'unique source déclarée reste le choix évident.
 
-        Le repli sur l'unique source, lui, appartient au nœud de capacité
-        (``_resolve_source``) : il n'y a rien à demander dans ce cas.
+        C'est **la proposition du démarrage de conversation** : la question
+        n'arrive qu'ici, une fois le plan connu, parce que c'est le seul moment
+        où l'on sait qu'une source est réellement nécessaire — « prédis la
+        survie d'une passagère de 1re classe » n'en demande aucune, et lui
+        proposer un catalogue serait un tour perdu. Elle énumère désormais ce
+        que le catalogue dit de chaque source, et la réponse est **liée à la
+        conversation** au tour suivant (``_court_circuit_du_choix_de_source``)
+        là où elle était perdue.
+
+        Le repli sur l'unique source, lui, est posé par
+        ``_regle_source_de_la_conversation`` puis annoncé : il n'y a rien à
+        demander dans ce cas.
         """
         if (
-            plan.capability in self._SOURCE_CAPABILITIES
-            and not plan.source
-            and len(ctx.catalogue_declare.sources) > 1
+            plan.capability not in self._SOURCE_CAPABILITIES
+            or plan.source
+            or len(ctx.catalogue_declare.sources) <= 1
         ):
-            names = ", ".join(s.name for s in ctx.catalogue_declare.sources)
-            return f"Sur quelle source veux-tu travailler : {names} ?"
-        return None
+            return None
+        return introspection.proposer_les_sources(ctx.catalogue_declare)
 
     def _regle_choisir_le_modele(self, plan: Plan, ctx: PlanContext) -> str | None:
         """Prédiction sans modèle désigné : repli s'il n'y en a qu'un, sinon on demande.
@@ -779,6 +926,7 @@ class Orchestrator:
     _REGLES_DU_PLAN = (
         _regle_source_imposee,
         _regle_degrader_faute_de_source,
+        _regle_source_de_la_conversation,
         _regle_reprendre_les_features_acquises,
         _regle_normaliser_le_nom_de_source,
         _regle_choisir_la_source,
@@ -798,58 +946,6 @@ class Orchestrator:
             if question is not None:
                 return question
         return None
-
-    def _court_circuit_meta(self, state: OrchestratorState, start: float) -> dict | None:
-        """Une question SUR le système, reconnue et routée SANS appeler le LLM.
-
-        Placé avant ``_peser_le_prompt``, et c'est tout l'intérêt : la réponse
-        à « quelles sources possèdes-tu ? » est entièrement déterminée par
-        ``sources/catalogue.yaml``. Elle est connue avant même que la question
-        soit lue — la faire classer par un modèle de langage, c'est payer un
-        aller-retour pour apprendre ce qu'on sait déjà. Mesuré avant
-        correction : 2,05 appels LLM par question méta, dont 16 dépensés par
-        les huit replis pour ne rien répondre du tout
-        (docs/surface-conversationnelle.md).
-
-        **Une règle de ``_REGLES_DU_PLAN`` n'aurait pas pu le faire.** Ces
-        règles ajustent un ``Plan`` que le LLM a DÉJÀ rendu : l'appel est
-        derrière elles. Élargir ``_regle_choisir_le_modele`` — le point
-        d'atterrissage que désignait ``axes-amelioration.md`` pour « quelles
-        features ? » — aurait donc gardé l'aller-retour, n'aurait rattrapé que
-        les demandes que le LLM avait su classer en ``predict``, et aurait
-        laissé dehors le cas réellement constaté : celui où il ne classe rien
-        et où le repli s'enclenche. Une règle dont le nom dit « choisir le
-        modèle » se serait en plus mise à répondre à des questions, ce qui
-        n'est pas son travail.
-
-        **Et le planificateur ne connaît pas cette capacité**, délibérément.
-        Elle lui a été proposée, puis retirée sur mesure : la cinquième valeur
-        dans son prompt coûtait 134 tokens à *chaque* requête et, sur la
-        batterie, a déplacé quatre questions d'une bonne réponse vers une
-        mauvaise sans en gagner une seule — « sur quelle période portent les
-        données ? » et « quelles colonnes contiennent des valeurs
-        manquantes ? » y étaient routées en ``describe_system`` alors que leur
-        réponse est un ``SELECT``. Le modèle en service généralise « décris-toi »
-        à toute question sur la forme des données. Le lexique, lui, s'abstient
-        (``MARQUEURS_DE_CALCUL``). Ce qu'il ne reconnaît pas suit donc le
-        chemin d'avant, dont le repli rend maintenant l'inventaire réel
-        (``_repli_du_planificateur``) : le routage reste du code, pas du prompt.
-
-        **Aucun ``Plan`` n'est fabriqué**, et ``ChatAnswer.plan`` reste donc
-        vide pour ces questions. Ce n'est pas un oubli : il n'y a pas eu de
-        planification, parce qu'il n'y avait rien à planifier. Mettre une
-        capacité de plus dans ``Capability`` pour la forme aurait coûté cher —
-        le Literal est le contrat de sortie du modèle, et l'élargir dégrade son
-        extraction sur les autres capacités (mesuré, cf. ``plan.py``). Le sujet
-        porté par le state suffit à router, et la trace le dit en clair.
-        """
-        sujet = introspection.sujet_de(state["question"])
-        if sujet is None:
-            return None
-        return {
-            "system_topic": sujet,
-            "trace": [self._step("plan", f"système ({sujet}) — sans appel LLM", start)],
-        }
 
     def _repli_du_planificateur(self, state: OrchestratorState) -> str:
         """Ce qu'on répond quand le planificateur n'a pas su classer la demande.
@@ -875,11 +971,112 @@ class Orchestrator:
             "visualisation, ou une prédiction ?"
         )
 
+    # -- la source de travail de la conversation (partie B) --------------------
+
+    def _accuser_la_source(self, nom: str, precedente: str) -> str:
+        """Ce qu'on répond quand l'utilisateur vient de choisir une source.
+
+        Déterministe, et c'est assumé : il n'y a rien à formuler. La phrase
+        accuse réception d'un nom que l'utilisateur vient d'écrire, en y
+        ajoutant ce que le catalogue en dit ; un aller-retour LLM pour la
+        reformuler ne changerait pas un fait et ferait attendre l'utilisateur
+        avant sa première vraie question.
+
+        Elle dit la source **quittée** s'il y en avait une : un choix qui en
+        remplace un autre doit se voir, exactement comme une bascule au milieu
+        d'une question (``_lier_la_source``).
+        """
+        source = self.catalog.get(nom)
+        description = source.description.strip() or "sans description"
+        quittee = f" (on travaillait sur `{precedente}`)" if precedente else ""
+        return (
+            f"Entendu : on travaille sur **{nom}** ({source.type}){quittee} — "
+            f"{description}\n\n"
+            "Je garde cette source pour la suite de la conversation. Nomme-en une "
+            "autre à tout moment et je basculerai dessus.\n\n"
+            "Que veux-tu savoir ?"
+        )
+
+    def _choix_de_source(self, state: OrchestratorState) -> str | None:
+        """La source que ce message CHOISIT, sans rien demander d'autre.
+
+        ``None`` hors conversation : sans fil, il n'y a rien à lier.
+
+        La reconnaissance est **déterministe** — le nom d'une source du
+        catalogue, et le fait que le message ne dise presque rien d'autre
+        (``introspection.choix_de_source``). C'est le moment où le choix de
+        l'utilisateur devient un fait persisté ; le faire trancher par un
+        modèle serait payer un aller-retour pour comparer deux chaînes.
+
+        **Aucun état de conversation n'est consulté**, et c'est une correction :
+        la reconnaissance dépendait d'abord d'un drapeau « une proposition
+        attend une réponse », posé au tour d'avant. Le parcours mesuré l'a mise
+        en défaut — l'agent système avait répondu au premier message en
+        énumérant les sources, sans que le drapeau soit posé, et le « titanic »
+        du tour suivant s'est fait rendre le catalogue au lieu d'être retenu.
+        Un choix de source se lit dans le message, pas dans l'histoire.
+        """
+        if state.get("source_in") is None:
+            return None
+        return introspection.choix_de_source(state["question"], self.catalog)
+
+    def _court_circuit_du_choix_de_source(
+        self, state: OrchestratorState, start: float
+    ) -> dict | None:
+        """Le message choisit une source : on la lie et on en accuse réception, sans LLM."""
+        choisie = self._choix_de_source(state)
+        if choisie is None:
+            return None
+        precedente = state.get("source_in") or ""
+        return {
+            "source_out": choisie,
+            "clarification": self._accuser_la_source(choisie, precedente),
+            "trace": [self._step("plan", f"source choisie : {choisie} — sans appel LLM", start)],
+        }
+
+    def _lier_la_source(self, plan: Plan, ctx: PlanContext) -> tuple[str | None, str]:
+        """La source que la conversation retient, et ce qu'on en dit à l'utilisateur.
+
+        ``None`` hors conversation : il n'y a rien à lier, et le tour se
+        comporte comme avant ce mécanisme.
+
+        L'avis n'est rendu qu'aux deux moments où l'utilisateur doit savoir sur
+        quoi on travaille : la **première** fois qu'une source est liée (« s'il
+        n'y en a qu'une, il l'annonce au lieu de poser une question inutile »),
+        et à chaque **bascule**. Les tours suivants n'en disent rien : répéter
+        « je travaille sur titanic » à chaque réponse serait du bruit.
+
+        Le risque d'une bascule n'est pas qu'elle ait lieu, c'est qu'elle ait
+        lieu **en silence** — répondre sur d'autres données sans le dire. D'où
+        l'avis, mis en tête de la réponse et non dans la trace.
+
+        Une source **imposée par l'appelant** (paramètre ``source`` de
+        ``ask()``) ne lie rien : c'est un paramètre d'API pour un tour, pas le
+        choix de l'utilisateur.
+        """
+        liee = ctx.source_de_travail
+        if liee is None:
+            return None, ""
+        if ctx.source_imposee:
+            return liee, ""
+        # Seule une source DÉCLARÉE se lie : un tableau intermédiaire du fil est
+        # interrogeable, ce n'est pas une source de données, et le retenir
+        # remplacerait la source de travail par un résultat de requête.
+        declarees = [s.name for s in ctx.catalogue_declare.sources]
+        retenue = plan.source if plan.source in declarees else ""
+        if not retenue or retenue == liee:
+            return liee, ""
+        if not liee:
+            return retenue, f"Je travaille sur la source `{retenue}`."
+        return retenue, f"Je passe sur la source `{retenue}` — on travaillait sur `{liee}`."
+
+    # -- le nœud du plan -------------------------------------------------------
+
     def _plan_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
-        meta = self._court_circuit_meta(state, start)
-        if meta is not None:
-            return meta
+        choix = self._court_circuit_du_choix_de_source(state, start)
+        if choix is not None:
+            return choix
         system_prompt, mesures = self._peser_le_prompt(state)
         plan = self._demander_un_plan(system_prompt, state, mesures)
         if plan is None:
@@ -895,75 +1092,121 @@ class Orchestrator:
             workspace=state.get("workspace"),
             catalogue_declare=self.catalog,
             catalogue_effectif=self._effective_catalog(state),
+            question=state["question"],
+            source_de_travail=state.get("source_in"),
         )
         question = self._appliquer_les_regles(plan, ctx)
+        retenue, avis = self._lier_la_source(plan, ctx)
         if question is not None:
-            return self._clarify(plan, question, start, **mesures)
+            return self._clarify(plan, question, start, **mesures) | {"source_out": retenue}
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         return {
             "plan": plan,
+            "source_out": retenue,
+            "avis_de_source": avis,
             "trace": [self._step("plan", detail, start, **mesures)],
         }
 
-    def _ontologies(self, question: str, catalogue: Catalog) -> list[introspection.Ontologie]:
-        """Ce que les sources disent d'elles-mêmes — la source visée, ou toutes.
+    # -- le nœud système : « est-ce une question sur moi ? » -------------------
 
-        L'entrée/sortie est ici et non dans ``introspection`` : ouvrir une
-        connexion appartient à un nœud du graphe, comme pour toute autre
-        capacité. Le formateur, lui, reste pur et testable sans base.
+    def _tour_deja_engage(self, state: OrchestratorState) -> str:
+        """Les tours où le message n'est pas à interpréter — ni à payer.
 
-        Quand la question nomme une source, une seule connexion est ouverte.
-        Sinon on les ouvre toutes — « quelles colonnes dans la table
-        passengers ? » ne nomme aucune source et n'est pourtant pas ambiguë,
-        et le catalogue compte une poignée d'entrées par construction.
+        Deux messages ne sont pas des questions et n'ont donc rien à faire
+        chez l'agent système : les features d'une prédiction en attente, et le
+        nom d'une source qu'on choisit. Y faire passer l'agent système
+        coûterait un aller-retour pour apprendre ce qu'on sait déjà — et lui
+        donnerait l'occasion de s'emparer d'un message qui ne lui est pas
+        adressé. C'est arrivé, et c'est mesuré : un « titanic » de validation a
+        reçu l'inventaire du catalogue en réponse (§12 de
+        `docs/surface-conversationnelle.md`).
         """
-        visee = introspection.source_visee(question, catalogue)
-        sources = [visee] if visee is not None else list(catalogue.sources)
-        ontologies = []
-        for source in sources:
-            with closing(open_source(source)) as adapter:
-                schema = adapter.schema()
-            ontologies.append(introspection.Ontologie(source, schema, source.dictionary_text()))
-        return ontologies
+        if state.get("pending_in") is not None:
+            return "prédiction en attente de features — passe au planificateur"
+        if self._choix_de_source(state) is not None:
+            return "choix de source — passe au planificateur"
+        return ""
 
     def _system_node(self, state: OrchestratorState) -> dict:
-        """Répond à une question SUR le système, depuis ses sources de vérité.
+        """« Est-ce une question sur moi ? » — et c'est le MODÈLE qui répond.
 
-        Aucun LLM ici : le catalogue, le registre, les schémas de features et
-        l'ontologie de la source disent tout, et une réponse rédigée par le
-        modèle serait une réponse qu'on ne peut plus vérifier — c'est
-        exactement le défaut corrigé par ``acfd8f5``, où « décris le dataset
-        iris » était répondu de mémoire, sans regarder la source.
+        Premier nœud du graphe. L'agent système reçoit la question avec cinq
+        outils qui rendent les faits du dépôt (cf. ``orchestrator/systeme``) ;
+        s'il en appelle un, la question était sur le système et il en formule
+        le résultat. S'il n'appelle rien, le tour repart au planificateur
+        exactement comme avant.
 
-        Le sujet vient du state, posé par ``_court_circuit_meta`` — le seul
-        chemin qui mène ici, le planificateur n'ayant aucune valeur pour y
-        router. Le redéduire donnerait un second point de décision à tenir
-        cohérent avec le premier, et une branche « sujet inconnu » que rien ne
-        pourrait atteindre.
+        **Ce qui a changé, et pourquoi.** La reconnaissance était un lexique de
+        tournures. Mesuré par le propriétaire sur dix formulations naturelles
+        de la même question (« quelles données as-tu ? ») : trois
+        court-circuitées, sept parties au planificateur, classées `query`, et
+        du SQL écrit pour répondre à une question de configuration. La famille
+        est ouverte — « c'est quoi ton périmètre ? », « tu bosses sur quoi ? »,
+        « montre-moi ce que tu as » — et un lexique est une liste. Le prix payé
+        est un appel LLM en tête de CHAQUE question, y compris celles sur les
+        données ; il est mesuré et assumé (§9 de
+        `docs/surface-conversationnelle.md`).
+
+        **Trois façons de ne pas servir le modèle**, et c'est la ceinture que
+        l'ancien chemin déterministe est devenu :
+
+        - aucun outil appelé — la question n'était pas pour lui ;
+        - la formulation invente un nom, ou en omet un rendu par l'outil : les
+          **faits** sont servis tels quels (``defaut_de_fondation``) ;
+        - l'agent système lui-même n'a pas abouti : le tour repart au
+          planificateur au lieu d'échouer.
+
+        Ce dernier cas est délibérément **fail-open**, et seulement pour ce que
+        le MODÈLE rate (sortie invalide, plafond d'allers-retours atteint) : un
+        planificateur qui aurait su répondre ne doit pas être privé de la
+        question par un incident de ce nœud-ci. Ce qu'un OUTIL rate — une
+        source injoignable, un catalogue illisible — n'est pas rattrapé : c'est
+        un vrai défaut de configuration, il remonte au garde-fou et il est dit.
         """
         start = time.monotonic()
-        question = state["question"]
-        sujet = state["system_topic"]
-        # Le catalogue DÉCLARÉ pour lister les sources : un tableau
-        # intermédiaire du fil n'est pas une source de données, et l'annoncer
-        # comme telle induirait en erreur. Le catalogue EFFECTIF pour aller
-        # lire un schéma, parce qu'un tableau mémorisé est bel et bien
-        # interrogeable — même distinction que dans ``PlanContext``.
-        if sujet == "sources":
-            answer = introspection.decrire_les_sources(self.catalog)
-        elif sujet == "modeles":
-            answer = introspection.decrire_les_modeles(self.registry)
-        elif sujet == "features":
-            answer = introspection.decrire_les_features(
-                self.registry, introspection.dataset_vise(question, self.registry)
+        engage = self._tour_deja_engage(state)
+        if engage:
+            return {"trace": [self._step("system", engage, start)]}
+        try:
+            resultat = run_systeme(
+                state["question"],
+                model=self.model,
+                catalogue_declare=self.catalog,
+                catalogue_effectif=self._effective_catalog(state),
+                registre=self.registry,
+                request_limit=self.settings.systeme_request_limit,
             )
-        elif sujet == "schema":
-            answer = introspection.decrire_le_schema(
-                question, self._ontologies(question, self._effective_catalog(state))
-            )
-        else:
-            answer = introspection.decrire_les_capacites(self.catalog, self.registry)
-        return {"system": answer, "trace": [self._step("system", f"sujet : {sujet}", start)]}
+        except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
+            incident = reference_dincident()
+            logger.warning("agent système écarté (incident %s) : %s", incident, exc)
+            return {
+                "trace": [
+                    self._step(
+                        "system",
+                        f"agent système écarté (incident {incident}) — passe au planificateur",
+                        start,
+                    )
+                ]
+            }
+        if not resultat.concerne_le_systeme:
+            return {
+                "trace": [
+                    self._step("system", "aucun outil appelé — passe au planificateur", start)
+                ]
+            }
+        outils = ", ".join(resultat.outils_appeles)
+        defaut = introspection.defaut_de_fondation(resultat.reponse, resultat.faits)
+        if defaut:
+            return {
+                "system": resultat.faits,
+                "trace": [
+                    self._step("system", f"{outils} — faits servis tels quels ({defaut})", start)
+                ],
+            }
+        return {
+            "system": resultat.reponse,
+            "trace": [self._step("system", f"{outils} — formulé par le modèle", start)],
+        }
 
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
@@ -1302,6 +1545,13 @@ class Orchestrator:
         else:
             answer = "Je n'ai rien produit pour cette question."
             mode = "vide"
+        # « Je travaille sur la source X » / « je passe sur X » : EN TÊTE de la
+        # réponse, et non dans la trace. La trace n'est pas dépliée par défaut,
+        # et ce qu'on veut éviter n'est pas de changer de source — c'est de
+        # répondre sur d'autres données sans que ça se voie.
+        avis = state.get("avis_de_source", "")
+        if avis:
+            answer = f"{avis}\n\n{answer}" if answer else avis
         return {"answer": answer, "trace": [self._step("synthesize", mode, start)]}
 
     @staticmethod

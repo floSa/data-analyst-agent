@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import FunctionModel
 
 from data_analyst_agent import prompts
+from data_analyst_agent.orchestrator import introspection
 from data_analyst_agent.orchestrator.plan import Plan
 
 # Marqueurs des prompts système, DÉRIVÉS des prompts eux-mêmes.
@@ -32,6 +33,7 @@ PLANNER = prompts.marqueur(prompts.PLANNER)
 RETRIEVAL = prompts.marqueur(prompts.RETRIEVAL)
 ANALYSIS = prompts.marqueur(prompts.ANALYSIS)
 SYNTHESIS = prompts.marqueur(prompts.SYNTHESIS)
+SYSTEME = prompts.marqueur(prompts.SYSTEME)
 
 
 def text(content: str) -> ModelResponse:
@@ -52,7 +54,24 @@ class ScriptedLLM:
 
     ``prompts_for(marker)`` rejoue ce que chaque agent a reçu (utile pour
     vérifier le contenu des prompts construits par l'orchestrateur).
+
+    **L'agent système décline par défaut**, et c'est ce qui garde les tests des
+    autres capacités lisibles. Il est en tête du graphe : il reçoit désormais
+    CHAQUE question, y compris celles sur les données. Exiger de chaque test
+    qu'il script un « non merci » aurait ajouté une ligne de bruit à cent
+    trente tests dont le sujet n'est pas là — et aurait dit le contraire de ce
+    qu'on veut vérifier, à savoir que ce nœud est transparent pour une question
+    sur les données. Un test qui s'intéresse à ce chemin script ``SYSTEME``
+    explicitement, et reprend alors la main entière (script épuisé = échec).
+
+    ``prompts_for(SYSTEME)`` compte les refus comme les autres passages : le
+    coût du nœud reste observable.
     """
+
+    # Une réponse texte sans aucun appel d'outil : le signal « cette question
+    # n'est pas pour moi » (cf. `orchestrator/systeme.py` — c'est l'absence
+    # d'appel d'outil qui route, pas ce mot).
+    REFUS_DU_SYSTEME = introspection.SENTINELLE_HORS_SUJET
 
     def __init__(self) -> None:
         self._queues: dict[str, list[ModelResponse]] = {}
@@ -86,6 +105,9 @@ class ScriptedLLM:
                         raise AssertionError(f"script épuisé pour l'agent {marker!r}")
                     self.captured.append((marker, system, last_user))
                     return queue.pop(0)
+            if SYSTEME in system:
+                self.captured.append((SYSTEME, system, last_user))
+                return text(self.REFUS_DU_SYSTEME)
             raise AssertionError(f"aucun script pour le prompt système : {system[:120]!r}")
 
         return FunctionModel(responder)

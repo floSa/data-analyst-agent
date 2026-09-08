@@ -88,8 +88,15 @@ def contexte(
     workspace: ConversationWorkspace | None = None,
     declare: list[FileSource] | None = None,
     effectif: list[FileSource] | None = None,
+    question: str = "une question quelconque",
+    source_de_travail: str | None = None,
 ) -> PlanContext:
-    """Un contexte de règles. ``effectif`` vaut ``declare`` à défaut."""
+    """Un contexte de règles. ``effectif`` vaut ``declare`` à défaut.
+
+    ``source_de_travail`` à ``None`` est le cas « hors conversation » : c'est
+    le défaut, et c'est ce qui fait que les règles historiques se testent ici
+    exactement comme avant que la source de travail existe.
+    """
     declarees = declare or []
     return PlanContext(
         source_imposee=source_imposee,
@@ -97,6 +104,8 @@ def contexte(
         workspace=workspace,
         catalogue_declare=Catalog(sources=declarees),
         catalogue_effectif=Catalog(sources=effectif if effectif is not None else declarees),
+        question=question,
+        source_de_travail=source_de_travail,
     )
 
 
@@ -106,16 +115,18 @@ def contexte(
 def test_l_ordre_des_regles_est_explicite_et_verrouille():
     """L'ordre EST le comportement : le changer doit être un geste conscient.
 
-    Trois dépendances au moins sont réelles : la source imposée doit précéder
+    Quatre dépendances au moins sont réelles : la source imposée doit précéder
     toute règle qui raisonne sur la source ; la dégradation faute de source doit
     précéder la reprise des features (sinon un `fetch_then_predict` dégradé
-    n'hérite de rien) ; le chaînage sur le dernier tableau doit venir après le
-    choix du modèle et la reprise des features (il se déclenche sur leur
-    absence).
+    n'hérite de rien) et la source de la conversation (sinon on lie une source à
+    une capacité qui vient de la perdre) ; le chaînage sur le dernier tableau
+    doit venir après le choix du modèle et la reprise des features (il se
+    déclenche sur leur absence).
     """
     assert [regle.__name__ for regle in Orchestrator._REGLES_DU_PLAN] == [
         "_regle_source_imposee",
         "_regle_degrader_faute_de_source",
+        "_regle_source_de_la_conversation",
         "_regle_reprendre_les_features_acquises",
         "_regle_normaliser_le_nom_de_source",
         "_regle_choisir_la_source",
@@ -313,13 +324,21 @@ def test_plusieurs_sources_declarees_et_aucun_choix_pose_la_question(
         contexte(declare=[source("mini", tmp_path), source("titanic", tmp_path)]),
     )
 
-    assert question == "Sur quelle source veux-tu travailler : mini, titanic ?"
+    # C'est la PROPOSITION du démarrage de conversation : les noms, ce que le
+    # catalogue en dit, et la demande de choisir. L'ancienne version énumérait
+    # deux noms nus (« Sur quelle source veux-tu travailler : mini, titanic ? »),
+    # ce qui ne permet pas de choisir quand on découvre l'agent.
+    assert question is not None
+    assert "mini" in question
+    assert "titanic" in question
+    assert question.strip().endswith("?")
 
 
 def test_une_seule_source_declaree_ne_pose_pas_de_question(
     orchestrateur: Orchestrator, tmp_path: Path
 ):
-    """Le repli sur l'unique source appartient au nœud de capacité, pas à cette règle."""
+    """Le repli sur l'unique source est posé par `_regle_source_de_la_conversation`
+    (puis annoncé), pas demandé ici."""
     assert (
         orchestrateur._regle_choisir_la_source(
             Plan(capability="query"), contexte(declare=[source("mini", tmp_path)])
