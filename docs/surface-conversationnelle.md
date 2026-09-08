@@ -1126,6 +1126,22 @@ déterministe, le modèle ne lui en donne qu'une mesure. C'est le même arbitrag
 qu'au §9, et il est assumé pour la même raison — la famille des tournures est
 ouverte, et un lexique est une liste.
 
+### Trois rejeux, parce qu'un routage par modèle ne se mesure pas une fois
+
+Les trois questions ont été reposées trois fois de suite, seules
+(`--only colonnes-source-entiere sens-colonne sens-colonne-nom-nu`).
+
+| Rejeu | `colonnes-source-entiere` | `sens-colonne` | `sens-colonne-nom-nu` |
+|---|---|---|---|
+| 1 | juste, `schema_d_une_source`, 2 appels | juste, `schema_d_une_source`, 2 appels | juste, `schema_d_une_source`, 2 appels |
+| 2 | juste, `schema_d_une_source`, 2 appels | juste, `schema_d_une_source`, 2 appels | juste, `schema_d_une_source`, 2 appels |
+| 3 | juste, `schema_d_une_source`, 2 appels | juste, `schema_d_une_source`, 2 appels | juste, `schema_d_une_source`, 2 appels |
+
+Neuf sur neuf, même outil, même coût, capacité toujours vide — aucun `SELECT`
+n'a été écrit pour répondre à une question de configuration. Trois rejeux ne
+font pas une garantie ; ils font une mesure, et c'est ce qui remplace ici la
+certitude que le lexique donnait au point n°2.
+
 ### Ce que la batterie ne rattrape pas
 
 Un seul verdict reste à côté, `volumetrie-globale` (« quelle est la taille de tes
@@ -1218,3 +1234,10 @@ vérifiée sur un second catalogue.**
   deux sources tourne sur un fichier écrit pour lui. C'est le prix à payer pour
   mesurer un mécanisme que la démonstration n'exerce pas ; ce que ça ne dit pas,
   c'est comment il se comporte à cinq ou dix sources déclarées.
+- **Le témoin métier vérifié à la main, et pas par la batterie.** « Quel est le
+  chiffre d'affaires 2024 ? » rend 9 505 116,35 € et « et 2025 ? » 10 186 669,50 €,
+  qui coïncident tous deux avec le `SUM(revenue)` lu dans la base ; la trace dit
+  `aucun outil appelé — passe au planificateur`, donc l'agent système s'est bien
+  abstenu. Ce contrôle n'a pas sa place dans la batterie méta — c'est le travail
+  de `scripts/live_scenarios.py` — mais il devait être fait avant de déclarer le
+  report terminé.
