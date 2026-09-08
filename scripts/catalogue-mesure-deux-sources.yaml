@@ -1,0 +1,34 @@
+# Catalogue de MESURE, et rien d'autre : il ne sert pas l'application.
+#
+# `scripts/mesure_choix_de_source.py` mesure un parcours — proposition,
+# validation, question sans nommer la source, bascule — qui n'a de sens qu'à
+# partir de DEUX sources. Le catalogue de démonstration (`sources/catalogue.yaml`)
+# n'en déclare qu'une : le mécanisme s'y replie sur son cas dégénéré, où la
+# source est annoncée au lieu d'être demandée. C'est le bon comportement, et il
+# ne mesure ni la proposition ni la bascule.
+#
+# D'où ce second catalogue, qui déclare la base réelle ET l'échantillon versionné
+# dont la suite de tests se sert déjà. Les deux sont vraies, elles portent le
+# même métier, et elles ne répondent pas la même chose : 1 363 726 lignes de
+# ventes d'un côté, 3 666 de l'autre. Une bascule qui n'aurait pas eu lieu se
+# verrait dans le chiffre.
+#
+#     DAA_CATALOG_PATH=scripts/catalogue-mesure-deux-sources.yaml \
+#         uv run python scripts/mesure_choix_de_source.py
+sources:
+  - type: duckdb
+    name: maxizoo
+    description: >-
+      Base retail animalerie complète (démonstration, données synthétiques) —
+      schéma en étoile de 1,66 M de lignes : ventes quotidiennes, 13 magasins,
+      60 SKU, 56 campagnes promo, fréquentation, météo, inflation. Historique
+      du 2021-07-01 au 2026-06-30.
+    path: ../sources/maxizoo.duckdb
+    dictionary: ../sources/maxizoo_dictionnaire.md
+  - type: file
+    name: maxizoo_mini
+    description: >-
+      L'échantillon versionné de la même base : les seules ventes quotidiennes,
+      3 magasins et 7 SKU sur l'année 2025 (3 666 lignes). C'est la miniature
+      dont la suite de tests se sert.
+    path: ../tests/fixtures/maxizoo_mini/sales_daily.csv

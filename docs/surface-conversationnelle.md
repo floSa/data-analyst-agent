@@ -26,7 +26,13 @@ formulation à laquelle personne n'avait pensé.
 | **8** | la frontière : l'agent répond sur ce qu'il **EST**, pas sur ce que les données **CONTIENNENT** | **oui**, mais tenue par un prompt et non par du code |
 | 9–11 | le plafond du lexique mesuré, son remplacement par un **outil que le modèle appelle**, et la mesure d'après (40 questions) | **oui** |
 | 12 | la **source de travail** d'une conversation : proposée, validée, portée par le fil | **oui** |
-| 13 | ce qui reste ouvert | — |
+| 13 | ce que les §9–12 laissaient ouvert | — |
+| **14–15** | tout rejoué **sur la base Maxizoo réelle** — dix tables, 1,66 M de lignes : la batterie, les trois points durs du §8, et les deux parcours de choix de source | **oui**, et c'est la mesure de référence |
+| 16 | ce que ces deux mesures laissent ouvert | — |
+
+Les §1 à §13 ont été mesurés sur un catalogue de développement — deux sources
+jouets, douze colonnes. **Les comptes qui font foi pour ce dépôt sont ceux des
+§14 et §15**, seuls pris sur son catalogue réel.
 
 ## 1. Le défaut constaté, et sa cause
 
@@ -981,3 +987,234 @@ Un test le vérifie sur un `transcript.json` écrit à la main, sans le champ.
 - **Une source à quarante tables** reste hors de portée de cette batterie, comme
   au §4 : le tour d'horizon est là pour ça, le volume de la réponse à « quelles
   colonnes a la source X ? » n'a été éprouvé que sur deux à dix colonnes.
+
+---
+
+## 14. Mesure du 2026-09-08, sur la base Maxizoo réelle
+
+Les §11 et §12 mesuraient le routage par le modèle sur le catalogue de
+développement : deux sources jouets, douze colonnes en tout. Cette section
+rejoue la même batterie **sur dix tables et soixante-dix-neuf colonnes**, après
+le report de `main` dans `maxizoo-durci` — c'est-à-dire sur la seule installation
+où les trois défauts du §8 avaient pu apparaître.
+
+### Ce qui change dans la batterie, et ce qui n'y change pas
+
+La **forme** ne bouge pas : mêmes familles, mêmes tournures, même oracle
+mécanique lu dans les sources de vérité, mêmes témoins. Ce qui change est ce que
+la batterie **désigne** : deux constantes (`TABLE_DE_FAITS = "sales_daily"`,
+`TABLE_DE_REFERENCE = "stores"`) remplacent les `passengers` et `iris` écrits
+dans le corps du runner. Rejouer sur un troisième catalogue demande de changer
+ces deux noms, et rien d'autre.
+
+Trois questions sont **ajoutées**, et ce sont les trois défauts du §8 promus au
+rang de questions permanentes :
+
+| Clé | Ce qu'elle garde |
+|---|---|
+| `colonnes-source-entiere` | « Quelles colonnes a la source maxizoo ? » — le mot « source » ne doit pas être pris pour `weather.source` (défaut n°1) |
+| `sens-colonne-nom-nu` | « Que signifie store_id ? » — sans le mot « colonne », et le SENS plutôt qu'un `SELECT` (défaut n°2) ; et la colonne décrite depuis `stores`, sa clé primaire, ses treize valeurs dont `ONLINE` — non depuis `promo_calendar`, qui n'en porte que deux (défaut n°3) |
+| `sens-colonne` | le cas facile, gardé en regard : la même colonne, mais la question nomme sa table |
+
+Les deux derniers défauts tiennent dans une seule question, et c'est voulu : ils
+se manifestaient ensemble, sur la même phrase.
+
+Un défaut d'oracle a été corrigé au passage, et il vaut d'être dit parce qu'il
+comptait FAUSSES des réponses justes : « sur quelle période portent les
+données ? » n'admettait que le nom de la colonne de date. Sur une base à cinq ans
+d'historique, la réponse du chemin SQL — « du 1er juillet 2021 au 30 juin
+2026 » — est *meilleure* que le nom du champ, et elle était comptée à côté. Même
+chose pour le témoin d'agrégat, qui exigeait `2026-06-30` là où le modèle
+écrivait « le 30 juin 2026 ». L'oracle admet désormais les deux écritures
+(`formes_de_date`) et les bornes réelles. Trois verdicts ont changé de camp, sans
+qu'une ligne de code applicatif ne bouge — un oracle qui déclare fausse une
+réponse juste ne mesure pas le système, il mesure sa propre littéralité.
+
+### Questions méta — 38 question(s)
+
+| Clé | Famille | Question | Réponse obtenue | Capacité | Synthèse | Appels LLM | Verdict |
+|---|---|---|---|---|---|---|---|
+| `sources-directe` | sources | Bonjour, saurais-tu me dire les différentes sources de données que tu possèdes ? | J'ai accès à une seule source de données : `maxizoo`, qui est une base de données retail animalerie (démonstration, données synthétiques). Elle contient des informations sur les ventes quotidiennes au niveau magasin × SKU × jour (`sales_daily`), ainsi que des détails sur les magasins (`stores`), les produits (`product… | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-reformulee` | sources | Sur quoi peux-tu travailler ? | Je suis un agent d'analyse de données et je peux : * Interroger une source en SQL (comptages, agrégats, listes filtrées, jointures). * Analyser et visualiser des données via du code Python exécuté en bac à sable (tests statistiques, ACP, figures). * Effectuer des prédictions de cas ou sur des individus déjà présents d… | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-indirecte` | sources | À quelles bases de données as-tu accès ? | J'ai accès à une seule base de données : `maxizoo`. Cette base est une base retail animalerie (démonstration, données synthétiques) avec un schéma en étoile couvrant les ventes quotidiennes au niveau magasin × SKU × jour (`sales_daily`), ainsi que des informations sur les magasins (`stores`), les produits (`products`)… | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-imperative` | sources | Liste-moi tes sources de données. | J'ai accès à une seule source de données : `maxizoo`, qui est une base de données retail animalerie (démonstration, données synthétiques). Elle contient des informations sur les ventes quotidiennes au niveau magasin × SKU × jour (`sales_daily`), ainsi que des détails sur les magasins (`stores`), les produits (`product… | — | système (déterministe) | 2 | **répondu correctement** |
+| `tables-directe` | tables | Quelles tables contient la source maxizoo ? | La source `maxizoo` contient 10 tables : `inflation`, `products`, `promo_calendar`, `promo_scope`, `sales_daily`, `sales_hourly`, `store_hours`, `stores`, `traffic_daily`, et `weather`. Souhaites-tu connaître les colonnes d'une de ces tables ? | — | système (déterministe) | 2 | **répondu correctement** |
+| `tables-indirecte` | tables | Comment est structurée la base maxizoo ? | La base de données `maxizoo` est structurée autour des thématiques commerciales et géographiques. Elle contient les 10 tables suivantes : * **`inflation`** : Contient des informations sur l'inflation avec les colonnes : * `month` (clé primaire) * `inflation_mm_pct` * `cpi_index` * `is_projection` * **`products`** : Dé… | — | système (déterministe) | 2 | **répondu correctement** |
+| `colonnes-table` | colonnes | Quelles colonnes y a-t-il dans la table sales_daily ? | Les colonnes de la table `sales_daily` sont les suivantes : * `date` (DATE) — obligatoire * `store_id` (VARCHAR) — obligatoire ; clé étrangère vers stores(store_id) ; valeurs : 'ONLINE', 'S01', 'S02', 'S03', 'S04', 'S05', 'S06', 'S07', 'S08', 'S09', 'S10', 'S11', 'S12' * `sku_id` (VARCHAR) — obligatoire ; clé étrangèr… | — | système (déterministe) | 2 | **répondu correctement** |
+| `colonnes-referentiel` | colonnes | Quels champs trouve-t-on dans la table stores ? | Les champs trouvés dans la table `stores` de la source `maxizoo` sont : * `store_id` (VARCHAR) — clé primaire ; obligatoire ; valeurs : 'ONLINE', 'S01', 'S02', 'S03', 'S04', 'S05', 'S06', 'S07', 'S08', 'S09', 'S10', 'S11', 'S12' * `store_name` (VARCHAR) — obligatoire ; valeurs : 'Angers', 'Bordeaux', 'Brive-la-Gaillar… | — | système (déterministe) | 2 | **répondu correctement** |
+| `colonnes-source-entiere` | colonnes | Quelles colonnes a la source maxizoo ? | La source `maxizoo` contient plusieurs tables. Voici les colonnes pour chacune d'elles : **Table `inflation`** : * `month` (VARCHAR) — clé primaire ; obligatoire * `inflation_mm_pct` (DECIMAL(5,2)) — obligatoire * `cpi_index` (DECIMAL(8,3)) — obligatoire * `is_projection` (SMALLINT) — obligatoire **Table `products`** … | — | système (déterministe) | 2 | **répondu correctement** |
+| `sens-colonne` | sens d'une colonne | Que signifie la colonne store_id de la table sales_daily ? | La colonne `store_id` dans la table `sales_daily` est de type `VARCHAR`. Elle est obligatoire et constitue une clé étrangère qui référence la colonne `store_id` de la table `stores`. Selon le dictionnaire de `maxizoo`, cette colonne permet de distinguer les magasins, incluant l'identifiant `'ONLINE'` pour un canal en … | — | système (déterministe) | 2 | **répondu correctement** |
+| `sens-colonne-nom-nu` | sens d'une colonne | Que signifie store_id ? | La colonne `store_id` est une clé primaire dans la table `stores`. Elle est de type VARCHAR et sert à identifier un magasin. Les valeurs possibles incluent 'ONLINE' ainsi que les identifiants de magasins comme 'S01', 'S02', etc. N'hésitez pas si vous avez d'autres questions sur le schéma des données. | — | système (déterministe) | 2 | **répondu correctement** |
+| `modeles-directe` | modèles | Quels modèles de prédiction sais-tu utiliser ? | Je dispose d'un modèle de prédiction : `maxizoo_sales`. Il s'agit d'une régression qui permet de prévoir la quantité vendue d'un SKU dans un magasin donné un jour précis, avec une unité de mesure en unités vendues. Souhaitez-vous connaître les attributs nécessaires pour utiliser ce modèle ? | — | système (déterministe) | 2 | **répondu correctement** |
+| `modeles-indirecte` | modèles | Est-ce que tu sais faire des prédictions, et sur quoi ? | Je suis un agent d'analyse de données. Je sais interroger une source en SQL (comptages, agrégats, pourcentages, listes filtrées, jointures), analyser et visualiser des données via du code Python exécuté en bac à sable (tests statistiques, ACP, figures). Concernant les prédictions, je peux : * Prédire un cas si vous me… | — | système (déterministe) | 2 | **répondu correctement** |
+| `features-dataset` | features | De quels attributs as-tu besoin pour prédire la quantité vendue d'un SKU ? | Pour prédire la quantité vendue d'un SKU avec le modèle `maxizoo_sales`, j'ai besoin de neuf attributs : * `store_type` (Format du magasin ; 'online' désigne le canal e-commerce ; valeurs autorisées : 'grand', 'moyen', 'petit', 'online') * `commodity_group` (Univers produit ; valeurs autorisées : 'Chien', 'Chat', 'Aqu… | — | système (déterministe) | 2 | **répondu correctement** |
+| `features-mesures` | features | Quelles mesures faut-il te donner pour que tu prévoies les ventes d'un produit ? | Pour prédire les ventes d'un produit avec le modèle `maxizoo_sales`, il est nécessaire de fournir 9 attributs : * `store_type` : Format du magasin ; 'online' désigne le canal e-commerce ; valeurs autorisées : 'grand', 'moyen', 'petit', 'online'. * `commodity_group` : Univers produit ; valeurs autorisées : 'Chien', 'Ch… | — | système (déterministe) | 3 | **répondu correctement** |
+| `features-nue` | features | De quels attributs as-tu besoin ? | Pour prédire avec le modèle **maxizoo_sales** (régression de `quantity`), j'ai besoin des 9 attributs suivants : * `store_type` — Format du magasin ; 'online' désigne le canal e-commerce ; valeurs autorisées : 'grand', 'moyen', 'petit', 'online' * `commodity_group` — Univers produit ; valeurs autorisées : 'Chien', 'Ch… | — | système (déterministe) | 3 | **répondu correctement** |
+| `features-indirecte` | features | De quoi as-tu besoin pour prédire ? | Pour faire des prédictions, j'ai besoin de différents ensembles d'attributs selon le modèle que vous souhaitez utiliser. Actuellement, pour prédire avec le modèle `maxizoo_sales` (qui est une régression sur la quantité), il me faut les 9 attributs suivants : * `store_type` : Le format du magasin ; 'online' désigne le … | — | système (déterministe) | 2 | **répondu correctement** |
+| `capacites-directe` | capacités | Que sais-tu faire ? | Je suis un agent d'analyse de données. Je sais interroger une source en SQL (comptages, agrégats, pourcentages, listes filtrées, jointures), analyser et visualiser des données avec du code Python exécuté en bac à sable (tests statistiques, ACP, figures), prédire un cas ou des individus déjà dans une source, et répondr… | — | système (déterministe) | 2 | **répondu correctement** |
+| `capacites-indirecte` | capacités | À quoi sers-tu, exactement ? | Je suis un agent d'analyse de données. Je sais interroger une source en SQL (comptages, agrégats, pourcentages, listes filtrées, jointures), analyser et visualiser des données via du code Python exécuté en bac à sable (tests statistiques, ACP, figures), prédire un cas spécifique si vous me fournissez les attributs néc… | — | système (déterministe) | 2 | **répondu correctement** |
+| `periode-directe` | période | Sur quelle période portent les données de la source maxizoo ? | Les données couvrent plusieurs périodes selon la table : * **Ventes quotidiennes (`sales_daily`)** : L'historique des ventes s'étend du **1er juillet 2021 au 30 juin 2026**. * **Météo (`weather`)** : Les données météo sont disponibles sur une période plus longue, allant du **1er juillet 2021 au 31 décembre 2026**. * *… | query | résumé de la récupération | 4 | **répondu correctement** |
+| `periode-indirecte` | période | De quand datent les données que tu as ? | Les données couvrent une période allant du **1er juillet 2021** au **30 juin 2026** pour les ventes quotidiennes (`sales_daily`). Cependant, d'autres sources de données s'étendent jusqu'au **31 décembre 2026**, notamment : * Les prévisions météorologiques (`weather`) et le calendrier promotionnel/inflationniste (`prom… | query | résumé de la récupération | 6 | **répondu correctement** |
+| `volumetrie-table` | volumétrie | Combien de lignes contient la table stores ? | La table `stores` contient 13 lignes. | query | résumé de la récupération | 4 | **répondu correctement** |
+| `volumetrie-globale` | volumétrie | Quelle est la taille de tes données ? | 10 lignes retournées — voir le tableau ci-dessous. | query | résumé déterministe (multi-lignes) | 5 | **répondu à côté** |
+| `sources-acces-familier` | sources | tu as acces à quelles données | J'ai accès à une seule source de données : `maxizoo`. Il s'agit d'une base de données de type duckdb qui contient des informations sur les ventes quotidiennes dans une animalerie (données synthétiques). Souhaitez-vous que je vous donne le détail des tables ou des colonnes contenues dans la source `maxizoo` ? | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-premiere-personne` | sources | sur quoi je peux travailler ? | Vous pouvez travailler sur plusieurs aspects : **Mes capacités :** Je suis un agent d'analyse de données et je peux : * Interroger une source en SQL pour des comptages, agrégats, pourcentages, listes filtrées ou jointures. * Analyser et visualiser des données via du code Python exécuté en bac à sable (tests statistiqu… | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-perimetre` | sources | c'est quoi ton périmètre ? | Je suis un agent d'analyse de données. Je sais interroger une source en SQL (comptages, agrégats, pourcentages, listes filtrées, jointures), analyser et visualiser du code Python exécuté en bac à sable (tests statistiques, ACP, figures), prédire un cas dont vous me donnez les attributs, prédire des individus déjà dans… | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-disposes` | sources | de quoi disposes-tu ? | Je suis un agent d'analyse de données et je dispose des éléments suivants : **Mes capacités** Je sais : * Interroger une source en SQL (comptages, agrégats, pourcentages, listes filtrées, jointures). * Analyser et visualiser du code Python exécuté en bac à sable (tests statistiques, ACP, figures). * Prédire un cas don… | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-montre-moi` | sources | montre-moi ce que tu as | Je suis un agent d'analyse de données. Je sais : - **interroger une source en SQL** — comptages, agrégats, pourcentages, listes filtrées, jointures ; - **analyser et visualiser** — du code Python exécuté en bac à sable (tests statistiques, ACP, figures) ; - **prédire un cas** dont tu me donnes les attributs (« une pas… | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-tu-bosses` | sources | tu bosses sur quoi ? | Je suis un agent d'analyse de données. Voici ce que je sais faire et sur quoi je travaille : **Mes capacités** Je peux : * Interroger une source en SQL (comptages, agrégats, pourcentages, listes filtrées, jointures). * Analyser et visualiser des données via du code Python exécuté en bac à sable (tests statistiques, AC… | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-liste-bases` | sources | liste tes bases | J'ai accès à une seule base de données : `maxizoo`. Il s'agit d'une base retail animalerie (démonstration, données synthétiques). Je peux te donner les détails des tables ou des colonnes spécifiques de cette source si tu le souhaites. | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-comme-donnees` | sources | qu'est-ce que tu as comme données ? | J'ai accès à une seule source de données : `maxizoo`. Il s'agit d'une base de données de type duckdb qui contient des données détaillées sur les ventes quotidiennes dans un magasin d'animaux (retail animalerie), couvrant plusieurs aspects comme les SKU, les magasins, les campagnes promotionnelles, la fréquentation, et… | — | système (déterministe) | 2 | **répondu correctement** |
+| `sources-consulter` | sources | quelles infos tu peux consulter ? | Je peux consulter une seule source de données : `maxizoo`. Il s'agit d'une base de données de type duckdb qui contient des informations sur les ventes quotidiennes dans un magasin d'animaux (retail animalerie), avec des détails sur les SKU, les magasins, les campagnes promotionnelles, la fréquentation, les ventes hora… | — | système (déterministe) | 2 | **répondu correctement** |
+| `capacites-demander-quoi` | capacités | je peux te demander quoi ? | Je suis un agent d'analyse de données. Je peux vous aider à : * **Interroger une source en SQL** : effectuer des comptages, des agrégats, calculer des pourcentages, obtenir des listes filtrées ou réaliser des jointures. * **Analyser et visualiser** : exécuter du code Python en bac à sable (tests statistiques, ACP, fig… | — | système (déterministe) | 2 | **répondu correctement** |
+| `capacites-capable` | capacités | dis-moi ce dont tu es capable | Je suis un agent d'analyse de données. Je sais interroger une source en SQL (comptages, agrégats, pourcentages, listes filtrées, jointures) ; analyser et visualiser du code Python exécuté en bac à sable (tests statistiques, ACP, figures) ; prédire un cas dont vous me donnez les attributs ; prédire des individus déjà d… | — | système (déterministe) | 2 | **répondu correctement** |
+| `colonnes-familier` | colonnes | il y a quoi comme colonnes dans sales_daily ? | Les colonnes de la table `sales_daily` sont les suivantes : * `date` (DATE) — obligatoire * `store_id` (VARCHAR) — obligatoire ; clé étrangère vers stores(store_id) ; valeurs : 'ONLINE', 'S01', 'S02', 'S03', 'S04', 'S05', 'S06', 'S07', 'S08', 'S09', 'S10', 'S11', 'S12' * `sku_id` (VARCHAR) — obligatoire ; clé étrangèr… | — | système (déterministe) | 2 | **répondu correctement** |
+| `colonnes-champs-produits` | colonnes | c'est quoi les champs de la table products ? | Les champs de la table `products` sont : * `sku_id` (VARCHAR) — clé primaire ; obligatoire * `sku_label` (VARCHAR) — obligatoire * `commodity_group` (VARCHAR) — obligatoire ; valeurs : 'Accessoires & Jouets', 'Aquariophilie', 'Chat', 'Chien', 'Hygiène & Soins', 'Oiseau', 'Reptile', 'Rongeur' * `brand` (VARCHAR) — obli… | — | système (déterministe) | 2 | **répondu correctement** |
+| `modeles-previsions` | modèles | quel genre de prévisions tu peux faire ? | Je dispose d'un modèle de prédiction : `maxizoo_sales`. Il s'agit d'une régression qui permet de prévoir la quantité vendue d'un SKU dans un magasin donné un jour précis, avec une unité de mesure en unités vendues. Souhaitez-vous connaître les attributs nécessaires pour utiliser ce modèle ? | — | système (déterministe) | 2 | **répondu correctement** |
+| `features-familier` | features | il te faut quoi pour deviner ce qu'un magasin vendra ? | Pour deviner ce qu'un magasin vendra, je peux utiliser le modèle de régression **`maxizoo_sales`** qui prédit la quantité vendue (`quantity`). Ce modèle nécessite les 9 attributs suivants : * **`store_type`** : Le format du magasin. Les valeurs autorisées sont : `'grand'`, `'moyen'`, `'petit'`, et `'online'`. * **`com… | — | système (déterministe) | 3 | **répondu correctement** |
+
+| Verdict | Nombre | Part |
+|---|---|---|
+| répondu correctement | 37 | 97% |
+| répondu à côté | 1 | 3% |
+| repli « je n'ai pas bien compris » | 0 | 0% |
+| erreur | 0 | 0% |
+| **Total** | **38** | |
+
+Coût mesuré : **90 appels LLM** pour 38 question(s) (moyenne 2.37 par question).
+
+### Témoins — questions sur les données — 4 question(s)
+
+| Clé | Famille | Question | Réponse obtenue | Capacité | Synthèse | Appels LLM | Verdict |
+|---|---|---|---|---|---|---|---|
+| `temoin-comptage` | témoin (données) | Combien de magasins l'enseigne compte-t-elle ? | L'enseigne compte un total de 13 magasins (incluant le canal e-commerce). | query | résumé de la récupération | 5 | **répondu correctement** |
+| `temoin-maximum` | témoin (données) | Quelle est la date de vente la plus récente ? | La date de vente la plus récente enregistrée dans la base est le 30 juin 2026. | query | résumé de la récupération | 4 | **répondu correctement** |
+| `temoin-colonnes-a-trous` | témoin (données) | Quelles colonnes de la table sales_daily contiennent des valeurs manquantes ? | La seule colonne de la table `sales_daily` qui contient des valeurs manquantes est `promo_id`. La grande majorité des lignes n'ont pas de campagne promotionnelle associée (`NULL`). | query | résumé de la récupération | 5 | **répondu correctement** |
+| `temoin-prediction` | témoin (données) | Prédis la quantité vendue un samedi de novembre, dans un grand magasin, pour un produit de l'univers Chien de marque nationale à 24,90 € catalogue, en promotion produits à -30 %, par temps de saison. | Prédiction (maxizoo_sales) : 3.2385 unités vendues (pour un SKU, un magasin et un jour). | predict | modèle (déterministe) | 2 | **répondu correctement** |
+
+| Verdict | Nombre | Part |
+|---|---|---|
+| répondu correctement | 4 | 100% |
+| répondu à côté | 0 | 0% |
+| repli « je n'ai pas bien compris » | 0 | 0% |
+| erreur | 0 | 0% |
+| **Total** | **4** | |
+
+Coût mesuré : **16 appels LLM** pour 4 question(s) (moyenne 4.00 par question).
+
+### Les trois points durs, un par un
+
+1. **Le mot qui introduit la source.** « Quelles colonnes a la source maxizoo ? »
+   rend les dix tables et leurs colonnes. Le correctif `_sans_les_introducteurs`
+   a survécu au report : il vit dans `decrire_le_schema`, que le retrait du
+   lexique ne touche pas et que l'outil `schema_d_une_source` appelle désormais.
+   **Toujours corrigé.**
+2. **Le sens d'un nom nu.** « Que signifie store_id ? » — le correctif d'origine
+   était une entrée du lexique (`_demande_le_sens_d_un_nom`), et le lexique a été
+   retiré en entier. Le correctif est donc **sans objet**, et c'est le modèle qui
+   route : il appelle `schema_d_une_source`, la trace le dit
+   (`schema_d_une_source — formulé par le modèle`), la capacité reste vide —
+   aucun `SELECT` n'a été écrit. **Corrigé autrement, et mesuré.**
+3. **La clé répétée.** La même réponse décrit `store_id` depuis `stores`, dit
+   qu'il en est la clé primaire et cite `ONLINE`. `promo_calendar`, qui n'en
+   porte que deux valeurs, n'apparaît pas. Le correctif `_porteuse` a survécu au
+   report pour la même raison que le premier. **Toujours corrigé.**
+
+Le point n°2 est le seul des trois qui ait changé de nature. Il valait la peine
+d'être vérifié plutôt que supposé : le lexique lui donnait une garantie
+déterministe, le modèle ne lui en donne qu'une mesure. C'est le même arbitrage
+qu'au §9, et il est assumé pour la même raison — la famille des tournures est
+ouverte, et un lexique est une liste.
+
+### Ce que la batterie ne rattrape pas
+
+Un seul verdict reste à côté, `volumetrie-globale` (« quelle est la taille de tes
+données ? »). La question part au SQL, ce qui est la bonne route, et l'agent rend
+un tableau de dix lignes — une par table. La **réponse en langage naturel**, elle,
+dit « 10 lignes retournées — voir le tableau ci-dessous » : c'est le résumé
+déterministe des résultats multi-lignes, et il ne recopie aucun chiffre. L'oracle
+ne lit que le texte, et le compte donc à côté. Ce n'est pas un défaut de routage ;
+c'est une limite du résumé multi-lignes, qui existait avant ce chantier et que
+cette question éclaire.
+
+---
+
+## 15. Le choix de source sur ce catalogue, mesuré
+
+Le catalogue de démonstration ne déclare **qu'une** source. Le mécanisme du §12
+s'y replie donc sur son cas dégénéré — la source est *annoncée* au lieu d'être
+demandée — et ce repli ne mesure ni la proposition ni la bascule. Les deux
+parcours ont donc été menés :
+
+- sur `sources/catalogue.yaml`, pour vérifier le repli tel qu'il tourne en
+  démonstration ;
+- sur `scripts/catalogue-mesure-deux-sources.yaml`, qui déclare la base réelle
+  **et** l'échantillon versionné dont la suite de tests se sert déjà. Les deux
+  sont vraies, elles portent le même métier, et elles ne répondent pas la même
+  chose : une bascule qui n'aurait pas eu lieu se verrait dans le chiffre.
+
+### Le repli à une source
+
+| Tour | Attendu | Message | Réponse obtenue | Source liée après | Capacité | Appels LLM |
+|---|---|---|---|---|---|---|
+| 1 | l'annonce de « maxizoo », sans question posée | combien de lignes en tout ? | Je travaille sur la source `maxizoo`. La base de données contient plusieurs tables de faits avec des volumes différents : la table des ventes quotidiennes (`sales_daily`) compte le plus grand nombre d'enregistrements (1 363 726), suivie par les ventes horaire… | `maxizoo` | query | 7 |
+| 2 | la source tient, sans être nommée | et combien de colonnes ? | La base de données est composée de plusieurs tables avec des structures différentes. Voici un aperçu du nombre de colonnes principales dans les tables clés : * **`stores` (Magasins) :** 7 colonnes * **`products` (Catalogue SKU) :** 9 colonnes * **`sales_daily… | `maxizoo` | query | 4 |
+| 3 | elle tient encore, et n'est plus annoncée | et combien de tables ? | J'ai accès à une seule source de données, nommée `maxizoo`. Vous pouvez me demander les tables ou les colonnes spécifiques de cette source pour plus de détails. | `maxizoo` | — | 2 |
+
+Coût mesuré : **13 appels LLM** pour 3 tours (moyenne 4.33 par tour).
+
+L'annonce arrive au premier tour qui a besoin d'une source, en tête de la
+réponse, et ne se répète jamais.
+
+### Le parcours complet, à deux sources
+
+| Tour | Attendu | Message | Réponse obtenue | Source liée après | Capacité | Appels LLM |
+|---|---|---|---|---|---|---|
+| 1 | la proposition des sources | bonjour, je voudrais regarder des données | Bonjour ! Je suis un agent d'analyse de données et je peux vous aider à explorer des informations, faire des prédictions ou répondre à des questions sur ma propre configuration. Je dispose actuellement de deux sources de données : * `maxizoo` (une base complè… | `(aucune)` | — | 2 |
+| 2 | la validation de « maxizoo » | maxizoo | Entendu : on travaille sur **maxizoo** (duckdb) — Base retail animalerie complète (démonstration, données synthétiques) — schéma en étoile de 1,66 M de lignes : ventes quotidiennes, 13 magasins, 60 SKU, 56 campagnes promo, fréquentation, météo, inflation. His… | `maxizoo` | — | 0 |
+| 3 | une vraie question, source NON nommée | combien de lignes en tout ? | 3 lignes retournées — voir le tableau ci-dessous. | `maxizoo` | query | 5 |
+| 4 | la bascule vers « maxizoo_mini », annoncée | et dans maxizoo_mini, combien de lignes ? | Je passe sur la source `maxizoo_mini` — on travaillait sur `maxizoo`. La base de données contient 3 666 lignes dans la table des ventes quotidiennes (`sales_daily`). | `maxizoo_mini` | query | 5 |
+| 5 | la nouvelle source tient, sans être nommée | et combien de colonnes ? | La table `sales_daily` contient 8 colonnes : date, store\_id, sku\_id, quantity, unit\_price, revenue, is\_rupture et promo\_id. | `maxizoo_mini` | query | 4 |
+
+Coût mesuré : **16 appels LLM** pour 5 tours (moyenne 3.20 par tour).
+
+Les cinq tours font ce qu'ils annoncent, et deux chiffres suffisent à le prouver :
+le tour 4 répond **3 666 lignes** — le volume de l'échantillon — là où le tour 3
+travaillait sur les 1 363 726 lignes de la base complète, et le tour 5 rend les
+huit colonnes de `sales_daily`, la seule table de l'échantillon. La bascule a
+bien eu lieu, elle a été annoncée, et elle a tenu au tour suivant sans être
+renommée.
+
+**La validation coûte zéro appel LLM**, et c'était l'engagement du §12 :
+reconnaître le nom d'une source du catalogue dans un message est du code. Trois
+millisecondes.
+
+**La proposition du tour 1 n'est pas venue de `_regle_choisir_la_source`.** C'est
+l'agent système qui s'est emparé de « bonjour, je voudrais regarder des
+données » — capacité vide, deux appels — et qui a énuméré les deux sources. Le
+résultat est le même pour l'utilisateur, et c'est justement le cas qui avait mis
+en défaut le drapeau « une proposition attend une réponse » du premier parcours
+(§12) : le drapeau n'aurait pas été posé, et le « maxizoo » du tour suivant se
+serait fait rendre le catalogue. Il a été retenu. **La correction du §12 est
+vérifiée sur un second catalogue.**
+
+## 16. Ce que ces deux mesures laissent ouvert
+
+- **Le nœud système ne voit pas le fil.** `run_systeme` reçoit le message seul,
+  sans le contexte des tours précédents. Une relance elliptique en fait les frais :
+  au troisième tour du parcours à une source, « et combien de tables ? » a été
+  routé vers l'agent système, qui a répondu sur les *sources* — il n'avait pas les
+  deux tours d'avant pour comprendre que « tables » portait sur `maxizoo`. Lui
+  donner l'historique coûterait des tokens sur CHAQUE question ; ne pas le lui
+  donner coûte les anaphores. Rien n'a été tranché ici, et rien ne doit l'être
+  sans une mesure.
+- **« Combien de lignes en tout ? » n'a pas de réponse sur une étoile.** Le
+  message témoin des parcours a produit un tableau par table, ce qui est
+  raisonnable et n'est pas ce que la question demandait. Sur deux tables jouets
+  elle était sans ambiguïté ; sur dix elle ne l'est plus. Le témoin garde sa
+  valeur — c'est la source liée qu'il surveille, pas la justesse du compte — mais
+  il ne prouve plus rien sur la réponse.
+- **Le catalogue de mesure n'est pas le catalogue de production.** Le parcours à
+  deux sources tourne sur un fichier écrit pour lui. C'est le prix à payer pour
+  mesurer un mécanisme que la démonstration n'exerce pas ; ce que ça ne dit pas,
+  c'est comment il se comporte à cinq ou dix sources déclarées.

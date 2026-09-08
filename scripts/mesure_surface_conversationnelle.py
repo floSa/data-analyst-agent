@@ -14,7 +14,7 @@ combien de lignes), ses reformulations et ses tournures indirectes.
 **Et une famille de témoins**, qui ne sont pas des questions méta : de vraies
 questions sur les DONNÉES, dont on vérifie qu'elles restent routées là où
 elles doivent l'être. Un routeur de questions méta se juge autant sur ce qu'il
-laisse passer que sur ce qu'il attrape — « quelles colonnes de passengers
+laisse passer que sur ce qu'il attrape — « quelles colonnes de sales_daily
 contiennent des valeurs manquantes ? » ressemble à une question de schéma et
 n'en est pas une.
 
@@ -37,10 +37,15 @@ auteur, pas la couverture du système.
     uv run python scripts/mesure_surface_conversationnelle.py --markdown /tmp/tableau.md
 
 Prérequis : le serveur LLM répond (``DAA_LLM_BASE_URL``) et les sources du
-catalogue sont joignables — Postgres seedé
-(``scripts/seed_titanic_postgres.py``) pour la source ``titanic``. Une source
-injoignable fait échouer la lecture de la vérité terrain, et c'est voulu :
-elle changerait les verdicts sans le dire.
+catalogue sont joignables — ici la base DuckDB Maxizoo, construite par
+``scripts/load_maxizoo_duckdb.py``. Une source injoignable fait échouer la
+lecture de la vérité terrain, et c'est voulu : elle changerait les verdicts
+sans le dire.
+
+**Les tables citées sont lues dans le catalogue, pas écrites ici.** La batterie
+désigne la table de FAITS et la table de RÉFÉRENCE par deux constantes
+(``TABLE_DE_FAITS``, ``TABLE_DE_REFERENCE``) : rejouer ce runner sur un autre
+catalogue demande de changer ces deux noms, et rien d'autre.
 """
 
 from __future__ import annotations
@@ -92,6 +97,50 @@ AVEUX_D_ABSENCE_DE_DATE = (
     "ne comporte aucune date",
 )
 
+# La table sur laquelle portent les questions de détail, et celle qui sert de
+# référentiel. Sur une étoile, ce ne sont pas les mêmes questions : la table de
+# faits porte les clés étrangères (« que signifie store_id ? » y renvoie
+# ailleurs), le référentiel porte leur sens et toutes leurs valeurs.
+TABLE_DE_FAITS = "sales_daily"
+TABLE_DE_REFERENCE = "stores"
+
+# Les mois, pour reconnaître une date écrite en français. Un oracle qui n'admet
+# que la forme ISO compte FAUSSE une réponse juste : le modèle écrit « le 30 juin
+# 2026 », et c'est la bonne façon de le dire à un humain. Mesuré — c'est ce qui
+# faisait tomber le témoin d'agrégat au premier passage sur la base Maxizoo.
+MOIS = (
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+)
+
+
+def formes_de_date(iso: str) -> tuple[str, ...]:
+    """La même date, dans les écritures qu'une réponse peut légitimement prendre.
+
+    L'ISO telle quelle, et la forme française — « 1er juillet 2021 », « 30 juin
+    2026 ». Le premier du mois s'écrit « 1er » : les deux sont admis.
+    """
+    if not iso:
+        return ()
+    annee, mois, jour = iso.split("-")
+    nom = MOIS[int(mois) - 1]
+    numero = int(jour)
+    formes = [iso, f"{numero} {nom} {annee}"]
+    if numero == 1:
+        formes.append(f"1er {nom} {annee}")
+    return tuple(formes)
+
+
 VERDICTS = ("correct", "a_cote", "repli", "erreur")
 LIBELLES = {
     "correct": "répondu correctement",
@@ -129,11 +178,11 @@ class QuestionMeta:
     ``clarification_admise`` : les choix qu'une question renvoyée doit
     énumérer pour compter comme une réponse. Vide = une clarification ne
     compte jamais, et c'est le cas général : à « quelles sources
-    possèdes-tu ? », répondre « sur quelle source veux-tu travailler :
-    titanic, iris ? » énumère bel et bien la réponse, mais sous forme de
-    question — l'utilisateur, lui, n'a pas été répondu. Renseignée seulement
-    quand la question laisse RÉELLEMENT le choix ouvert (« de quels attributs
-    as-tu besoin ? », trois modèles au registre).
+    possèdes-tu ? », énumérer les sources sous forme de question (« sur
+    laquelle veux-tu travailler ? ») énumère bel et bien la réponse, mais
+    l'utilisateur, lui, n'a pas été répondu. Renseignée seulement quand la
+    question laisse RÉELLEMENT le choix ouvert (« de quels attributs as-tu
+    besoin ? », plusieurs modèles au registre).
 
     ``capacite_attendue`` : la capacité par laquelle la demande doit passer.
     Renseignée sur les témoins : c'est ce qui prouve qu'un routeur de
@@ -216,9 +265,10 @@ class VeriteTerrain:
     temporelles: dict[str, tuple[str, ...]]  # "source.table" -> colonnes de date
     lignes: dict[str, int]  # "source.table" -> nombre de lignes
     features: dict[str, tuple[str, ...]]  # dataset -> champs du schéma
-    ages_max: float  # MAX(age) de passengers, pour un témoin d'agrégat
-    survivants: int  # COUNT(survived = 1), pour un témoin de comptage
-    colonnes_a_trous: tuple[str, ...]  # colonnes de passengers avec des NULL
+    magasins: int  # COUNT(*) du référentiel, pour un témoin de comptage
+    premiere_vente: str  # MIN(date) de la table de faits, pour l'oracle de période
+    derniere_vente: str  # MAX(date) de la table de faits, pour un témoin d'agrégat
+    colonnes_a_trous: tuple[str, ...]  # colonnes de la table de faits avec des NULL
 
     @classmethod
     def lire(cls, catalogue: Catalog, registre: Registry) -> VeriteTerrain:
@@ -226,8 +276,9 @@ class VeriteTerrain:
         colonnes: dict[str, tuple[str, ...]] = {}
         temporelles: dict[str, tuple[str, ...]] = {}
         lignes: dict[str, int] = {}
-        ages_max = 0.0
-        survivants = 0
+        magasins = 0
+        premiere_vente = ""
+        derniere_vente = ""
         a_trous: tuple[str, ...] = ()
         for source in catalogue.sources:
             with closing(open_source(source)) as adaptateur:
@@ -244,20 +295,18 @@ class VeriteTerrain:
                     lignes[cle] = int(
                         adaptateur.run(f"SELECT COUNT(*) FROM {table.name}").rows[0][0]
                     )
-                    if table.name == "passengers":
-                        ages_max = float(
-                            adaptateur.run("SELECT MAX(age) FROM passengers").rows[0][0]
-                        )
-                        survivants = int(
-                            adaptateur.run(
-                                "SELECT COUNT(*) FROM passengers WHERE survived = 1"
-                            ).rows[0][0]
-                        )
+                    if table.name == TABLE_DE_REFERENCE:
+                        magasins = lignes[cle]
+                    if table.name == TABLE_DE_FAITS:
+                        bornes = adaptateur.run(
+                            f"SELECT MIN(date), MAX(date) FROM {table.name}"
+                        ).rows[0]
+                        premiere_vente, derniere_vente = str(bornes[0]), str(bornes[1])
                         a_trous = tuple(
                             c.name
                             for c in table.columns
                             if adaptateur.run(
-                                f"SELECT COUNT(*) FROM passengers WHERE {c.name} IS NULL"
+                                f"SELECT COUNT(*) FROM {table.name} WHERE {c.name} IS NULL"
                             ).rows[0][0]
                         )
         return cls(
@@ -268,20 +317,34 @@ class VeriteTerrain:
             temporelles=temporelles,
             lignes=lignes,
             features={d: tuple(SCHEMAS[d].model_fields) for d in registre.datasets if d in SCHEMAS},
-            ages_max=ages_max,
-            survivants=survivants,
+            magasins=magasins,
+            premiere_vente=premiere_vente,
+            derniere_vente=derniere_vente,
             colonnes_a_trous=a_trous,
         )
 
     def oracle_de_periode(self, cle_table: str) -> tuple[str, ...]:
         """Ce qu'une réponse FONDÉE sur la période peut contenir.
 
-        Une colonne de date s'il y en a une ; sinon l'aveu que la source n'en
-        a pas — plus les noms de colonnes, qui prouvent aussi qu'on a regardé
-        le schéma au lieu d'inventer des bornes plausibles.
+        Trois façons d'être fondée, et l'oracle les admet toutes.
+
+        Nommer la **colonne** de date : c'est la réponse du chemin méta, qui lit
+        le schéma. Donner les **bornes réelles** : c'est la réponse du chemin
+        SQL, et elle est meilleure — sur une base à cinq ans d'historique, la
+        question appelle des dates, pas un nom de champ. N'admettre que la
+        première comptait fausse la seconde, ce qui est le contraire du travail
+        d'un oracle.
+
+        Et quand la source n'a **aucune** colonne temporelle, l'aveu — plus les
+        noms de colonnes, qui prouvent qu'on a regardé le schéma au lieu
+        d'inventer des bornes plausibles.
         """
         if self.temporelles[cle_table]:
-            return self.temporelles[cle_table]
+            return (
+                self.temporelles[cle_table]
+                + formes_de_date(self.premiere_vente)
+                + formes_de_date(self.derniere_vente)
+            )
         return AVEUX_D_ABSENCE_DE_DATE + self.colonnes[cle_table]
 
 
@@ -293,13 +356,18 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
     tournure indirecte (« sur quoi peux-tu travailler ? ») demandent la même
     chose, et rien ne garantit qu'elles finissent au même endroit.
 
-    Certaines questions nomment une source ou un dataset (``titanic``,
-    ``iris``) parce que c'est ainsi qu'on les pose une fois qu'on a vu la
-    liste ; les autres restent volontairement non qualifiées, comme au premier
-    tour d'une conversation.
+    Certaines questions nomment la source ou une de ses tables parce que c'est
+    ainsi qu'on les pose une fois qu'on a vu la liste ; les autres restent
+    volontairement non qualifiées, comme au premier tour d'une conversation.
+
+    Trois questions ont un statut à part, marquées « point dur » : ce sont les
+    trois défauts que dix tables réelles ont fait apparaître et que deux tables
+    jouets cachaient. Elles sont dans la batterie, et non dans un script à
+    part, pour être rejouées à chaque mesure.
     """
     src = vt.sources[0]
-    passengers = "titanic.passengers"
+    faits = f"{src}.{TABLE_DE_FAITS}"
+    reference = f"{src}.{TABLE_DE_REFERENCE}"
     return [
         # --- quelles sources ? (la question du propriétaire, et ses variantes)
         QuestionMeta(
@@ -343,22 +411,47 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
         QuestionMeta(
             "colonnes-table",
             "colonnes",
-            "Quelles colonnes y a-t-il dans la table passengers ?",
-            attendus_tous=vt.colonnes[passengers],
+            f"Quelles colonnes y a-t-il dans la table {TABLE_DE_FAITS} ?",
+            attendus_tous=vt.colonnes[faits],
         ),
         QuestionMeta(
-            "colonnes-fichier",
+            "colonnes-referentiel",
             "colonnes",
-            "Quels champs trouve-t-on dans la source iris ?",
-            attendus_tous=vt.colonnes["iris.iris"],
+            f"Quels champs trouve-t-on dans la table {TABLE_DE_REFERENCE} ?",
+            attendus_tous=vt.colonnes[reference],
+        ),
+        # POINT DUR n°1 — « la SOURCE maxizoo » désignait `weather.source`, une
+        # colonne qui existe pour de bon. La réponse était fausse et ne le
+        # disait pas. Ce qui est exigé ici, c'est le schéma ENTIER : les dix
+        # tables, et non la fiche d'une colonne isolée.
+        QuestionMeta(
+            "colonnes-source-entiere",
+            "colonnes",
+            f"Quelles colonnes a la source {src} ?",
+            attendus_tous=vt.tables[src],
         ),
         # --- que signifie une colonne ?
         QuestionMeta(
             "sens-colonne",
             "sens d'une colonne",
-            "Que signifie la colonne class_id de la table passengers ?",
+            f"Que signifie la colonne store_id de la table {TABLE_DE_FAITS} ?",
             # la réponse fondée renvoie à la table pointée par la clé étrangère
-            attendus_tous=("classes",),
+            attendus_tous=(TABLE_DE_REFERENCE,),
+        ),
+        # POINT DUR n°2 — le nom NU, sans le mot « colonne » : personne ne
+        # l'écrit. Le lexique l'exigeait ; il a été retiré, et c'est désormais
+        # au modèle d'appeler l'outil de schéma. Un `SELECT` sur `store_id`
+        # rendrait des identifiants, pas leur SENS.
+        #
+        # POINT DUR n°3 — la même question juge la table de départ. `store_id`
+        # vit dans six des dix tables ; décrit depuis `promo_calendar` il
+        # ressortait avec deux valeurs sur treize. `ONLINE` n'est présent que
+        # dans le référentiel : l'exiger, c'est exiger la bonne table.
+        QuestionMeta(
+            "sens-colonne-nom-nu",
+            "sens d'une colonne",
+            "Que signifie store_id ?",
+            attendus_tous=(TABLE_DE_REFERENCE, "ONLINE"),
         ),
         # --- quels modèles ?
         QuestionMeta(
@@ -377,14 +470,14 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
         QuestionMeta(
             "features-dataset",
             "features",
-            "De quels attributs as-tu besoin pour prédire la survie d'un passager du Titanic ?",
-            attendus_tous=vt.features["titanic"],
+            "De quels attributs as-tu besoin pour prédire la quantité vendue d'un SKU ?",
+            attendus_tous=vt.features["maxizoo_sales"],
         ),
         QuestionMeta(
-            "features-iris",
+            "features-mesures",
             "features",
-            "Quelles mesures faut-il te donner pour que tu prédises l'espèce d'un iris ?",
-            attendus_tous=vt.features["iris"],
+            "Quelles mesures faut-il te donner pour que tu prévoies les ventes d'un produit ?",
+            attendus_tous=vt.features["maxizoo_sales"],
         ),
         QuestionMeta(
             # la question exacte de docs/axes-amelioration.md
@@ -419,21 +512,21 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             "periode-directe",
             "période",
             f"Sur quelle période portent les données de la source {src} ?",
-            attendus_parmi=vt.oracle_de_periode(passengers),
+            attendus_parmi=vt.oracle_de_periode(faits),
         ),
         QuestionMeta(
             "periode-indirecte",
             "période",
             "De quand datent les données que tu as ?",
-            attendus_parmi=vt.oracle_de_periode(passengers),
+            attendus_parmi=vt.oracle_de_periode(faits),
             clarification_admise=vt.sources,
         ),
         # --- combien de lignes ?
         QuestionMeta(
             "volumetrie-table",
             "volumétrie",
-            "Combien de lignes contient la table passengers ?",
-            attendus_tous=(str(vt.lignes[passengers]),),
+            f"Combien de lignes contient la table {TABLE_DE_REFERENCE} ?",
+            attendus_tous=(str(vt.lignes[reference]),),
         ),
         QuestionMeta(
             "volumetrie-globale",
@@ -528,14 +621,14 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
         QuestionMeta(
             "colonnes-familier",
             "colonnes",
-            "il y a quoi comme colonnes dans passengers ?",
-            attendus_tous=vt.colonnes[passengers],
+            f"il y a quoi comme colonnes dans {TABLE_DE_FAITS} ?",
+            attendus_tous=vt.colonnes[faits],
         ),
         QuestionMeta(
-            "colonnes-champs-classes",
+            "colonnes-champs-produits",
             "colonnes",
-            "c'est quoi les champs de la table classes ?",
-            attendus_tous=vt.colonnes["titanic.classes"],
+            "c'est quoi les champs de la table products ?",
+            attendus_tous=vt.colonnes[f"{src}.products"],
         ),
         QuestionMeta(
             "modeles-previsions",
@@ -546,22 +639,25 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
         QuestionMeta(
             "features-familier",
             "features",
-            "il te faut quoi pour deviner l'espèce d'un iris ?",
-            attendus_tous=vt.features["iris"],
+            "il te faut quoi pour deviner ce qu'un magasin vendra ?",
+            attendus_tous=vt.features["maxizoo_sales"],
         ),
         # --- TÉMOINS : de vraies questions sur les données, qui doivent le rester
         QuestionMeta(
             "temoin-comptage",
             FAMILLE_TEMOIN,
-            "Combien de passagers ont survécu ?",
-            attendus_tous=(str(vt.survivants),),
+            "Combien de magasins l'enseigne compte-t-elle ?",
+            attendus_tous=(str(vt.magasins),),
             capacite_attendue="query",
         ),
         QuestionMeta(
+            # le pendant du témoin de période : « de quand datent les
+            # données ? » se lit dans le schéma, « quelle est la vente la plus
+            # récente ? » se calcule dessus. La frontière passe entre les deux.
             "temoin-maximum",
             FAMILLE_TEMOIN,
-            "Quel est l'âge du passager le plus âgé ?",
-            attendus_tous=(f"{vt.ages_max:g}",),
+            "Quelle est la date de vente la plus récente ?",
+            attendus_parmi=formes_de_date(vt.derniere_vente),
             capacite_attendue="query",
         ),
         QuestionMeta(
@@ -569,16 +665,17 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             # (« quelles colonnes ») pour une question de DONNÉES
             "temoin-colonnes-a-trous",
             FAMILLE_TEMOIN,
-            "Quelles colonnes de la table passengers contiennent des valeurs manquantes ?",
+            f"Quelles colonnes de la table {TABLE_DE_FAITS} contiennent des valeurs manquantes ?",
             attendus_tous=vt.colonnes_a_trous,
             capacite_attendue="query",
         ),
         QuestionMeta(
             "temoin-prediction",
             FAMILLE_TEMOIN,
-            "Prédis la survie d'une passagère de 1re classe de 28 ans, tarif 80 livres, "
-            "embarquée à Southampton, sans frère, sœur, parent ni enfant à bord.",
-            attendus_parmi=("a survecu", "n'a pas survecu"),
+            "Prédis la quantité vendue un samedi de novembre, dans un grand magasin, "
+            "pour un produit de l'univers Chien de marque nationale à 24,90 € "
+            "catalogue, en promotion produits à -30 %, par temps de saison.",
+            attendus_parmi=("unite", "quantite"),
             capacite_attendue="predict",
         ),
     ]
@@ -603,7 +700,7 @@ def classer(
 
     Une clarification non admise est enfin « à côté », même quand elle
     contient tous les mots attendus. Sans cette marche, l'oracle littéral
-    comptait « Sur quelle source veux-tu travailler : titanic, iris ? » comme
+    comptait « Sur quelle source veux-tu travailler : a, b ? » comme
     une réponse correcte à « quelles sources possèdes-tu ? » — la mesure
     aurait alors déclaré couverte la classe même qu'on cherchait à mesurer.
     """

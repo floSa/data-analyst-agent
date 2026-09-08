@@ -543,21 +543,29 @@ la source sur laquelle on travaille **ensuite**.
 - **La proposition** rend ce que le catalogue dit de chaque source, et finit par la
   question (ce qu'on lit en dernier est ce à quoi on répond). Elle est portée par
   `_regle_choisir_la_source`, donc elle n'arrive qu'**après** le plan : c'est le seul
-  moment où l'on sait qu'une source est réellement nécessaire — « prédis pour une
-  passagère de 1re classe » n'en demande aucune, et lui proposer un catalogue serait
-  un tour perdu.
+  moment où l'on sait qu'une source est réellement nécessaire — « combien vendra-t-on
+  un samedi de novembre en promo −30 % ? » n'en demande aucune, et lui proposer un
+  catalogue serait un tour perdu.
 - **S'il n'y en a qu'une, elle est annoncée** au lieu d'être demandée. Elle était déjà
   choisie en silence par `_resolve_source` ; ce qui change, c'est que l'utilisateur
-  l'apprend.
+  l'apprend. **C'est le cas de ce dépôt** : `sources/catalogue.yaml` ne déclare que
+  `maxizoo`, et le mécanisme s'y replie donc sur son annonce. Le parcours complet
+  — proposition, validation, bascule — se mesure sur un catalogue à deux sources
+  (`scripts/catalogue-mesure-deux-sources.yaml`), et l'est.
 - **La validation est du code**, pas un appel LLM : le nom d'une source du catalogue
   cité dans le message, et un seul. Comparer deux chaînes ne mérite pas un
   aller-retour. Un message qui ne nomme aucune source connue n'est **pas** un choix et
   repart au planificateur — sans cette porte de sortie, « laisse tomber, autre
-  chose » se ferait reposer la même question indéfiniment. `a_valider` ne vaut donc
-  qu'un seul tour.
-- **La source validée est portée par la conversation** (`SourceDeTravail`, persistée
-  dans `transcript.json` comme `owner`). Le planificateur la reçoit dans son contexte
-  — il n'a plus à la deviner — et une règle la repose au plan quoi qu'il en fasse.
+  chose » se ferait reposer la même question indéfiniment.
+- **Aucun état de conversation n'est consulté** pour reconnaître un choix. Le
+  mécanisme a porté un instant un drapeau « une proposition attend une réponse »,
+  posé au tour d'avant ; le parcours mesuré l'a mis en défaut deux fois, et il a été
+  retiré. Un choix de source se lit dans le message, pas dans l'histoire
+  (`introspection.choix_de_source`).
+- **La source validée est portée par la conversation** : un simple nom, persisté dans
+  `transcript.json` (`source_de_travail`) comme `owner`. Le planificateur la reçoit
+  dans son contexte — il n'a plus à la deviner — et une règle la repose au plan quoi
+  qu'il en fasse.
 
 **Ce qui a été tranché : une source nommée en cours de route fait basculer**, et la
 réponse le dit en tête (« Je passe sur la source `ventes` — on travaillait sur

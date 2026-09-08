@@ -9,7 +9,7 @@ runner.
 Ce qui est mesuré, dans UNE conversation et dans l'ordre :
 
 1. l'agent **propose** ses sources (première question, aucune source liée) ;
-2. l'utilisateur **en valide une** (« titanic ») ;
+2. l'utilisateur **en valide une** ;
 3. une **vraie question** sur la source choisie, sans la nommer — c'est là que
    se voit le fait que la source est portée par la conversation et non
    redevinée ;
@@ -17,6 +17,14 @@ Ce qui est mesuré, dans UNE conversation et dans l'ordre :
    annoncée ;
 5. un tour de plus, pour vérifier que la nouvelle source a bien remplacé
    l'ancienne.
+
+**Un catalogue à UNE source n'a pas ce parcours**, et ce n'est pas un défaut de
+configuration : le mécanisme s'y replie sur son cas dégénéré, où la source est
+*annoncée* au lieu d'être demandée — poser une question dont la réponse est
+connue d'avance serait un tour perdu. Le runner mesure alors ce repli, en trois
+tours, et le dit dans son titre. Le parcours complet demande un catalogue qui
+en déclare deux : `scripts/catalogue-mesure-deux-sources.yaml` en fournit un,
+sans toucher à celui de la démonstration.
 
 Le coût est compté, pas estimé : le modèle est enveloppé dans le compteur
 d'allers-retours de l'autre runner (``ModeleCompteur``). Le tour de validation
@@ -29,14 +37,18 @@ pas au ``DAA_WORKSPACE_DIR`` de l'installation.
 
     uv run python scripts/mesure_choix_de_source.py
     uv run python scripts/mesure_choix_de_source.py --markdown /tmp/tableau.md
+    uv run python scripts/mesure_choix_de_source.py --json /tmp/journal.json
+    DAA_CATALOG_PATH=scripts/catalogue-mesure-deux-sources.yaml \
+        uv run python scripts/mesure_choix_de_source.py
 
 Prérequis, les mêmes que l'autre runner : le serveur LLM répond, et les sources
-du catalogue sont joignables (Postgres seedé pour ``titanic``).
+du catalogue sont joignables.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import tempfile
 import time
 from dataclasses import dataclass
@@ -120,17 +132,32 @@ def mener(
     )
 
 
+# La question posée aux tours « ordinaires » du parcours. Elle est choisie pour
+# que sa RÉPONSE trahisse la source : deux sources qui ne portent pas le même
+# nombre de lignes rendent une bascule silencieuse impossible à manquer.
+QUESTION_TEMOIN = "combien de lignes en tout ?"
+
+
 def parcours(noms: list[str]) -> list[tuple[str, str]]:
-    """Les cinq tours, dans l'ordre : (ce qui est attendu, le message).
+    """Les tours, dans l'ordre : (ce qui est attendu, le message).
 
     Les deux premiers noms du catalogue sont utilisés tels quels : le parcours
     doit se rejouer sur un autre catalogue sans être réécrit.
     """
+    if len(noms) == 1:
+        # Le cas dégénéré, qui est celui de la démonstration : il n'y a rien à
+        # proposer, la source est annoncée au premier tour qui en a besoin, et
+        # ce qui reste à mesurer est qu'elle TIENT sans être renommée.
+        return [
+            (f"l'annonce de « {noms[0]} », sans question posée", QUESTION_TEMOIN),
+            ("la source tient, sans être nommée", "et combien de colonnes ?"),
+            ("elle tient encore, et n'est plus annoncée", "et combien de tables ?"),
+        ]
     premiere, seconde = noms[0], noms[1]
     return [
         ("la proposition des sources", "bonjour, je voudrais regarder des données"),
         (f"la validation de « {premiere} »", premiere),
-        ("une vraie question, source NON nommée", "combien de lignes en tout ?"),
+        ("une vraie question, source NON nommée", QUESTION_TEMOIN),
         (f"la bascule vers « {seconde} », annoncée", f"et dans {seconde}, combien de lignes ?"),
         ("la nouvelle source tient, sans être nommée", "et combien de colonnes ?"),
     ]
@@ -157,19 +184,45 @@ def tableau_markdown(tours: list[Tour]) -> str:
     return "\n".join(lignes)
 
 
+def journal(tours: list[Tour]) -> list[dict]:
+    """Les tours ENTIERS, réponses non tronquées — comme l'autre runner.
+
+    Le tableau Markdown coupe les réponses pour rester lisible ; ce qui a été
+    coupé est précisément ce qu'on veut relire quand un tour surprend. Une
+    mesure dont on ne peut pas rouvrir les réponses ne se diagnostique pas.
+    """
+    return [
+        {
+            "numero": t.numero,
+            "attendu": t.attendu,
+            "message": t.message,
+            "reponse": t.reponse,
+            "source_liee": t.source_liee,
+            "capacite": t.capacite,
+            "appels_llm": t.appels_llm,
+            "duree_ms": t.duree_ms,
+        }
+        for t in tours
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--markdown", type=Path, help="écrit le tableau et le coût ici")
+    parser.add_argument("--json", type=Path, help="écrit le journal complet des tours ici")
     args = parser.parse_args()
 
     reglages = get_settings()
     catalogue = load_catalog(reglages.catalog_path)
     registre = Registry.load(reglages.models_registry_path)
     noms = [s.name for s in catalogue.sources]
-    if len(noms) < 2:
-        raise SystemExit(
-            "ce parcours demande AU MOINS DEUX sources déclarées : c'est ce qui fait "
-            f"qu'un choix existe. Catalogue courant : {', '.join(noms) or '(vide)'}."
+    if not noms:
+        raise SystemExit("catalogue vide : il n'y a pas de source à choisir.")
+    if len(noms) == 1:
+        print(
+            f"UNE seule source déclarée ({noms[0]}) : c'est le parcours DÉGÉNÉRÉ qui est "
+            "mesuré — l'annonce, puis la source qui tient. Le parcours complet demande un "
+            "catalogue à deux sources (DAA_CATALOG_PATH)."
         )
     print(f"Sources : {', '.join(noms)}")
     print(f"Serveur LLM : {reglages.llm_base_url} ({reglages.llm_model})\n")
@@ -181,8 +234,9 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="daa-mesure-source-") as racine:
         magasin = ConversationStore(Path(racine), "mesure")
         tours = []
-        for numero, (attendu, message) in enumerate(parcours(noms), start=1):
-            print(f"[{numero}/5] {attendu}\n    > {message}", flush=True)
+        etapes = parcours(noms)
+        for numero, (attendu, message) in enumerate(etapes, start=1):
+            print(f"[{numero}/{len(etapes)}] {attendu}\n    > {message}", flush=True)
             tour = mener(orchestrateur, compteur, magasin, numero, attendu, message)
             tours.append(tour)
             print(f"    « {une_ligne(tour.reponse, 220)} »")
@@ -197,6 +251,11 @@ def main() -> None:
     if args.markdown:
         args.markdown.write_text(texte + "\n", encoding="utf-8")
         print(f"\nTableau écrit dans {args.markdown}")
+    if args.json:
+        args.json.write_text(
+            json.dumps(journal(tours), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        print(f"Journal écrit dans {args.json}")
 
 
 if __name__ == "__main__":

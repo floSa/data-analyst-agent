@@ -286,11 +286,14 @@ Ici, le catalogue n'en déclare **qu'une** — `maxizoo` — et le mécanisme se
 > Quel est le chiffre d'affaires 2024 ?
   Je travaille sur la source `maxizoo`.        ← annoncée une fois, puis plus jamais répétée
 
-  Le chiffre d'affaires 2024 s'élève à 34 787 976,80 €.
+  Le chiffre d'affaires total pour l'année 2024 s'élève à 9 505 116,35 €.
 
 > et 2025 ?                                     ← la source n'est plus devinée à chaque tour
-  Le chiffre d'affaires 2025 s'élève à 36 268 022,89 €.
+  Le chiffre d'affaires total pour l'année 2025 s'élève à 10 186 669,50 €.
 ```
+
+*(Transcription réelle, mesurée contre le serveur ; les deux montants coïncident
+avec le `SUM(revenue)` lu directement dans la base.)*
 
 Ce qu'il faut savoir de ce mécanisme :
 
