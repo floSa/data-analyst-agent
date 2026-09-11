@@ -251,6 +251,38 @@ Rien de ce qui suit n'a été mesuré ; ce sont les trous connus.
    compter dans toute procédure de redémarrage — Ollama, lui, sert dès que le
    conteneur est là.
 
+## 5 bis. La bascule se fait dans `llm-service`, et elle sert DEUX applications
+
+Contrainte d'organisation, pas de technique — et elle prime sur tout le reste de
+ce document.
+
+**Le moteur n'appartient pas à cette application.** Il vit dans le repo compagnon
+[`llm-service`](https://github.com/floSa/llm-service), cloné à côté du projet :
+un serveur central, un modèle chargé une seule fois, et le port hôte 11434. La
+bascule vers vLLM doit atterrir **là**, jamais dans `data-analyst-agent`.
+
+**Deux projets s'y branchent aujourd'hui**, et ils ne parlent pas la même API :
+
+| Projet | Pointe sur | Ce que la bascule lui coûte |
+|---|---|---|
+| `data-analyst-agent` | `http://localhost:11434/**v1**` — compatible OpenAI | vLLM sert exactement cette API : **une URL à changer** (`DAA_LLM_BASE_URL`, l'ancienne `DAA_OLLAMA_BASE_URL` restant acceptée avec un avertissement) |
+| Projet RAG (`rag-agent-api`) | `http://ollama-central:11434` — **sans `/v1`**, donc l'API native Ollama | vLLM **ne sert pas** cette API : ce projet devra changer de client, pas seulement d'URL |
+
+Même modèle des deux côtés — `gemma4:e4b` — il n'y a rien à arbitrer là-dessus.
+
+Deux conséquences à poser avant de lancer la migration, pas pendant :
+
+- **Les embeddings.** `nomic-embed-text` est servi par le même Ollama, et le
+  projet RAG en dépend. Un serveur vLLM sert **un** modèle, fixé au lancement
+  (§5.2) : soit on garde Ollama à côté pour l'embedding, soit on lance une
+  seconde instance vLLM. Dans les deux cas c'est un budget de VRAM, et il
+  s'ajoute à celui du modèle de génération.
+- **Le gain visé est le parallélisme, pas la vitesse brute.** `ollama-central`
+  tourne avec `OLLAMA_NUM_PARALLEL=1` : les deux applications font la queue
+  l'une derrière l'autre, et c'est ce qui explique les temps de réponse observés
+  quand les deux tournent. Une instance vLLM unique les sert en concurrence
+  (§5.5). C'est la raison de basculer.
+
 ## 6. Reproduire le banc
 
 ```bash
