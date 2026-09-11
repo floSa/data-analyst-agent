@@ -1,0 +1,17 @@
+# Catalogue de mesure — NE PAS UTILISER EN PRODUCTION.
+#
+# Deux sources qui partagent une colonne `sex`, pour mesurer ce que fait l'agent
+# quand une question est ambiguë et qu'aucune source n'est liée au fil.
+# Seul l'ORDRE de déclaration distingue ce fichier de `employes-en-premier.yaml` :
+# les données, elles, sont identiques. Voir README.md.
+sources:
+  - type: file
+    name: titanic
+    description: >-
+      Passagers du Titanic (fichier CSV) — survie, sexe, âge, tarif, classe.
+    path: ../../../sources/titanic.csv
+  - type: file
+    name: employes
+    description: >-
+      Effectif d'une entreprise (fichier CSV) — sexe, âge, salaire, département.
+    path: employes.csv
