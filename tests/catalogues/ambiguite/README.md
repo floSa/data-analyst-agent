@@ -50,6 +50,12 @@ uv run uvicorn data_analyst_agent.api.app:app --host 127.0.0.1 --port 8079
 | `titanic` en premier | **5/5** répond « 35,24 % » sans rien demander |
 | `employes` en premier | **5/5** énumère les deux sources, ne répond jamais |
 
+Rejouée par `scripts/mesure_ambiguite_de_source.py`, qui mène chaque essai dans
+une conversation neuve et lit le verdict dans le **chiffre** de la réponse — pas
+dans le nom qu'elle cite. Un modèle qui écrit « d'après titanic » sans avoir rien
+interrogé ne prouve rien ; un 35,24 ne peut venir que d'un comptage sur 891
+lignes.
+
 Même question, mêmes données, seul l'ordre du YAML change : le comportement
 bascule entièrement. **Aucun des deux n'est un choix.** Le second tombe du bon
 côté par accident — le planificateur a laissé `plan.source` vide, et
