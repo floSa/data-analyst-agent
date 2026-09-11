@@ -27,6 +27,7 @@ il ne doit pas passer pour frais.
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import closing
 
 from pydantic import BaseModel, Field
@@ -119,12 +120,34 @@ def _colonne_de_date(schema: SchemaInfo) -> tuple[str, str] | None:
     return None
 
 
+# Un horodatage à minuit pile, tel que le rendent DuckDB (une colonne de dates
+# d'un classeur Excel) et Postgres pour un TIMESTAMP sans heure renseignée.
+_MINUIT = re.compile(r"^(\d{4}-\d{2}-\d{2})[T ]00:00:00(\.0+)?$")
+
+
+def _sans_heure_inutile(valeur: str) -> str:
+    """« 2024-01-01T00:00:00 » -> « 2024-01-01 ».
+
+    Cosmétique, et assumé comme tel : la période part dans une phrase que
+    quelqu'un lit pour choisir une source. Une heure à minuit pile n'est pas
+    une information, c'est le type de la colonne qui transparaît. Une heure
+    RÉELLE, elle, est gardée — elle dit quelque chose des données.
+    """
+    trouve = _MINUIT.match(valeur)
+    return trouve.group(1) if trouve else valeur
+
+
 def _periode(adaptateur: DatabaseAdapter, table: str, colonne: str) -> Periode | None:
     requete = f'SELECT min("{colonne}") AS d, max("{colonne}") AS f FROM "{table}"'
     lignes = adaptateur.run(requete, max_rows=1).rows
     if not lignes or lignes[0][0] is None or lignes[0][1] is None:
         return None  # colonne entièrement vide : il n'y a pas de période
-    return Periode(table=table, colonne=colonne, debut=str(lignes[0][0]), fin=str(lignes[0][1]))
+    return Periode(
+        table=table,
+        colonne=colonne,
+        debut=_sans_heure_inutile(str(lignes[0][0])),
+        fin=_sans_heure_inutile(str(lignes[0][1])),
+    )
 
 
 def relever(source: Source) -> FaitsDeSource:

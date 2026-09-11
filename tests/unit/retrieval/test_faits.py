@@ -126,3 +126,50 @@ def test_tous_rend_les_sources_dans_l_ordre_du_catalogue(tmp_path: Path):
 def test_des_faits_sans_table_le_disent(tmp_path: Path):
     """Un cas qui n'existe pas sur un CSV mais qu'une base sans table produirait."""
     assert FaitsDeSource(nom="vide").en_clair() == "aucune table"
+
+
+def test_un_classeur_excel_compte_ses_feuilles_comme_des_tables(tmp_path: Path):
+    """Un classeur est une source multi-tables : le relevé doit compter par
+    feuille, pas rendre un total sans structure."""
+    import pandas as pd
+
+    chemin = tmp_path / "classeur.xlsx"
+    with pd.ExcelWriter(chemin) as classeur:
+        pd.DataFrame({"a": [1, 2, 3]}).to_excel(classeur, sheet_name="mesures", index=False)
+        pd.DataFrame({"b": [9]}).to_excel(classeur, sheet_name="postes", index=False)
+
+    faits = relever(FileSource(name="classeur", path=chemin))
+
+    assert faits.tables == 2
+    assert faits.lignes_par_table == {"mesures": 3, "postes": 1}
+
+
+def test_une_date_sans_heure_ne_traine_pas_un_minuit(tmp_path: Path):
+    """Une colonne de dates d'un classeur ressort en horodatage : « minuit pile »
+    n'est pas une information, c'est le type de la colonne qui transparaît."""
+    import pandas as pd
+
+    chemin = tmp_path / "dates.xlsx"
+    pd.DataFrame({"jour": pd.to_datetime(["2024-01-01", "2024-12-28"])}).to_excel(
+        chemin, sheet_name="jours", index=False
+    )
+
+    faits = relever(FileSource(name="dates", path=chemin))
+
+    assert faits.periode.debut == "2024-01-01"
+    assert faits.periode.fin == "2024-12-28"
+
+
+def test_une_heure_reelle_est_gardee(tmp_path: Path):
+    """Le pendant du test précédent : on retire du bruit, pas de l'information.
+
+    L'horodatage garde sa forme ISO, séparateur compris — c'est celle que rend
+    la couche SQL, et la normaliser davantage serait réécrire une donnée.
+    """
+    chemin = tmp_path / "horodates.csv"
+    chemin.write_text("instant\n2024-01-01 08:30:00\n2024-01-01 19:45:00\n", encoding="utf-8")
+
+    faits = relever(FileSource(name="horodates", path=chemin))
+
+    assert faits.periode.debut == "2024-01-01T08:30:00"
+    assert faits.periode.fin == "2024-01-01T19:45:00"

@@ -253,3 +253,48 @@ def test_un_fil_corrompu_reste_supprimable(store: ConversationStore):
 
     assert store.delete(conversation.id) is True
     assert not store.dir_of(conversation.id).exists()
+
+
+def test_lier_la_source_hors_d_un_tour_l_ecrit_dans_le_fil(tmp_path):
+    """Ce que fait l'indicateur de la page quand on change de source au menu.
+
+    Deux choses, et la seconde compte autant que la première : la source est
+    liée, et l'annonce est inscrite dans la transcription. Sans elle, on
+    relirait un fil dont les réponses changent de données sans que rien ne dise
+    pourquoi.
+    """
+    magasin = ConversationStore(tmp_path, PROPRIETAIRE)
+    magasin.create("fil")
+
+    fil = magasin.lier_la_source("fil", "titanic", "Entendu : on travaille sur titanic.")
+
+    assert fil.source_de_travail == "titanic"
+    assert [m.role for m in fil.messages] == ["agent"]
+    assert magasin.load("fil").source_de_travail == "titanic"
+
+
+def test_lier_la_source_a_vide_delie_le_fil(tmp_path):
+    magasin = ConversationStore(tmp_path, PROPRIETAIRE)
+    magasin.create("fil")
+    magasin.lier_la_source("fil", "titanic", "entendu")
+
+    magasin.lier_la_source("fil", "", "plus aucune source")
+
+    assert magasin.load("fil").source_de_travail == ""
+
+
+def test_lier_la_source_d_un_fil_absent_ne_cree_rien(tmp_path):
+    """Comme le reste du magasin : un fil qu'on ne voit pas d'ici n'existe pas,
+    et on n'en fabrique pas un par effet de bord."""
+    magasin = ConversationStore(tmp_path, PROPRIETAIRE)
+
+    assert magasin.lier_la_source("jamais-vu", "titanic", "entendu") is None
+    assert magasin.load("jamais-vu") is None
+
+
+def test_lier_la_source_ne_traverse_pas_les_comptes(tmp_path):
+    """Le cloisonnement est un chemin : le fil d'un autre n'existe pas d'ici."""
+    ConversationStore(tmp_path, PROPRIETAIRE).create("fil-alice")
+
+    assert ConversationStore(tmp_path, "bob").lier_la_source("fil-alice", "titanic", "x") is None
+    assert ConversationStore(tmp_path, PROPRIETAIRE).load("fil-alice").source_de_travail == ""

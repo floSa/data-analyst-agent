@@ -1,0 +1,8 @@
+# Le classeur est ENGENDRÉ par scripts/seed_catalogue_realiste.py, avec un
+# tirage figé : son contenu est déterministe, ses octets ne le sont pas — un
+# .xlsx porte l'horodatage de sa création dans docProps/core.xml, et chaque
+# exécution produirait donc un diff binaire qui ne dit rien.
+#
+# Le contenu, lui, est reproductible : c'est ce dont la mesure a besoin, et les
+# oracles qu'il donne sont consignés dans README.md, qui est versionné.
+absences.xlsx

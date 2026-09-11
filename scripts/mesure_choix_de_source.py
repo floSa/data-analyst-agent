@@ -13,9 +13,13 @@ Ce qui est mesuré, dans UNE conversation et dans l'ordre :
 3. une **vraie question** sur la source choisie, sans la nommer — c'est là que
    se voit le fait que la source est portée par la conversation et non
    redevinée ;
-4. l'utilisateur **nomme l'autre source** : la bascule, et le fait qu'elle soit
+4. une **question ambiguë**, qui pourrait viser une autre source et n'en nomme
+   aucune : le verrou doit tenir. C'est le tour ajouté après la correction du
+   choix de source — le tour 3 prouve que la source liée est reprise, celui-ci
+   qu'elle ne se fait pas déloger ;
+5. l'utilisateur **nomme l'autre source** : la bascule, et le fait qu'elle soit
    annoncée ;
-5. un tour de plus, pour vérifier que la nouvelle source a bien remplacé
+6. un tour de plus, pour vérifier que la nouvelle source a bien remplacé
    l'ancienne.
 
 Le coût est compté, pas estimé : le modèle est enveloppé dans le compteur
@@ -120,17 +124,31 @@ def mener(
     )
 
 
-def parcours(noms: list[str]) -> list[tuple[str, str]]:
-    """Les cinq tours, dans l'ordre : (ce qui est attendu, le message).
+# Une question que PLUSIEURS sources du catalogue pourraient légitimement
+# répondre. Elle sert au tour du verrou : posée sans nommer personne, elle ne
+# doit pas faire bouger la source de travail — c'est exactement le cas où
+# deviner serait le plus tentant, et le plus coûteux.
+QUESTION_AMBIGUE_PAR_DEFAUT = "et combien de femmes ?"
+
+
+def parcours(noms: list[str], question_ambigue: str) -> list[tuple[str, str]]:
+    """Les six tours, dans l'ordre : (ce qui est attendu, le message).
 
     Les deux premiers noms du catalogue sont utilisés tels quels : le parcours
     doit se rejouer sur un autre catalogue sans être réécrit.
+
+    Le quatrième tour est celui du **verrou**, et il a été ajouté après la
+    correction du choix de source : une question qui pourrait viser une autre
+    source, posée sans en nommer aucune. Le tour d'avant prouve que la source
+    liée est reprise ; celui-ci prouve qu'elle ne se fait pas déloger par une
+    question qui ressemble à une autre source.
     """
     premiere, seconde = noms[0], noms[1]
     return [
         ("la proposition des sources", "bonjour, je voudrais regarder des données"),
         (f"la validation de « {premiere} »", premiere),
         ("une vraie question, source NON nommée", "combien de lignes en tout ?"),
+        (f"une question ambiguë : le verrou tient sur « {premiere} »", question_ambigue),
         (f"la bascule vers « {seconde} », annoncée", f"et dans {seconde}, combien de lignes ?"),
         ("la nouvelle source tient, sans être nommée", "et combien de colonnes ?"),
     ]
@@ -160,6 +178,11 @@ def tableau_markdown(tours: list[Tour]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--markdown", type=Path, help="écrit le tableau et le coût ici")
+    parser.add_argument(
+        "--question-ambigue",
+        default=QUESTION_AMBIGUE_PAR_DEFAUT,
+        help="la question du tour du verrou : elle doit pouvoir viser plusieurs sources",
+    )
     args = parser.parse_args()
 
     reglages = get_settings()
@@ -181,8 +204,9 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="daa-mesure-source-") as racine:
         magasin = ConversationStore(Path(racine), "mesure")
         tours = []
-        for numero, (attendu, message) in enumerate(parcours(noms), start=1):
-            print(f"[{numero}/5] {attendu}\n    > {message}", flush=True)
+        etapes = parcours(noms, args.question_ambigue)
+        for numero, (attendu, message) in enumerate(etapes, start=1):
+            print(f"[{numero}/{len(etapes)}] {attendu}\n    > {message}", flush=True)
             tour = mener(orchestrateur, compteur, magasin, numero, attendu, message)
             tours.append(tour)
             print(f"    « {une_ligne(tour.reponse, 220)} »")

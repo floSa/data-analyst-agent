@@ -34,7 +34,17 @@
   /* colonne de chat */
   #colonne { flex: 1; display: flex; flex-direction: column; min-width: 0;
              max-width: 860px; margin: 0 auto; padding: 1rem; }
-  h1 { font-size: 1.2rem; }
+  h1 { font-size: 1.2rem; margin-bottom: .5rem; }
+  /* l'indicateur de source de travail : permanent, au-dessus du fil */
+  #source-de-travail { display: flex; align-items: baseline; gap: .5rem;
+                       flex-wrap: wrap; padding: .5rem .75rem; margin-bottom: .75rem;
+                       border: 1px solid #6b728055; border-radius: .5rem;
+                       background: #6b728011; font-size: .85rem; }
+  #source-de-travail label { opacity: .75; }
+  #choix-de-source { padding: .3rem .4rem; border-radius: .3rem;
+                     border: 1px solid #6b7280; background: transparent;
+                     color: inherit; font-size: .85rem; max-width: 20rem; }
+  #faits-de-source { flex-basis: 100%; opacity: .7; font-size: .8rem; }
   #journal { flex: 1; overflow-y: auto; display: flex; flex-direction: column;
              gap: .75rem; margin-bottom: 1rem; }
   .message { padding: .6rem .9rem; border-radius: .6rem; white-space: pre-wrap;
@@ -78,6 +88,15 @@
 </nav>
 <main id="colonne">
   <h1>data-analyst-agent</h1>
+  <!-- La source de travail, visible en permanence et changeable sans la taper.
+       Elle reste portée par le FIL : ce menu écrit dans la conversation (PUT
+       /conversations/<id>/source), et POST /chat continue de la relire de là.
+       Aucun corps de question ne la transporte. -->
+  <div id="source-de-travail">
+    <label for="choix-de-source">Source de travail</label>
+    <select id="choix-de-source"></select>
+    <span id="faits-de-source"></span>
+  </div>
   <div id="journal"></div>
   <form id="formulaire">
     <input type="text" id="message" autocomplete="off"
@@ -119,8 +138,17 @@ const formulaire = document.getElementById("formulaire");
 const champ = document.getElementById("message");
 const bouton = document.getElementById("envoyer");
 const fils = document.getElementById("fils");
+const choixDeSource = document.getElementById("choix-de-source");
+const faitsDeSource = document.getElementById("faits-de-source");
 // null = conversation neuve : le serveur lui attribuera un id au 1er message.
 let conversationId = null;
+// Le catalogue, tel que /sources le rend : nom, type, description, et les faits
+// LUS dans chaque source (tables, lignes, période). Chargé une fois.
+let sources = [];
+
+// Ce que dit l'indicateur quand rien n'est choisi. Ce n'est pas un manque :
+// c'est l'état normal d'un fil neuf, et il annonce ce que l'agent fera.
+const AUCUNE_SOURCE = "— aucune (je te la proposerai)";
 
 function bulle(classe) {
   const div = document.createElement("div");
@@ -211,6 +239,56 @@ function enHtml(texte) {
 
 function defiler() { journal.scrollTop = journal.scrollHeight; }
 
+// --- l'indicateur de source de travail --------------------------------------
+
+async function chargerLesSources() {
+  const reponse = await appel("/sources");
+  sources = await reponse.json();
+  choixDeSource.textContent = "";
+  const aucune = document.createElement("option");
+  aucune.value = "";
+  aucune.textContent = AUCUNE_SOURCE;
+  choixDeSource.appendChild(aucune);
+  for (const source of sources) {
+    const option = document.createElement("option");
+    option.value = source.name;
+    option.textContent = source.name + " (" + source.type + ")";
+    option.title = source.description + (source.faits ? "\n" + source.faits : "");
+    choixDeSource.appendChild(option);
+  }
+}
+
+// Affiche l'état SANS le renvoyer au serveur : appelée après chaque réponse et
+// à l'ouverture d'un fil, c'est-à-dire à chaque fois que la source a pu changer
+// du fait de l'agent (bascule annoncée) et non de ce menu.
+function afficherLaSource(nom) {
+  choixDeSource.value = nom || "";
+  const source = sources.find(s => s.name === nom);
+  faitsDeSource.textContent = source ? (source.faits || source.description) : "";
+}
+
+choixDeSource.addEventListener("change", async () => {
+  const voulue = choixDeSource.value;
+  // Le choix doit atterrir dans un fil, puisque c'est le fil qui porte la
+  // source : s'il n'y en a pas encore, on en ouvre un.
+  if (conversationId === null) {
+    const ouverture = await appel("/conversations", {method: "POST"});
+    if (!ouverture.ok) { return; }
+    conversationId = (await ouverture.json()).id;
+  }
+  const reponse = await appel("/conversations/" + conversationId + "/source", {
+    method: "PUT",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({source: voulue}),
+  });
+  if (!reponse.ok) { afficherLaSource(""); return; }
+  const corps = await reponse.json();
+  afficherLaSource(corps.source_de_travail);
+  rendreReponse(bulle("agent"), corps.message, [], null);
+  defiler();
+  rafraichirFils();
+});
+
 async function rafraichirFils() {
   const reponse = await appel("/conversations");
   const liste = await reponse.json();
@@ -266,6 +344,7 @@ async function ouvrir(id) {
   if (!reponse.ok) { rafraichirFils(); return; }
   const conversation = await reponse.json();
   conversationId = conversation.id;
+  afficherLaSource(conversation.source_de_travail);
   journal.textContent = "";
   for (const message of conversation.messages) {
     if (message.role === "user") bulle("utilisateur").textContent = message.content;
@@ -278,6 +357,7 @@ async function ouvrir(id) {
 
 function nouvelleConversation() {
   conversationId = null;
+  afficherLaSource("");
   journal.textContent = "";
   rafraichirFils();
   champ.focus();
@@ -310,6 +390,10 @@ formulaire.addEventListener("submit", async (event) => {
     const corps = await reponse.json();
     const nouveau = corps.conversation_id && corps.conversation_id !== conversationId;
     conversationId = corps.conversation_id || conversationId;
+    // L'agent lie une source au premier tour qui en demande une, et bascule
+    // quand le message en nomme une autre : l'indicateur doit le montrer sans
+    // qu'on ait à rouvrir le fil.
+    afficherLaSource(corps.source_de_travail);
     rendreReponse(attente, corps.answer, corps.artifacts, corps.error);
     // 1er message : le fil vient d'être créé et titré côté serveur.
     if (nouveau) rafraichirFils();
@@ -324,7 +408,10 @@ formulaire.addEventListener("submit", async (event) => {
   }
 });
 
-rafraichirFils();
+// Le catalogue d'abord, la barre latérale ensuite — mais un catalogue
+// illisible ne doit pas emporter la page avec lui : sans ce `catch`, une source
+// injoignable au démarrage laisserait un chat sans aucune conversation listée.
+chargerLesSources().catch(() => {}).finally(rafraichirFils);
 </script>
 </body>
 </html>

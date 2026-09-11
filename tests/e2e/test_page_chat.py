@@ -26,7 +26,7 @@ from data_analyst_agent.api.app import create_app
 from data_analyst_agent.auth.accounts import AccountStore
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.conversations import ConversationStore
-from data_analyst_agent.orchestrator.graph import ChatAnswer
+from data_analyst_agent.orchestrator.graph import ChatAnswer, SourceDuCatalogue
 from data_analyst_agent.sandbox.client import MimeOutput
 
 # 1x1 PNG transparent
@@ -46,13 +46,53 @@ HACHEUR_RAPIDE = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
 
 
 class FakeOrchestrator:
+    """L'orchestrateur doublé : aucun LLM, aucun Docker, aucune source ouverte.
+
+    Il porte tout de même un catalogue — deux sources avec leurs faits « lus » —
+    parce que la page en a besoin pour peupler son indicateur de source de
+    travail, et que ce que l'indicateur affiche est justement ce qu'on veut
+    voir dans un navigateur.
+    """
+
+    SOURCES = (
+        SourceDuCatalogue(
+            name="titanic",
+            type="postgres",
+            description="Passagers du Titanic.",
+            faits="2 table(s), 894 ligne(s) (passengers : 891, classes : 3)",
+        ),
+        SourceDuCatalogue(
+            name="iris",
+            type="file",
+            description="Mesures florales.",
+            faits="1 table(s), 150 ligne(s) (iris : 150)",
+        ),
+    )
+
     def ask(
-        self, question, source=None, pending=None, conversation_id=None, workspace_root=None
+        self,
+        question,
+        source=None,
+        pending=None,
+        conversation_id=None,
+        workspace_root=None,
+        source_de_travail=None,
     ) -> ChatAnswer:
         return ChatAnswer(
             answer="Il y a 891 passagers.",
             artifacts=[MimeOutput(mime="application/json", data=TABLE_JSON)],
+            source_de_travail=source_de_travail,
         )
+
+    def inventaire_des_sources(self) -> list[SourceDuCatalogue]:
+        return list(self.SOURCES)
+
+    def source_declaree(self, nom: str) -> bool:
+        return any(s.name == nom for s in self.SOURCES)
+
+    def accuser_la_source(self, nom: str, precedente: str = "") -> str:
+        quittee = f" (on travaillait sur `{precedente}`)" if precedente else ""
+        return f"Entendu : on travaille sur **{nom}**{quittee}."
 
 
 def _port_libre() -> int:
@@ -309,3 +349,58 @@ def test_connexion_puis_deconnexion(page, url_nue: str):
     page.wait_for_selector("#connexion")
     page.goto(url_nue)
     page.wait_for_selector("#connexion")  # la session est bien fermée côté serveur
+
+
+# --- l'indicateur de source de travail ----------------------------------------
+
+
+def test_l_indicateur_liste_les_sources_et_ce_qu_on_y_a_lu(page, app_url: str):
+    """L'indicateur est permanent, et son menu porte le catalogue réel.
+
+    Pas seulement des noms : le volume lu dans chaque source est là aussi, en
+    infobulle, parce que c'est sur ce texte qu'on choisit.
+    """
+    connexion(page, app_url)
+    page.wait_for_selector("#choix-de-source option[value='titanic']", state="attached")
+
+    assert page.locator("#choix-de-source option").count() == 3  # « aucune » + deux sources
+    assert "aucune" in page.locator("#choix-de-source").inner_text()
+    titre = page.get_attribute("#choix-de-source option[value='titanic']", "title")
+    assert "891" in titre
+
+
+def test_changer_de_source_dans_le_menu_lie_le_fil_et_l_inscrit_dedans(page, app_url: str):
+    """« Un moyen d'en changer sans le taper », et la trace que ça laisse.
+
+    Le changement est écrit dans la transcription : relire un fil dont les
+    réponses changent de données sans que rien ne le dise serait exactement ce
+    que la bascule annoncée évite.
+    """
+    connexion(page, app_url)
+    page.wait_for_selector("#choix-de-source option[value='iris']", state="attached")
+    page.click("#nouvelle")
+
+    page.select_option("#choix-de-source", "iris")
+
+    page.wait_for_selector(".message.agent")
+    assert "on travaille sur" in page.inner_text("#journal")
+    assert "iris" in page.inner_text("#journal")
+    assert page.input_value("#choix-de-source") == "iris"
+    assert "150" in page.inner_text("#faits-de-source")
+
+
+def test_l_indicateur_suit_le_fil_qu_on_rouvre(page, app_url: str):
+    """La source vient du FIL : rouvrir une conversation la réaffiche, et une
+    conversation neuve repart sur « aucune »."""
+    connexion(page, app_url)
+    page.wait_for_selector("#choix-de-source option[value='iris']", state="attached")
+    page.click("#nouvelle")
+    page.select_option("#choix-de-source", "titanic")
+    page.wait_for_selector(".message.agent")
+
+    page.click("#nouvelle")
+    assert page.input_value("#choix-de-source") == ""
+
+    page.click(".fil-titre")
+    page.wait_for_selector(".message.agent")
+    assert page.input_value("#choix-de-source") == "titanic"

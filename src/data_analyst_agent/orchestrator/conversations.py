@@ -295,6 +295,37 @@ class ConversationStore:
             conversation.updated_at = _now()
             return self._save(conversation)
 
+    def lier_la_source(
+        self, conversation_id: str, source: str, annonce: str
+    ) -> Conversation | None:
+        """Lie une source au fil hors d'un tour, et inscrit l'annonce dedans.
+
+        C'est ce que fait l'indicateur de la page de chat quand on change de
+        source dans le menu. La source de travail reste **portée par le fil** :
+        elle est écrite ici, relue au tour suivant comme toujours, et aucun
+        corps de ``POST /chat`` ne la transporte.
+
+        L'annonce est ajoutée à la transcription comme un message de l'agent,
+        et ce n'est pas de la décoration : sans elle, on relirait un fil où les
+        réponses changent de données au milieu sans que rien ne dise pourquoi.
+        C'est la même règle que pour une bascule au fil d'une question — ce qui
+        est dangereux n'est pas de changer de source, c'est de changer sans le
+        dire.
+
+        ``source`` vide DÉLIE le fil : l'agent reproposera son inventaire à la
+        prochaine question qui demande une source. ``None`` si le fil n'existe
+        pas (ou appartient à quelqu'un d'autre, ce qui revient au même vu
+        d'ici).
+        """
+        with conversation_lock(self.dir_of(conversation_id)):
+            conversation = self.load(conversation_id)
+            if conversation is None:
+                return None
+            conversation.source_de_travail = source
+            conversation.messages.append(Message(role="agent", content=annonce))
+            conversation.updated_at = _now()
+            return self._save(conversation)
+
     def delete(self, conversation_id: str) -> bool:
         """Supprime le fil ET sa mémoire (tableaux intermédiaires compris).
 

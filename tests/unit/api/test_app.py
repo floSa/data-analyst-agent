@@ -10,7 +10,7 @@ from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog
 from data_analyst_agent.api.app import create_app
 from data_analyst_agent.config import Settings
-from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator
+from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator, SourceDuCatalogue
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.sandbox.client import MimeOutput
 from helpers.auth import client_connecte, creer_compte, reglages_de_test
@@ -39,6 +39,19 @@ class FakeOrchestrator:
         # qui prouve qu'elle est repassée à chaque tour, comme le `pending`.
         self.sources_de_travail: list[object] = []
 
+    # Le catalogue que l'indicateur de la page affiche. Deux sources, leurs
+    # faits déjà « lus » : le double n'ouvre aucune source, il rend ce que
+    # l'orchestrateur réel rendrait après relevé.
+    SOURCES = (
+        SourceDuCatalogue(
+            name="titanic",
+            type="postgres",
+            description="Passagers du Titanic.",
+            faits="2 table(s), 894 ligne(s) (passengers : 891, classes : 3)",
+        ),
+        SourceDuCatalogue(name="iris", type="file", description="Mesures florales."),
+    )
+
     def ask(
         self,
         question: str,
@@ -52,6 +65,16 @@ class FakeOrchestrator:
         self.workspace_roots.append(workspace_root)
         self.sources_de_travail.append(source_de_travail)
         return self.answer
+
+    def inventaire_des_sources(self) -> list[SourceDuCatalogue]:
+        return list(self.SOURCES)
+
+    def source_declaree(self, nom: str) -> bool:
+        return any(s.name == nom for s in self.SOURCES)
+
+    def accuser_la_source(self, nom: str, precedente: str = "") -> str:
+        quittee = f" (on travaillait sur `{precedente}`)" if precedente else ""
+        return f"Entendu : on travaille sur **{nom}**{quittee}."
 
 
 @pytest.fixture
@@ -437,3 +460,116 @@ def test_id_de_conversation_choisi_par_le_client_est_honore(client: TestClient):
     liste = client.get("/conversations").json()
     assert [c["id"] for c in liste] == ["mon-fil"]  # un seul fil, pas un par tour
     assert liste[0]["message_count"] == 4
+
+
+# --- l'indicateur de source de travail, côté API ------------------------------
+
+
+def test_l_inventaire_des_sources_porte_ce_qu_on_y_a_lu(client: TestClient):
+    """Ce que l'indicateur affiche : le YAML, plus les faits relevés dans la source.
+
+    Les mêmes faits que ceux de l'inventaire proposé en conversation — deux
+    inventaires qui divergeraient seraient pires qu'un seul.
+    """
+    sources = client.get("/sources").json()
+
+    assert [s["name"] for s in sources] == ["titanic", "iris"]
+    assert "891" in sources[0]["faits"]
+    assert sources[0]["type"] == "postgres"
+
+
+def test_ouvrir_un_fil_vide_permet_de_choisir_avant_d_ecrire(client: TestClient):
+    """Le choix doit atterrir dans un fil, puisque c'est le fil qui porte la
+    source : il faut donc qu'un fil puisse exister avant le premier message."""
+    fil = client.post("/conversations")
+
+    assert fil.status_code == 201
+    assert fil.json()["messages"] == []
+    assert fil.json()["source_de_travail"] == ""
+
+
+def test_choisir_la_source_dans_le_menu_la_lie_au_fil_et_l_inscrit_dedans(client: TestClient):
+    """« Un moyen d'en changer sans le taper » — et la trace que ça laisse.
+
+    Le changement est écrit dans la transcription comme un message de l'agent :
+    relire un fil dont les réponses changent de données sans que rien ne le
+    dise serait exactement ce que la bascule annoncée évite.
+    """
+    identifiant = client.post("/conversations").json()["id"]
+
+    reponse = client.put(f"/conversations/{identifiant}/source", json={"source": "titanic"})
+
+    assert reponse.status_code == 200
+    assert reponse.json()["source_de_travail"] == "titanic"
+    fil = client.get(f"/conversations/{identifiant}").json()
+    assert fil["source_de_travail"] == "titanic"
+    assert [m["role"] for m in fil["messages"]] == ["agent"]
+    assert "titanic" in fil["messages"][0]["content"]
+
+
+def test_la_source_choisie_dans_le_menu_est_repassee_au_tour_suivant(
+    fake_orchestrator: FakeOrchestrator, settings: Settings, mot_de_passe: str
+):
+    """La boucle complète : le menu écrit dans le fil, le fil alimente le tour.
+
+    C'est ce qui fait que la source vient TOUJOURS du fil : ``POST /chat`` la
+    relit du disque, exactement comme quand l'utilisateur l'avait tapée.
+    """
+    client = client_connecte(
+        create_app(orchestrator_factory=lambda: fake_orchestrator, settings=settings),
+        settings,
+        mot_de_passe,
+    )
+    identifiant = client.post("/conversations").json()["id"]
+    client.put(f"/conversations/{identifiant}/source", json={"source": "iris"})
+
+    client.post("/chat", json={"message": "combien de lignes ?", "conversation_id": identifiant})
+
+    assert fake_orchestrator.sources_de_travail[-1] == "iris"
+
+
+def test_la_bascule_par_le_menu_dit_la_source_quittee(client: TestClient):
+    identifiant = client.post("/conversations").json()["id"]
+    client.put(f"/conversations/{identifiant}/source", json={"source": "titanic"})
+
+    reponse = client.put(f"/conversations/{identifiant}/source", json={"source": "iris"})
+
+    assert "on travaillait sur `titanic`" in reponse.json()["message"]
+
+
+def test_delier_la_source_rend_la_main_a_la_proposition(client: TestClient):
+    """Repartir de « aucune » est un état légitime, pas un accident : l'agent
+    reproposera son inventaire à la prochaine question qui en demande une."""
+    identifiant = client.post("/conversations").json()["id"]
+    client.put(f"/conversations/{identifiant}/source", json={"source": "titanic"})
+
+    reponse = client.put(f"/conversations/{identifiant}/source", json={"source": ""})
+
+    assert reponse.json()["source_de_travail"] == ""
+    assert "inventaire" in reponse.json()["message"]
+    assert client.get(f"/conversations/{identifiant}").json()["source_de_travail"] == ""
+
+
+def test_une_source_hors_catalogue_est_refusee(client: TestClient):
+    """Seule une source DÉCLARÉE se lie. Un tableau intermédiaire de conversation
+    est interrogeable, ce n'est pas une source de données : le lier
+    remplacerait la source de travail par un résultat de requête."""
+    identifiant = client.post("/conversations").json()["id"]
+
+    reponse = client.put(f"/conversations/{identifiant}/source", json={"source": "resultat_1"})
+
+    assert reponse.status_code == 404
+    assert client.get(f"/conversations/{identifiant}").json()["source_de_travail"] == ""
+
+
+def test_choisir_la_source_d_un_fil_inconnu_repond_404(client: TestClient):
+    reponse = client.put("/conversations/jamais-vu/source", json={"source": "titanic"})
+
+    assert reponse.status_code == 404
+
+
+def test_la_page_porte_l_indicateur_de_source(client: TestClient):
+    page = client.get("/").text
+
+    assert "Source de travail" in page
+    assert "/sources" in page  # la page sait peupler son menu

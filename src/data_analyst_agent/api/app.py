@@ -52,7 +52,7 @@ from data_analyst_agent.orchestrator.conversations import (
     ConversationStore,
     ConversationSummary,
 )
-from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator
+from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator, SourceDuCatalogue
 
 # Les seules routes atteignables sans session. `/health` parce qu'une sonde n'en
 # a pas ; `/login` parce qu'il faut bien une porte pour en obtenir une.
@@ -71,6 +71,7 @@ EN_TETE_CSRF = "X-CSRF-Token"
 ECHEC_CONNEXION = "Identifiants invalides."
 ECHEC_VERROUILLE = "Trop de tentatives. Réessayez dans quelques minutes."
 ECHEC_FORMULAIRE = "Formulaire expiré. Recommencez."
+SOURCE_INCONNUE = "source inconnue"
 CORPS_TROP_GROS = "corps de requête trop volumineux"
 MESSAGE_TROP_LONG = "message trop long"
 TROP_DE_REQUETES = "trop de questions en peu de temps : réessayez dans un instant"
@@ -89,6 +90,29 @@ class ChatRequest(BaseModel):
     # de la session, jamais du corps de la requête. Un champ inconnu envoyé par
     # un client est ignoré par pydantic, et le magasin réécrit de toute façon
     # l'`owner` de ce qu'il persiste.
+
+
+class SourceDeTravailRequest(BaseModel):
+    """Le choix fait dans l'indicateur de la page, sans passer par une question.
+
+    C'est un changement porté par le FIL, pas par une question : la route
+    l'écrit dans la transcription, et ``POST /chat`` continue de le relire de
+    là comme il l'a toujours fait. La source ne transite jamais par le corps
+    d'une question — ``ChatRequest`` n'a pas de champ pour ça, et n'en aura pas.
+
+    Une chaîne vide délie le fil : l'agent reproposera son inventaire à la
+    prochaine question qui demande une source.
+    """
+
+    source: str = ""
+
+
+class SourceDeTravailResponse(BaseModel):
+    """Ce que la page réaffiche après le changement : l'état, et ce qu'on en dit."""
+
+    conversation_id: str
+    source_de_travail: str
+    message: str
 
 
 def create_app(
@@ -368,9 +392,69 @@ def create_app(
         answer.conversation_id = conversation.id
         return answer
 
+    @app.get("/sources", response_model=list[SourceDuCatalogue])
+    def lister_sources() -> list[SourceDuCatalogue]:
+        """Le catalogue déclaré, augmenté de ce qu'on LIT dans chaque source.
+
+        Ce que l'indicateur de la page affiche, et ce sur quoi on choisit dans
+        son menu. Les faits — tables, lignes, période — sont ceux du relevé mis
+        en cache, donc exactement ceux de l'inventaire proposé en conversation :
+        deux inventaires qui divergeraient seraient pires qu'un seul.
+
+        Aucune donnée de conversation ici, donc rien à cloisonner : le
+        catalogue est le même pour tout le monde, et la session est exigée par
+        le middleware comme sur toute autre route.
+        """
+        return get_orchestrator().inventaire_des_sources()
+
     @app.get("/conversations", response_model=list[ConversationSummary])
     def lister_conversations(utilisateur: Utilisateur) -> list[ConversationSummary]:
         return store(utilisateur).list()
+
+    @app.post("/conversations", response_model=Conversation, status_code=201)
+    def ouvrir_un_fil(utilisateur: Utilisateur) -> Conversation:
+        """Ouvre un fil vide, sans message.
+
+        Existe pour une raison précise : choisir une source dans le menu AVANT
+        d'avoir écrit quoi que ce soit. Le choix doit atterrir dans un fil,
+        puisque c'est le fil qui porte la source — il faut donc qu'un fil
+        existe. Il sera titré par son premier message, comme les autres.
+        """
+        return store(utilisateur).create()
+
+    @app.put("/conversations/{conversation_id}/source", response_model=SourceDeTravailResponse)
+    def choisir_la_source(
+        conversation_id: str, requete: SourceDeTravailRequest, utilisateur: Utilisateur
+    ) -> SourceDeTravailResponse:
+        """Change la source de travail du fil, sans avoir à la taper.
+
+        Seule une source DÉCLARÉE est acceptable : un tableau intermédiaire de
+        conversation est interrogeable, ce n'est pas une source de données, et
+        le lier remplacerait la source de travail par un résultat de requête.
+
+        Le changement est inscrit dans la transcription comme un message de
+        l'agent : relire un fil dont les réponses changent de données sans que
+        rien ne le dise serait exactement ce que la bascule annoncée évite.
+        """
+        orchestrateur = get_orchestrator()
+        if requete.source and not orchestrateur.source_declaree(requete.source):
+            raise HTTPException(status_code=404, detail=SOURCE_INCONNUE)
+        magasin = store(utilisateur)
+        fil = magasin.load(conversation_id)
+        if fil is None:
+            raise HTTPException(status_code=404, detail="conversation inconnue")
+        annonce = (
+            orchestrateur.accuser_la_source(requete.source, fil.source_de_travail)
+            if requete.source
+            else "Plus aucune source de travail : je te proposerai mon inventaire "
+            "à la prochaine question qui en demande une."
+        )
+        magasin.lier_la_source(conversation_id, requete.source, annonce)
+        return SourceDeTravailResponse(
+            conversation_id=conversation_id,
+            source_de_travail=requete.source,
+            message=annonce,
+        )
 
     @app.get("/conversations/{conversation_id}", response_model=Conversation)
     def ouvrir_conversation(conversation_id: str, utilisateur: Utilisateur) -> Conversation:

@@ -1,0 +1,35 @@
+# Catalogue de mesure — NE PAS UTILISER EN PRODUCTION.
+#
+# Quatre sources de trois natures, avec des colonnes qui SE RECOUPENT : c'est ce
+# recoupement qui rend une question ordinaire réellement ambiguë. Voir README.md
+# pour les oracles, et `scripts/seed_catalogue_realiste.py` pour les données.
+#
+# `sexe`/`sex` vit dans trois sources ; `departement` dans trois aussi ; une
+# colonne de date dans trois sur quatre, jamais sous le même nom.
+sources:
+  - type: postgres
+    name: ventes
+    description: >-
+      Commandes et clients d'une boutique (Postgres, deux tables jointes par
+      client_id) — date de commande, montant, statut, ville, sexe du client.
+    dsn: postgresql+pg8000://${DAA_PG_USER}:${DAA_PG_PASSWORD}@${DAA_PG_HOST}:${DAA_PG_PORT}/daa_ventes
+
+  - type: postgres
+    name: rh
+    description: >-
+      Salariés et services d'une entreprise (Postgres, deux tables jointes par
+      service_id) — sexe, âge, salaire, département, date d'embauche.
+    dsn: postgresql+pg8000://${DAA_PG_USER}:${DAA_PG_PASSWORD}@${DAA_PG_HOST}:${DAA_PG_PORT}/daa_rh
+
+  - type: file
+    name: employes
+    description: >-
+      Effectif d'une entreprise (fichier CSV) — sexe, âge, salaire, département.
+    path: ../ambiguite/employes.csv
+
+  - type: file
+    name: absences
+    description: >-
+      Absences et postes ouverts (classeur Excel, deux feuilles) — sexe,
+      département, date de début, durée, motif.
+    path: absences.xlsx
