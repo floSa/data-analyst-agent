@@ -559,10 +559,49 @@ défaut.
 **La désignation est lue dans le TEXTE de l'utilisateur** (`introspection.source_nommee`),
 jamais dans `plan.source`. C'est la propriété de sûreté du mécanisme : le
 planificateur choisit une source à chaque tour, souvent au hasard des descriptions, et
-sa supposition ne doit pas faire basculer le travail de quelqu'un. Une source
+sa supposition ne doit pas faire basculer le travail de quelqu'un.
+
+**Et cette supposition est maintenant EFFACÉE.** `_regle_source_de_la_conversation`
+avait trois branches — source nommée, source liée au fil, source unique au catalogue —
+et aucun cas par défaut : quand aucune ne mordait, elle sortait en laissant la
+devinette du planificateur en place, et `_regle_choisir_la_source` se taisait parce
+qu'elle voyait `plan.source` remplie. La proposition ne se déclenchait donc que
+lorsque le modèle avait *par hasard* laissé le champ vide.
+
+La quatrième branche efface `plan.source` quand rien ne désigne de source — et
+seulement si ce nom est une source **déclarée**, pour qu'un tableau intermédiaire du
+fil y survive : ce n'est pas un choix entre sources ambiguës, c'est un résultat que la
+conversation vient de produire.
+
+Mesuré : deux sources partageant une colonne `sex`, une question ambiguë, aucune
+source liée. Avant, le comportement dépendait entièrement de l'**ordre de déclaration
+du YAML** — titanic en premier, l'agent répondait 35,24 % cinq fois sur cinq sans rien
+demander ; employes en premier, il énumérait cinq fois sur cinq. Après, il propose et
+attend dans les deux ordres. Le catalogue de mesure est versionné
+(`tests/catalogues/ambiguite/`), avec ses oracles et ses relevés. Une source
 **imposée par l'appelant** (`ask(source=…)`, champ `source` de `POST /chat`) ne lie
 rien non plus : c'est un paramètre d'API pour un tour. Un **tableau intermédiaire** du
 fil ne lie rien : il est interrogeable, ce n'est pas une source de données.
+
+### Ce qu'on LIT dans une source, et l'indicateur permanent
+
+Le catalogue YAML ne porte qu'une description écrite à la main. Pour choisir entre
+plusieurs sources il faut savoir laquelle pèse trois cents lignes et laquelle couvre
+2024 : `agents/retrieval/faits.py` **lit** chaque source — nombre de tables, de lignes,
+et la période de sa première colonne de date s'il y en a une — et `RelevesDuCatalogue`
+garde le relevé pour la session.
+
+- Le relevé est fait au **premier inventaire**, pas à l'ouverture du serveur : ouvrir
+  toutes les sources au démarrage ferait payer le lancement à qui ne pose aucune
+  question d'inventaire, et le ferait dépendre de la disponibilité de chaque base.
+- Une source injoignable **se voit** dans la liste (`lu = False`) au lieu d'en
+  disparaître : l'inventaire dégrade cette ligne, il ne refuse pas le catalogue.
+- `GET /sources` rend ce catalogue augmenté, et la page de chat en fait un
+  **indicateur permanent** au-dessus du fil, avec un menu pour changer de source sans
+  la taper. Le changement passe par `PUT /conversations/{id}/source` et s'inscrit dans
+  la transcription comme un message de l'agent — relire un fil dont les réponses
+  changent de données sans que rien ne le dise serait exactement ce que la bascule
+  annoncée évite. Seule une source **déclarée** y est acceptée.
 
 **Compatibilité, sans migration.** Une transcription écrite avant ce champ le reçoit à
 sa valeur par défaut — aucune source liée — et le fil continue de fonctionner comme

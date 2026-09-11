@@ -187,7 +187,10 @@ n'y écrit rien : cela ouvre un fil neuf et vide chez soi.
 | `GET` | `/me` | oui | Le compte de la session en cours (`{"login": …}`) |
 | `POST` | `/chat` | oui | Question en langage naturel → réponse + artefacts + trace (contrat `ChatAnswer`) |
 | `GET` | `/` | oui | Page de chat (rendu des PNG base64 et des tables JSON, zéro asset externe) |
+| `GET` | `/sources` | oui | Le catalogue déclaré, augmenté de ce qu'on **lit** dans chaque source (tables, lignes, période) — alimente le menu de la page de chat |
 | `GET` | `/conversations` | oui | **Ses** conversations, de la plus récente à la plus ancienne |
+| `POST` | `/conversations` | oui | Ouvre un fil vide, pour choisir sa source avant de poser la première question |
+| `PUT` | `/conversations/{id}/source` | oui | Fixe la source de travail du fil sans avoir à la taper ; seule une source **déclarée** est acceptée |
 | `GET` | `/conversations/{id}` | oui | Le fil complet (messages + artefacts) pour le reprendre ; `404` s'il est à quelqu'un d'autre |
 | `POST` | `/conversations/{id}/duplicate` | oui | Duplique une de ses conversations |
 | `DELETE` | `/conversations/{id}` | oui | Supprime une de ses conversations et sa mémoire |

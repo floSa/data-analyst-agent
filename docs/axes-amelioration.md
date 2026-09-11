@@ -193,6 +193,36 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 ## Performance
 
+### Le relevé d'une source n'est borné ni en temps, ni dans la durée
+
+- **Où** : [`agents/retrieval/faits.py`](../src/data_analyst_agent/agents/retrieval/faits.py),
+  `RelevesDuCatalogue`, appelé au premier inventaire de la session.
+- **Constat** : décrire une source, c'est un `count(*)` par table plus un `min`/`max`
+  sur sa colonne de date. Aucun délai maximal, aucune limite de volume.
+- **Problème** : la plus grosse source mesurée fait 620 lignes. Sur la base Maxizoo
+  — 1,66 M de lignes, dix tables — le **premier** inventaire de la session paie tous
+  ces comptages d'un coup, et l'utilisateur attend sans savoir pourquoi.
+- **Second défaut, distinct** : le relevé n'est **jamais rafraîchi** après le premier
+  inventaire. Une source qui grossit ou qui redevient joignable pendant la session
+  continue d'être décrite avec les chiffres du début.
+- **Correction proposée** : un délai maximal par source, qui dégrade la ligne en
+  « injoignable » comme le fait déjà l'échec de connexion ; une approximation pour les
+  grandes tables (`reltuples` sous Postgres, métadonnées DuckDB) plutôt qu'un
+  `count(*)` exact ; et une péremption du relevé.
+- **Statut** : Ouvert. Relevé en mesurant C15, hors de son périmètre.
+
+### La période affichée est celle de la première colonne de date, sans choix
+
+- **Où** : [`agents/retrieval/faits.py`](../src/data_analyst_agent/agents/retrieval/faits.py),
+  `_colonne_de_date`.
+- **Problème** : une source qui porte plusieurs colonnes de date — date de commande,
+  date de livraison — voit sa période lue sur la première rencontrée. La colonne est
+  nommée dans la réponse, donc rien n'est faux ; mais rien ne dit non plus que c'est
+  celle qui compte pour le métier.
+- **Correction proposée** : laisser le dictionnaire de la source désigner sa colonne
+  de date de référence, et retomber sur la première à défaut.
+- **Statut** : Ouvert.
+
 ### `list()` ouvre et valide tous les fils pour n'en rendre qu'un résumé
 
 - **Où** : [`orchestrator/conversations.py:168`](../src/data_analyst_agent/orchestrator/conversations.py)
