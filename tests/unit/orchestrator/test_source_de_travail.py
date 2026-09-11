@@ -182,17 +182,22 @@ def test_un_message_qui_ne_choisit_rien_n_est_pas_piege_dans_la_question(
     """La porte de sortie : sans elle, « laisse tomber, autre chose » se ferait
     reposer la même question indéfiniment.
 
-    Le message repart au planificateur comme une question ordinaire — donc il
-    peut se voir reproposer les sources, mais parce qu'il en a besoin, pas
-    parce qu'une question restait ouverte.
+    Le message repart au planificateur comme une question ordinaire : il est
+    PLANIFIÉ, pas traité comme une réponse à la question du tour d'avant, et
+    rien n'est lié au fil. Comme il ne nomme aucune source et que le fil n'en
+    porte aucune, il se voit reproposer l'inventaire — mais parce qu'il en a
+    besoin, pas parce qu'une question restait ouverte. Le tour suivant, lui,
+    sera un choix s'il en est un.
     """
     reponse = orchestrateur(une_requete("ventes"), deux_sources, registre).ask(
         "laisse tomber, combien de lignes en tout ?",
         source_de_travail="",
     )
 
-    assert "Deux lignes." in reponse.answer
-    assert reponse.plan is not None
+    assert reponse.plan is not None  # planifié, pas court-circuité
+    assert "Entendu : on travaille sur" not in reponse.answer  # pas un accusé de réception
+    assert "Sur laquelle veux-tu travailler" in reponse.answer
+    assert reponse.source_de_travail == ""
 
 
 def test_deux_sources_nommees_dans_le_meme_message_ne_valident_rien(
@@ -448,3 +453,118 @@ def test_une_source_liee_survit_a_un_noeud_qui_echoue(tmp_path: Path, registre: 
 
     assert reponse.error is not None
     assert reponse.source_de_travail == "envolee"
+
+
+# --- ne jamais deviner : l'ordre du YAML ne décide plus de rien ---------------
+
+
+@pytest.mark.parametrize("devinee", ["ventes", "clients"])
+def test_la_supposition_du_planificateur_ne_choisit_pas_une_source(
+    deux_sources: Catalog, registre: Registry, devinee: str
+):
+    """LE défaut mesuré, et sa correction.
+
+    Le planificateur remplit ``source`` presque à chaque tour, au hasard des
+    descriptions du catalogue. Tant que cette supposition suffisait, le
+    comportement dépendait de **l'ordre de déclaration du YAML** : la source
+    écrite en premier était répondue sans rien demander, l'autre non — même
+    question, mêmes octets (`tests/catalogues/ambiguite/`).
+
+    Le tour est paramétré sur les deux suppositions possibles : quelle que soit
+    celle que le modèle a faite, l'agent propose et attend.
+    """
+    llm = une_requete(source=devinee)
+
+    reponse = orchestrateur(llm, deux_sources, registre).ask(
+        "quel est le pourcentage de femmes ?", source_de_travail=""
+    )
+
+    assert "Sur laquelle veux-tu travailler" in reponse.answer
+    assert reponse.source_de_travail == ""  # rien n'est lié
+    assert reponse.plan.source is None  # la supposition est effacée, pas contournée
+    # et surtout : aucune requête n'a été lancée sur aucune source
+    assert llm.prompts_for(RETRIEVAL) == []
+
+
+def test_les_deux_ordres_de_declaration_donnent_le_meme_tour(tmp_path: Path, registre: Registry):
+    """La propriété, dite comme une égalité plutôt que comme deux comportements.
+
+    Deux catalogues, les mêmes sources, l'ordre inversé. C'est la variable de
+    l'expérience, et la seule : ce que l'agent répond ne doit pas en dépendre.
+    """
+    a, b = csv(tmp_path, "ventes"), csv(tmp_path, "clients")
+    reponses = [
+        orchestrateur(une_requete(source=ordre.sources[0].name), ordre, registre)
+        .ask("combien de lignes ?", source_de_travail="")
+        .answer
+        for ordre in (Catalog(sources=[a, b]), Catalog(sources=[b, a]))
+    ]
+
+    assert all("Sur laquelle veux-tu travailler" in r for r in reponses)
+
+
+def test_une_source_nommee_dans_le_message_reste_une_designation(
+    deux_sources: Catalog, registre: Registry
+):
+    """Le durcissement ne referme pas la porte que l'utilisateur ouvre lui-même.
+
+    Il n'a pas validé de source, mais il en nomme une dans sa question : c'est
+    une désignation, pas une devinette du modèle. On répond, et on lie.
+    """
+    reponse = orchestrateur(une_requete(source="clients"), deux_sources, registre).ask(
+        "combien de lignes dans ventes ?", source_de_travail=""
+    )
+
+    assert "Deux lignes." in reponse.answer
+    assert reponse.plan.source == "ventes"  # celle qu'il a nommée, pas celle du plan
+    assert reponse.source_de_travail == "ventes"
+
+
+def test_un_tableau_du_fil_n_est_pas_pris_pour_une_source_ambigue(
+    tmp_path: Path, deux_sources: Catalog, registre: Registry
+):
+    """« Combien de lignes dans ce tableau ? » n'a pas à se voir proposer le catalogue.
+
+    Un tableau intermédiaire n'est pas une source déclarée : ce n'est pas un
+    choix entre sources, c'est un résultat que la conversation vient de
+    produire. La supposition effacée est celle qui porte sur le CATALOGUE.
+    """
+    from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
+
+    ConversationWorkspace(tmp_path, "fil").save_table(["a"], [[1]], "un tour précédent")
+
+    reponse = orchestrateur(une_requete(source="resultat_1"), deux_sources, registre).ask(
+        "combien de lignes dans ce tableau ?",
+        conversation_id="fil",
+        workspace_root=tmp_path,
+        source_de_travail="",
+    )
+
+    assert "Deux lignes." in reponse.answer
+    assert reponse.plan.source == "resultat_1"
+    assert reponse.source_de_travail == ""  # un tableau ne se lie pas
+
+
+def test_l_inventaire_propose_porte_ce_qui_est_lu_dans_les_sources(
+    deux_sources: Catalog, registre: Registry
+):
+    """La proposition n'est pas que le YAML recopié : c'est le texte sur lequel
+    quelqu'un choisit, et deux descriptions écrites à la main se ressemblent
+    toujours plus que deux volumétries."""
+    reponse = orchestrateur(une_requete(), deux_sources, registre).ask(
+        "combien de lignes ?", source_de_travail=""
+    )
+
+    assert "1 table(s), 1 ligne(s)" in reponse.answer  # lu dans le CSV, pas déclaré
+    assert "au premier inventaire de la session" in reponse.answer  # et le cache est dit
+
+
+def test_l_accuse_de_reception_dit_ce_qu_on_a_lu_dans_la_source(
+    deux_sources: Catalog, registre: Registry
+):
+    """Le moment où savoir qu'elle pèse une ligne change ce qu'on va lui demander."""
+    reponse = orchestrateur(ScriptedLLM(), deux_sources, registre).ask(
+        "clients", source_de_travail=""
+    )
+
+    assert "1 table(s), 1 ligne(s) (clients : 1)" in reponse.answer

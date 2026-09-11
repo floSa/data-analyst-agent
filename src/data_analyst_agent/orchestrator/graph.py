@@ -41,6 +41,7 @@ from data_analyst_agent.agents.retrieval.catalog import (
     load_catalog,
     open_source,
 )
+from data_analyst_agent.agents.retrieval.faits import RelevesDuCatalogue
 from data_analyst_agent.agents.retrieval.sql import QueryResult
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
@@ -217,6 +218,22 @@ class ChatAnswer(BaseModel):
     conversation_id: str | None = None  # renseigné par l'API
 
 
+class SourceDuCatalogue(BaseModel):
+    """Une source, telle que la page de chat a besoin de la présenter.
+
+    Le YAML pour le nom, le type et la description ; la source elle-même pour
+    ``faits`` — tables, lignes, période. ``lu`` distingue « je n'ai rien à
+    dire » de « je n'ai pas pu lire » : une source injoignable doit se voir
+    dans la liste, pas en disparaître.
+    """
+
+    name: str
+    type: str
+    description: str = ""
+    faits: str = ""
+    lu: bool = True
+
+
 def _json_table(columns: list[str], rows: list[list], truncated: bool) -> MimeOutput:
     """L'artefact « tableau » que la page sait afficher : colonnes, lignes, troncature.
 
@@ -254,6 +271,12 @@ class Orchestrator:
         self.settings = settings or get_settings()
         self.model = model or build_model(self.settings)
         self.catalog = catalog if catalog is not None else load_catalog(self.settings.catalog_path)
+        # Ce que les sources disent d'elles-mêmes quand on les LIT — tables,
+        # lignes, période. Relevé au premier inventaire et gardé pour la
+        # session : ouvrir toutes les sources ici ferait payer le démarrage du
+        # serveur à qui ne pose aucune question d'inventaire, et le ferait
+        # dépendre de la disponibilité de chaque base.
+        self.releves = RelevesDuCatalogue(self.catalog)
         self.registry = (
             registry if registry is not None else Registry.load(self.settings.models_registry_path)
         )
@@ -335,6 +358,37 @@ class Orchestrator:
             pending=state.get("pending_out"),
             source_de_travail=self._source_retenue(state, source_de_travail),
         )
+
+    def inventaire_des_sources(self) -> list[SourceDuCatalogue]:
+        """Le catalogue déclaré, augmenté de ce qu'on LIT dans chaque source.
+
+        Sert à l'indicateur de la page de chat : pour choisir une source dans
+        un menu, il faut savoir laquelle pèse trois cents lignes et laquelle
+        couvre 2024. Les faits sont ceux du relevé mis en cache — ce sont les
+        mêmes que ceux de l'inventaire proposé en conversation, et il ne faut
+        pas qu'ils puissent diverger.
+        """
+        faits = self.releves.tous()
+        return [
+            SourceDuCatalogue(
+                name=source.name,
+                type=source.type,
+                description=source.description.strip(),
+                faits=faits[source.name].en_clair() if faits.get(source.name) else "",
+                lu=faits[source.name].lu if faits.get(source.name) else False,
+            )
+            for source in self.catalog.sources
+        ]
+
+    def source_declaree(self, nom: str) -> bool:
+        """Ce nom désigne-t-il une source DÉCLARÉE du catalogue ?
+
+        Distincte d'un simple ``get`` : c'est la question que pose l'API avant
+        de lier une source choisie dans le menu, et un tableau intermédiaire de
+        conversation ne doit pas pouvoir y passer — il est interrogeable, ce
+        n'est pas une source de données.
+        """
+        return any(source.name == nom for source in self.catalog.sources)
 
     @staticmethod
     def _source_retenue(state: OrchestratorState, entree: str | None) -> str | None:
@@ -767,6 +821,21 @@ class Orchestrator:
         descriptions, et sa supposition ne doit pas faire basculer le travail
         de quelqu'un.
 
+        **Et quand rien ne l'a validée, elle est EFFACÉE.** C'est la correction
+        du défaut d'ordre du YAML. La supposition ne faisait déjà plus basculer
+        une conversation liée — mais sur un fil qui n'avait encore rien choisi,
+        elle passait tout droit : elle devenait la source interrogée, puis la
+        source liée, sans que personne ne l'ait demandée. Le comportement
+        dépendait alors de l'ordre de déclaration du catalogue, ce qui est
+        mesuré (`docs/surface-conversationnelle.md` §14). L'effacer ici plutôt
+        que de la contourner en aval est ce qui garantit qu'aucune règle
+        suivante, aucun nœud et aucune liaison ne peut la reprendre pour un
+        choix : il n'y a plus rien à reprendre.
+
+        Un ``plan.source`` qui désigne un **objet du fil** (un tableau
+        intermédiaire) n'est pas effacé : ce n'est pas un choix entre sources
+        ambiguës, c'est un résultat que la conversation vient de produire.
+
         Après ``_regle_degrader_faute_de_source``, qui peut retirer à ce tour la
         capacité même qui réclame une source.
         """
@@ -775,15 +844,18 @@ class Orchestrator:
         if plan.capability not in self._SOURCE_CAPABILITIES:
             return None
         nommee = introspection.source_nommee(ctx.question, ctx.catalogue_declare)
+        declarees = [s.name for s in ctx.catalogue_declare.sources]
         if nommee:
             plan.source = nommee
         elif ctx.source_de_travail:
             plan.source = ctx.source_de_travail
-        elif len(ctx.catalogue_declare.sources) == 1:
+        elif len(declarees) == 1:
             # « S'il n'y en a qu'une, il l'annonce au lieu de poser une question
             # inutile » : on la lie ici pour que ``_lier_la_source`` l'annonce,
             # là où ``_resolve_source`` la choisissait sans le dire.
-            plan.source = ctx.catalogue_declare.sources[0].name
+            plan.source = declarees[0]
+        elif plan.source in declarees:
+            plan.source = None
         return None
 
     def _regle_reprendre_les_features_acquises(self, plan: Plan, ctx: PlanContext) -> str | None:
@@ -836,21 +908,34 @@ class Orchestrator:
         return None
 
     def _regle_choisir_la_source(self, plan: Plan, ctx: PlanContext) -> str | None:
-        """Aucune source choisie et le catalogue en contient plusieurs : on PROPOSE.
+        """Aucune source retenue et le catalogue en contient plusieurs : on PROPOSE.
 
-        Deviner serait répondre sur les mauvaises données sans le dire. Sur le
-        catalogue DÉCLARÉ, et non l'effectif : un fil qui a mémorisé des
-        tableaux ne doit pas se faire poser la question à chaque tour, alors que
+        Elle n'a pas changé d'une ligne ; ce qui a changé est le plan qu'elle
+        lit. ``_regle_source_de_la_conversation`` y a effacé, juste avant, la
+        source que **personne n'avait validée** — ni l'utilisateur en la
+        nommant, ni le fil en la portant. « Aucune source retenue » veut donc
+        maintenant dire ce qu'il devait dire depuis le début, et la question
+        revient dans le cas qui lui échappait : celui où le planificateur avait
+        deviné.
+
+        C'est ce qui rend le comportement **indépendant de l'ordre de
+        déclaration du YAML**. Il ne l'était pas : titanic écrit en premier,
+        5/5 répondaient 35,24 % sans rien demander ; employes en premier, 5/5
+        énuméraient les sources et ne répondaient jamais — même question, mêmes
+        octets (`tests/catalogues/ambiguite/`,
+        `docs/surface-conversationnelle.md` §14).
+
+        Sur le catalogue DÉCLARÉ, et non l'effectif : un fil qui a mémorisé des
+        tableaux ne doit pas se faire poser la question à cause d'eux, alors que
         l'unique source déclarée reste le choix évident.
 
-        C'est **la proposition du démarrage de conversation** : la question
-        n'arrive qu'ici, une fois le plan connu, parce que c'est le seul moment
-        où l'on sait qu'une source est réellement nécessaire — « prédis la
-        survie d'une passagère de 1re classe » n'en demande aucune, et lui
-        proposer un catalogue serait un tour perdu. Elle énumère désormais ce
-        que le catalogue dit de chaque source, et la réponse est **liée à la
-        conversation** au tour suivant (``_court_circuit_du_choix_de_source``)
-        là où elle était perdue.
+        La proposition n'arrive qu'ICI, une fois le plan connu, parce que c'est
+        le seul moment où l'on sait qu'une source est réellement nécessaire —
+        « prédis la survie d'une passagère de 1re classe » n'en demande aucune,
+        et lui proposer un catalogue serait un tour perdu. **Aucune requête
+        n'est lancée** : le tour s'arrête au planificateur, et la réponse est
+        liée à la conversation au tour suivant
+        (``_court_circuit_du_choix_de_source``).
 
         Le repli sur l'unique source, lui, est posé par
         ``_regle_source_de_la_conversation`` puis annoncé : il n'y a rien à
@@ -862,7 +947,18 @@ class Orchestrator:
             or len(ctx.catalogue_declare.sources) <= 1
         ):
             return None
-        return introspection.proposer_les_sources(ctx.catalogue_declare)
+        return self._proposer(ctx)
+
+    def _proposer(self, ctx: PlanContext) -> str:
+        """L'inventaire posé comme une question, faits relevés à l'appui.
+
+        Les faits (tables, lignes, période) sont **lus dans les sources** et
+        gardés en cache pour la session (``RelevesDuCatalogue``). C'est ici
+        qu'ils comptent le plus : ce texte est celui sur lequel quelqu'un
+        choisit, et deux descriptions écrites à la main se ressemblent toujours
+        plus que deux volumétries.
+        """
+        return introspection.proposer_les_sources(ctx.catalogue_declare, self.releves.tous())
 
     def _regle_choisir_le_modele(self, plan: Plan, ctx: PlanContext) -> str | None:
         """Prédiction sans modèle désigné : repli s'il n'y en a qu'un, sinon on demande.
@@ -964,7 +1060,7 @@ class Orchestrator:
 
     # -- la source de travail de la conversation (partie B) --------------------
 
-    def _accuser_la_source(self, nom: str, precedente: str) -> str:
+    def accuser_la_source(self, nom: str, precedente: str = "") -> str:
         """Ce qu'on répond quand l'utilisateur vient de choisir une source.
 
         Déterministe, et c'est assumé : il n'y a rien à formuler. La phrase
@@ -980,9 +1076,14 @@ class Orchestrator:
         source = self.catalog.get(nom)
         description = source.description.strip() or "sans description"
         quittee = f" (on travaillait sur `{precedente}`)" if precedente else ""
+        # Ce qu'on a LU dedans, à l'instant où elle devient la source de
+        # travail : c'est le moment où savoir qu'elle pèse 300 lignes et ne
+        # couvre aucune date change ce qu'on va lui demander.
+        releve = self.releves.de(nom)
+        faits = f"\n\n{releve.en_clair()}" if releve is not None and releve.en_clair() else ""
         return (
             f"Entendu : on travaille sur **{nom}** ({source.type}){quittee} — "
-            f"{description}\n\n"
+            f"{description}{faits}\n\n"
             "Je garde cette source pour la suite de la conversation. Nomme-en une "
             "autre à tout moment et je basculerai dessus.\n\n"
             "Que veux-tu savoir ?"
@@ -1021,7 +1122,7 @@ class Orchestrator:
         precedente = state.get("source_in") or ""
         return {
             "source_out": choisie,
-            "clarification": self._accuser_la_source(choisie, precedente),
+            "clarification": self.accuser_la_source(choisie, precedente),
             "trace": [self._step("plan", f"source choisie : {choisie} — sans appel LLM", start)],
         }
 
@@ -1165,6 +1266,7 @@ class Orchestrator:
                 catalogue_declare=self.catalog,
                 catalogue_effectif=self._effective_catalog(state),
                 registre=self.registry,
+                releves=self.releves,
                 request_limit=self.settings.systeme_request_limit,
             )
         except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:

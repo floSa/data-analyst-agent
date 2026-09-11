@@ -48,6 +48,7 @@ from pydantic_ai.usage import UsageLimits
 from data_analyst_agent import prompts
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, open_source
+from data_analyst_agent.agents.retrieval.faits import RelevesDuCatalogue
 from data_analyst_agent.orchestrator import introspection
 
 
@@ -65,6 +66,11 @@ class SystemeDeps:
     catalogue_declare: Catalog
     catalogue_effectif: Catalog
     registre: Registry
+    # Les faits lus dans les sources — tables, lignes, période — relevés une
+    # fois et gardés (cf. ``agents/retrieval/faits``). ``None`` = on n'a rien
+    # à lire : l'inventaire est alors celui du YAML seul, ce qui est le
+    # comportement d'avant. Il n'invente jamais rien pour combler.
+    releves: RelevesDuCatalogue | None = None
     # Le message de l'utilisateur, tel quel. Il complète l'argument que le
     # modèle passe à l'outil de schéma : « class_id » seul ne désigne pas une
     # colonne quand deux sources sont déclarées, alors que la phrase qui
@@ -117,10 +123,15 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
 
     @agent.tool
     def sources_de_donnees(ctx: RunContext[SystemeDeps]) -> str:
-        """Les sources de données déclarées : nom, type et description de chacune."""
+        """Les sources déclarées : nom, type, description, volume et période couverte.
+
+        Le volume et la période sont LUS dans chaque source, jamais déduits de
+        son nom : c'est la différence entre décrire un catalogue et le raconter.
+        """
+        faits = ctx.deps.releves.tous() if ctx.deps.releves is not None else None
         return ctx.deps.retenir(
             "sources_de_donnees",
-            introspection.decrire_les_sources(ctx.deps.catalogue_declare),
+            introspection.decrire_les_sources(ctx.deps.catalogue_declare, faits),
         )
 
     @agent.tool
@@ -196,6 +207,7 @@ def run_systeme(
     catalogue_effectif: Catalog,
     registre: Registry,
     request_limit: int,
+    releves: RelevesDuCatalogue | None = None,
 ) -> ResultatSysteme:
     """Soumet la question à l'agent système et rend ce qu'il en a fait."""
     deps = SystemeDeps(
@@ -203,6 +215,7 @@ def run_systeme(
         catalogue_effectif=catalogue_effectif,
         registre=registre,
         question=question,
+        releves=releves,
     )
     run = build_systeme_agent().run_sync(
         question,

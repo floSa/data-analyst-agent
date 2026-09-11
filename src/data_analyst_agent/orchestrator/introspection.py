@@ -46,7 +46,12 @@ from typing import get_args
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.inference.schemas import SCHEMAS, describe_features
 from data_analyst_agent.agents.retrieval.catalog import Catalog, Source
+from data_analyst_agent.agents.retrieval.faits import FaitsDeSource
 from data_analyst_agent.agents.retrieval.sql import SchemaInfo, TableInfo
+
+# Les faits lus dans les sources, par nom de source. Le module reste PUR : il
+# les reçoit déjà lus, il ne va jamais les chercher (cf. l'en-tête).
+Faits = dict[str, FaitsDeSource]
 
 
 def _replie(texte: str) -> str:
@@ -184,37 +189,70 @@ CAPACITE_SUR_SOI = (
 AUCUNE_SOURCE = "Je n'ai aucune source de données déclarée dans mon catalogue."
 
 
-def _liste_des_sources(catalogue: Catalog) -> list[str]:
-    """L'inventaire des sources en lignes — nom, type, description déclarée."""
+# Ce qu'on ajoute sous l'inventaire quand des faits y sont relevés. Le dire
+# n'est pas de la politesse : un volume lu au premier inventaire ne bouge plus
+# jusqu'au redémarrage (cf. ``RelevesDuCatalogue``), et un chiffre qui date sans
+# le dire finit par se faire prendre pour un chiffre frais.
+MENTION_DU_RELEVE = (
+    "_Tables, lignes et périodes sont lues dans les sources elles-mêmes, "
+    "au premier inventaire de la session._"
+)
+
+
+def _liste_des_sources(catalogue: Catalog, faits: Faits | None = None) -> list[str]:
+    """L'inventaire des sources en lignes — nom, type, description, et faits LUS.
+
+    Les faits (volume, période) viennent en seconde ligne, **sans puce et sans
+    accent grave**. Ce n'est pas une question de goût : la ceinture qui vérifie
+    la formulation du modèle lit le premier nom décoré de chaque puce comme le
+    sujet de la ligne (``_enumeres``), et une sous-puce nommant ``passengers``
+    exigerait de toute réponse qu'elle recopie chaque nom de table pour être
+    servie. Les faits sont du contexte sur la source, pas de nouveaux sujets.
+
+    ``faits`` absent (le défaut) = l'inventaire d'avant ce relevé : un appelant
+    qui n'a pas de quoi lire les sources — ou qui ne veut pas les ouvrir —
+    continue de rendre le catalogue déclaré, sans rien inventer pour combler.
+    """
     lignes = [f"J'ai accès à {len(catalogue.sources)} source(s) de données :", ""]
     for source in catalogue.sources:
         description = source.description.strip() or "sans description"
         lignes.append(f"- **{source.name}** ({source.type}) — {description}")
+        releve = (faits or {}).get(source.name)
+        if releve is not None and releve.en_clair():
+            lignes.append(f"  {releve.en_clair()}")
     return lignes
 
 
-def decrire_les_sources(catalogue: Catalog) -> str:
-    """Le catalogue, rendu à l'utilisateur — noms, types, descriptions."""
+def decrire_les_sources(catalogue: Catalog, faits: Faits | None = None) -> str:
+    """Le catalogue, rendu à l'utilisateur — noms, types, descriptions, volumes."""
     if not catalogue.sources:
         return AUCUNE_SOURCE
     lignes = [
-        *_liste_des_sources(catalogue),
+        *_liste_des_sources(catalogue, faits),
         "",
         "Demande-moi les tables ou les colonnes de l'une d'elles "
         "(« quelles colonnes a la source "
         f"{catalogue.sources[0].name} ? ») pour en voir le détail.",
     ]
+    if faits:
+        lignes += ["", MENTION_DU_RELEVE]
     return "\n".join(lignes)
 
 
-def proposer_les_sources(catalogue: Catalog) -> str:
+def proposer_les_sources(catalogue: Catalog, faits: Faits | None = None) -> str:
     """Le même inventaire, mais posé comme une QUESTION : laquelle prend-on ?
 
     L'ancienne clarification énumérait des noms nus — « Sur quelle source
     veux-tu travailler : titanic, iris ? ». Deux noms sans un mot de contexte
     ne permettent pas de choisir quand on découvre l'agent, et la réponse était
     de toute façon perdue au tour suivant. Celle-ci rend ce que le catalogue
-    dit de chaque source, et la réponse est liée à la conversation.
+    dit de chaque source **et ce qu'on lit dedans** — volume, période —, et la
+    réponse est liée à la conversation.
+
+    Les faits comptent ici plus qu'ailleurs : c'est le texte sur lequel
+    quelqu'un choisit. Deux descriptions écrites à la main se ressemblent ; « 891
+    lignes, de 1912-04-10 à 1912-04-15 » et « 300 lignes, aucune date » ne se
+    ressemblent pas.
 
     Elle **finit** par la question, comme le repli du planificateur et pour la
     même raison : ce qu'on lit en dernier est ce à quoi on répond.
@@ -222,12 +260,13 @@ def proposer_les_sources(catalogue: Catalog) -> str:
     if not catalogue.sources:
         return AUCUNE_SOURCE
     lignes = [
-        *_liste_des_sources(catalogue),
+        *_liste_des_sources(catalogue, faits),
         "",
         "Donne-moi le nom de celle qui t'intéresse : je la garde pour la suite de la conversation.",
-        "",
-        "Sur laquelle veux-tu travailler ?",
     ]
+    if faits:
+        lignes += ["", MENTION_DU_RELEVE]
+    lignes += ["", "Sur laquelle veux-tu travailler ?"]
     return "\n".join(lignes)
 
 
