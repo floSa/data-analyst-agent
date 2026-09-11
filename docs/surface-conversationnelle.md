@@ -25,8 +25,9 @@ formulation à laquelle personne n'avait pensé.
 | **6** | pourquoi la capacité système n'entre pas dans `Capability`, mesuré deux fois | **oui**, et verrouillé par un test |
 | **8** | la frontière : l'agent répond sur ce qu'il **EST**, pas sur ce que les données **CONTIENNENT** | **oui**, mais tenue par un prompt et non par du code |
 | 9–11 | le plafond du lexique mesuré, son remplacement par un **outil que le modèle appelle**, et la mesure d'après (40 questions) | **oui** |
-| 12 | la **source de travail** d'une conversation : proposée, validée, portée par le fil | **oui** |
-| 13 | ce qui reste ouvert | — |
+| 12 | la **source de travail** d'une conversation : proposée, validée, portée par le fil | **oui**, mais le §12 croyait le choix acquis — cf. §14 |
+| 13 | ce qui restait ouvert **au moment du §12** | daté : le §14 en reprend deux points |
+| **14** | l'**ordre du catalogue** décidait de la réponse, mesuré dans les deux sens ; ce qui a été corrigé, et l'inventaire qui se lit au lieu de se réciter | **oui** |
 
 ## 1. Le défaut constaté, et sa cause
 
@@ -920,7 +921,7 @@ la migration avait dû être écrite : ici le défaut **est** le comportement d'
 Un test le vérifie sur un `transcript.json` écrit à la main, sans le champ.
 
 
-## 13. Ce qui reste ouvert
+## 13. Ce qui restait ouvert au moment du §12
 
 - **Le coût d'un aller-retour par question sur les données** est le prix du
   routage par le modèle, et il n'est pas récupérable sans revenir à un filtre
@@ -944,3 +945,275 @@ Un test le vérifie sur un `transcript.json` écrit à la main, sans le champ.
 - **Une source à quarante tables** reste hors de portée de cette batterie, comme
   au §4 : le tour d'horizon est là pour ça, le volume de la réponse à « quelles
   colonnes a la source X ? » n'a été éprouvé que sur deux à dix colonnes.
+
+## 14. L'ordre du catalogue décidait de la réponse
+
+Le §12 croyait le choix de source acquis : l'agent **propose**, l'utilisateur
+**valide**, la conversation **porte** la source. Les trois tours étaient mesurés
+et ils tenaient. Ce qui n'avait pas été mesuré, c'est **le cas où l'agent ne
+propose pas** — et il ne proposait pas dans le cas le plus courant.
+
+### Le défaut : deux sources, la même question, deux comportements
+
+`_regle_choisir_la_source` ne se déclenchait que si `plan.source` était vide. Or
+le planificateur le remplit presque toujours, au hasard des descriptions du
+catalogue. **Sa supposition suffisait donc à choisir sur quelles données
+répondre.**
+
+Le montrer demandait un terrain où l'on puisse tout tenir constant sauf une
+chose. C'est [`tests/catalogues/ambiguite/`](../tests/catalogues/ambiguite/) :
+deux sources de fichiers qui partagent une colonne `sex` — `titanic.csv`
+(35,24 % de femmes) et `employes.csv` (51,00 %) — déclarées dans les **deux
+ordres**. Les données sont identiques d'un catalogue à l'autre, octet pour
+octet ; seul l'ordre change.
+
+```bash
+uv run python scripts/mesure_ambiguite_de_source.py --essais 5
+```
+
+Le runner mène chaque essai dans une conversation **neuve**, par le magasin
+comme l'API, et lit le verdict dans le **chiffre** de la réponse — jamais dans
+le nom qu'elle cite. Un modèle qui écrit « d'après titanic » sans avoir rien
+interrogé ne prouve rien ; un 35,24 ne peut venir que d'un comptage sur 891
+lignes.
+
+#### Avant, sur `e83e634` — 5 essais par ordre
+
+| Ordre déclaré | A répondu sur `titanic` | A répondu sur `employes` | A proposé et attendu |
+|---|---|---|---|
+| `titanic` en premier | **5/5** (35,24 %) | 0/5 | 0/5 |
+| `employes` en premier | 0/5 | 0/5 | **5/5** |
+
+Même question, mêmes octets, deux comportements complets. Et **aucun des deux
+n'est un choix** : le second tombe du bon côté par accident — le planificateur
+avait laissé `plan.source` vide, la règle a donc pu proposer. Il ne fallait
+surtout pas le « corriger ».
+
+#### Après — 5 essais par ordre
+
+| Ordre déclaré | A répondu sur `titanic` | A répondu sur `employes` | A proposé et attendu |
+|---|---|---|---|
+| `titanic` en premier | 0/5 | 0/5 | **5/5** |
+| `employes` en premier | 0/5 | 0/5 | **5/5** |
+
+**10/10, identiques dans les deux ordres.** Rien n'est lié au fil, aucune
+requête n'est lancée, et le tour coûte 2 appels LLM (le nœud système, puis le
+planificateur) — le prix du plan, qu'on aurait payé de toute façon.
+
+### Ce qui a été corrigé : effacer, pas contourner
+
+La règle qui propose **n'a pas changé d'une ligne**. Ce qui a changé est le plan
+qu'elle lit.
+
+`_regle_source_de_la_conversation` **efface** désormais `plan.source` quand
+personne ne l'a validée — ni l'utilisateur en nommant une source dans son
+message, ni le fil en en portant une. « Aucune source retenue » veut alors dire
+ce que ça devait dire depuis le début.
+
+L'effacer à la source plutôt que de la contourner en aval n'est pas un détail de
+style : c'est ce qui garantit qu'**aucune** règle suivante, aucun nœud et aucune
+liaison ne peut reprendre la supposition pour un choix — il n'y a plus rien à
+reprendre. La première version de ce correctif filtrait dans
+`_regle_choisir_la_source` seulement, et la mesure l'a prise en défaut : l'agent
+proposait bien l'inventaire, mais `_lier_la_source` avait déjà lié au fil la
+source devinée. L'utilisateur recevait une question, et la réponse à cette
+question était déjà tranchée.
+
+Quatre cas ne bougent pas, et chacun a son test :
+
+- **une seule source déclarée** → repli automatique, annoncé (« Je travaille sur
+  la source `iris`. ») et la question répondue dans le même tour. C'est le
+  comportement d'avant, intact ;
+- **une source nommée dans le message** → c'est une désignation : on répond, on
+  lie, et une bascule est annoncée en première ligne (§12) ;
+- **un tableau intermédiaire du fil** (`plan.source` hors catalogue déclaré) →
+  ce n'est pas un choix entre sources ambiguës, c'est un résultat que la
+  conversation vient de produire ;
+- **hors conversation** (`ask()` sans `conversation_id` : la batterie du §11, un
+  script) → il n'y a pas de fil pour porter la réponse à une proposition, la
+  poser serait une impasse. Le comportement d'avant est gardé tel quel, et c'est
+  pourquoi les 36 questions méta et les 4 témoins ne bougent pas.
+
+### L'inventaire cesse d'être le YAML recopié
+
+Un inventaire qui ne rend que ce que le YAML déclare ne permet pas de choisir :
+deux descriptions écrites à la main se ressemblent toujours. Chaque source porte
+désormais trois faits **lus dans la source elle-même**
+([`agents/retrieval/faits.py`](../src/data_analyst_agent/agents/retrieval/faits.py)) :
+le nombre de tables, le nombre de lignes, et la période couverte s'il existe une
+colonne de date.
+
+```
+- **titanic** (file) — Passagers du Titanic (fichier CSV) — survie, sexe, âge…
+  1 table(s), 891 ligne(s) (titanic : 891)
+- **employes** (file) — Effectif d'une entreprise (fichier CSV) — sexe, âge…
+  1 table(s), 300 ligne(s) (employes : 300)
+```
+
+**Jamais devinés.** C'est le défaut d'`acfd8f5` — « décris le dataset iris »
+répondu de mémoire, avec une jolie prose et zéro requête — et il reviendrait par
+cette porte si la volumétrie était déduite d'un nom de fichier. Une source qui ne
+répond pas rend donc **la raison de son silence et aucun chiffre** :
+« volumétrie non relevée : la source n'a pas répondu ». Et elle reste dans la
+liste : une source absente de l'inventaire ressemble à une source non déclarée,
+ce qui est un tout autre problème à aller corriger.
+
+Le relevé coûte une ouverture de connexion et quelques agrégats par source. Il
+est donc fait **une fois par session** et gardé, **paresseusement** — ouvrir
+toutes les sources au démarrage ferait payer le prix à qui ne pose aucune
+question d'inventaire, et ferait dépendre le démarrage du serveur de la
+disponibilité de chaque base. Le cache est **dit** à l'utilisateur : « Tables,
+lignes et périodes sont lues dans les sources elles-mêmes, au premier inventaire
+de la session. » Un chiffre qui date n'est pas un chiffre faux, mais il ne doit
+pas passer pour frais.
+
+Une mise en forme qui n'est pas cosmétique : les faits viennent **sous** la
+puce, sans puce et sans accent grave. La ceinture du §10 lit le premier nom
+décoré de chaque puce comme le sujet de la ligne (`_enumeres`) ; une sous-puce
+nommant `passengers` exigerait de toute réponse du modèle qu'elle recopie chaque
+nom de table pour être servie. Les faits sont du contexte sur la source, pas de
+nouveaux sujets.
+
+### La source de travail, enfin visible — et changeable sans la taper
+
+Elle existait, elle se portait de tour en tour, et **elle ne se voyait nulle
+part** : pour savoir sur quelles données on travaillait, il fallait relire la
+dernière annonce dans le fil. Un bandeau permanent, au-dessus de la
+conversation, dit laquelle est retenue et ce qu'on a lu dedans ; un menu permet
+d'en changer.
+
+**La source vient toujours du fil.** Le menu écrit dans la conversation
+(`PUT /conversations/<id>/source`), `POST /chat` continue de la relire de là, et
+aucun corps de question ne la transporte — `ChatRequest` n'a toujours pas de
+champ pour ça, et un test le vérifie. Trois propriétés encadrent ce menu :
+
+- **seule une source DÉCLARÉE se lie** : un tableau intermédiaire est
+  interrogeable, ce n'est pas une source de données ;
+- **le changement est inscrit dans la transcription** comme un message de
+  l'agent. Relire un fil dont les réponses changent de données sans que rien ne
+  le dise est exactement ce que la bascule annoncée évite ;
+- **on peut délier** (« aucune ») : l'agent reproposera son inventaire à la
+  prochaine question qui en demande une.
+
+Choisir avant d'avoir écrit quoi que ce soit demande qu'un fil existe — d'où
+l'ouverture d'un fil vide (`POST /conversations`), titré par son premier message
+comme les autres.
+
+### Le parcours complet, sur un catalogue réaliste
+
+Deux CSV suffisent à montrer un défaut d'ordre ; ils ne ressemblent pas à un
+déploiement. [`tests/catalogues/realiste/`](../tests/catalogues/realiste/)
+déclare **quatre sources de trois natures** — deux bases Postgres multi-tables,
+un CSV, un classeur Excel à deux feuilles — avec des **colonnes qui se
+recoupent** : `sexe`/`sex`, `departement` et une colonne de date vivent chacun
+dans trois sources sur quatre, jamais sous le même nom. C'est ce recoupement qui
+rend une question ordinaire réellement ambiguë, sans avoir à la fabriquer.
+
+| Source | Type | Tables | Lignes | Période couverte |
+|---|---|---|---|---|
+| `ventes` | postgres | 2 | 620 (clients : 120, commandes : 500) | 2023-01-01 → 2024-12-30 |
+| `rh` | postgres | 2 | 184 (salaries : 180, services : 4) | 2015-01-11 → 2024-12-17 |
+| `employes` | file (CSV) | 1 | 300 | *(aucune colonne de date)* |
+| `absences` | file (Excel) | 2 | 244 (absences : 240, postes : 4) | 2024-01-01 → 2024-12-28 |
+
+```bash
+DAA_CATALOG_PATH=tests/catalogues/realiste/catalogue.yaml \
+uv run python scripts/mesure_choix_de_source.py
+```
+
+Le parcours du §12 a gagné un tour — le **tour du verrou** —, et c'est le tour
+qui manquait : le tour 3 prouve que la source liée est reprise, le tour 4 qu'elle
+ne se fait pas déloger par une question qui ressemble à une autre source.
+
+| Tour | Attendu | Message | Réponse | Source liée | Appels LLM |
+|---|---|---|---|---|---|
+| 1 | la proposition | bonjour, je voudrais regarder des données | « … Je dispose actuellement de quatre sources de données : `ventes`, `rh`, `employes` et `absences`… » | *(aucune)* | 2 |
+| 2 | la validation | **ventes** | « Entendu : on travaille sur **ventes** (postgres) — … **2 table(s), 620 ligne(s) (clients : 120, commandes : 500) — période…** » | `ventes` | **0** |
+| 3 | la source est portée | combien de lignes en tout ? | « Il y a un total de **120 clients** enregistrés et **500 commandes** passées dans la base de données. » | `ventes` | 6 |
+| 4 | **le verrou tient** | et combien de femmes ? | « Il y a un total de **60 femmes** dans la base de données des clients. » | `ventes` | 5 |
+| 5 | la bascule, annoncée | et dans **rh**, combien de lignes ? | « **Je passe sur la source `rh` — on travaillait sur `ventes`.** Il y a 1 ligne dans le département RH. » | `rh` | 5 |
+| 6 | la nouvelle source tient | et combien de colonnes ? | « … deux tables : `salaries` qui contient 7 colonnes et `services` qui en contient 2. » | `rh` | 4 |
+
+Coût mesuré : **22 appels LLM pour 6 tours** (3,67 par tour).
+
+Ce que le tableau montre :
+
+- **le tour 2 coûte toujours zéro appel**, et il porte maintenant ce qu'on a lu
+  dans la source : 620 lignes et une période, pas seulement une description ;
+- **le tour 4 est le nouveau**, et c'est le plus important. « Combien de
+  femmes ? » ne nomme personne et **trois des quatre sources pourraient y
+  répondre**. La réponse vient de `ventes` — 60 femmes sur 120 clients, l'oracle
+  — et la source liée ne bouge pas. Le verrou tient là où deviner serait le plus
+  tentant ;
+- **le tour 5 bascule parce que l'utilisateur a écrit `rh`**, et le dit en
+  première ligne.
+
+Une réserve, et elle est du modèle et non du mécanisme : au tour 5, « il y a 1
+ligne dans le département RH » répond à côté — `rh` est à la fois le nom de la
+source et celui d'un département de `services`, et le modèle a compté les lignes
+du second. La bascule, elle, est juste, et le tour 6 le confirme en lisant le
+bon schéma. Ce qui est mesuré ici est le choix de source ; la qualité du SQL sur
+une formulation ambiguë est le sujet d'une autre batterie.
+
+### Les 36 questions méta et les 4 témoins ne bougent pas
+
+C'est la vérification qui compte le plus pour un changement de cette nature : le
+choix de source touche au **plan**, et les questions sur le système passent en
+amont de lui. Rien ne devait bouger — encore fallait-il le mesurer.
+
+```bash
+uv run python scripts/mesure_surface_conversationnelle.py
+```
+
+| Passage | Méta correctes | Appels (36 méta) | Témoins corrects |
+|---|---|---|---|
+| Référence §11, rejeu 1 | 36 / 36 | 79 | 3 / 4 |
+| Référence §11, rejeu 2 | 34 / 36 | 81 | 4 / 4 |
+| Référence §11, rejeu 3 | 36 / 36 | 79 | 4 / 4 |
+| **Après, passage 1** | **35 / 36** | 81 | 2 / 4 |
+| **Après, passage 2** | **35 / 36** | 81 | 3 / 4 |
+
+Les deux passages tombent dans l'enveloppe des trois rejeux de référence (34 à
+36 méta, 3 à 4 témoins), et le coût par question ne bouge pas. Trois écarts
+méritent d'être nommés plutôt que noyés dans une moyenne :
+
+- **`temoin-colonnes-a-trous`, en erreur au passage 1 et correct au passage 2.**
+  L'agent SQL a bouclé 275 secondes puis échoué, sur une machine qui faisait
+  tourner le parcours réaliste en même temps. Non reproduit seul ;
+- **`sources-perimetre` (« c'est quoi ton périmètre ? ») compté à côté aux deux
+  passages.** Le modèle appelle l'outil des capacités et sa formulation omet les
+  noms des sources, que l'oracle exige. La ceinture ne l'attrape pas : elle
+  n'exige que ce que les **puces** des faits nomment, et « Mes sources :
+  `titanic`, `iris` » n'en est pas une ;
+- **`temoin-prediction` compté à côté aux deux passages**, la prédiction
+  n'aboutissant pas.
+
+Les deux derniers **se reproduisent à l'identique sur le code d'avant** : la
+vérification a été faite en remettant la docstring d'origine de l'outil
+`sources_de_donnees` — la seule chose que ce chantier change dans le prompt de
+l'agent système — et en rejouant ces deux questions seules. Verdicts inchangés
+des deux côtés. Ce sont donc des variations du modèle sur le chemin
+système/planificateur, pas une régression de ce chantier. Le mode d'échec de
+`temoin-prediction`, lui, diffère selon la version (l'agent système s'en empare
+d'un côté, la prédiction n'aboutit pas de l'autre) : c'est un écart de routage
+qui ne change pas le verdict, et qui mériterait sa propre mesure.
+
+### Ce qui reste ouvert
+
+Les points du §13 restent vrais, moins celui du choix de source qui vient d'être
+tranché. S'y ajoutent :
+
+- **le relevé date du premier inventaire de la session.** Une base qui grossit
+  pendant que le serveur tourne affichera son volume d'hier. C'est le compromis
+  du cache, il est dit à l'utilisateur, et la sortie serait de le rafraîchir sur
+  demande explicite plutôt qu'à chaque tour ;
+- **la période est celle de la PREMIÈRE colonne de date rencontrée.** Une source
+  qui en porte plusieurs (`created_at`, `closed_at`) n'en montre qu'une — nommée
+  dans la réponse, donc sans ambiguïté sur ce qui a été lu, mais sans choix ;
+- **le relevé n'est pas borné en temps.** Un `count(*)` sur une table de
+  plusieurs centaines de millions de lignes ferait attendre le premier
+  inventaire. Rien ne l'a montré ici : la plus grosse source mesurée fait 620
+  lignes ;
+- **`sources-perimetre` et `temoin-prediction`** sont deux écarts constatés sur
+  le chemin système, antérieurs à ce chantier et non expliqués. Ils appellent
+  leur propre mesure.
