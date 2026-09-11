@@ -13,6 +13,7 @@ d'où le test de la source injoignable, qui doit rendre la RAISON de son silence
 et aucun chiffre.
 """
 
+from contextlib import closing
 from pathlib import Path
 
 from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
@@ -173,3 +174,26 @@ def test_une_heure_reelle_est_gardee(tmp_path: Path):
 
     assert faits.periode.debut == "2024-01-01T08:30:00"
     assert faits.periode.fin == "2024-01-01T19:45:00"
+
+
+def test_une_colonne_de_date_sans_aucune_valeur_ne_donne_pas_de_periode():
+    """Il y a bien une colonne de date, et elle ne dit rien.
+
+    C'est encore une absence de période, et pas un intervalle vide à afficher.
+    Le cas se produit sur une table qui déclare sa colonne — une base, où le
+    type survit à l'absence de données. Un fichier, lui, ne peut pas le
+    montrer : DuckDB devine le type sur les valeurs, et une colonne sans
+    valeur n'est jamais devinée temporelle. D'où la table montée ici à la main
+    plutôt qu'un classeur, qui ne prouverait rien.
+    """
+    import duckdb
+
+    from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter
+    from data_analyst_agent.agents.retrieval.faits import _colonne_de_date, _periode
+
+    connexion = duckdb.connect(":memory:")
+    connexion.execute("CREATE TABLE jours (jour DATE)")
+    with closing(DuckDBAdapter(connexion, ["jours"])) as adaptateur:
+        assert _colonne_de_date(adaptateur.schema()) == ("jours", "jour")
+
+        assert _periode(adaptateur, "jours", "jour") is None

@@ -568,3 +568,59 @@ def test_l_accuse_de_reception_dit_ce_qu_on_a_lu_dans_la_source(
     )
 
     assert "1 table(s), 1 ligne(s) (clients : 1)" in reponse.answer
+
+
+# --- ce que l'indicateur de la page demande à l'orchestrateur ------------------
+
+
+def test_l_inventaire_rendu_a_la_page_porte_le_catalogue_et_ses_faits(
+    deux_sources: Catalog, registre: Registry
+):
+    """Ce que ``GET /sources`` sert au menu de la page.
+
+    Les tests d'API le mesurent sur un double ; celui-ci le mesure sur
+    l'orchestrateur RÉEL, qui ouvre vraiment les sources — c'est le seul moyen
+    de vérifier que les faits affichés dans le menu sont bien ceux du relevé, et
+    non une seconde version qui pourrait diverger de l'inventaire proposé en
+    conversation.
+    """
+    inventaire = orchestrateur(ScriptedLLM(), deux_sources, registre).inventaire_des_sources()
+
+    assert [s.name for s in inventaire] == ["ventes", "clients"]
+    assert inventaire[0].type == "file"
+    assert inventaire[0].description == "La source ventes."
+    assert "1 table(s), 1 ligne(s)" in inventaire[0].faits
+    assert inventaire[0].lu
+
+
+def test_une_source_injoignable_reste_dans_l_inventaire_en_le_disant(
+    tmp_path: Path, registre: Registry
+):
+    """Elle doit se voir dans le menu, pas en disparaître : une source absente
+    de la liste ressemble à une source non déclarée, ce qui est un tout autre
+    problème à aller corriger."""
+    catalogue = Catalog(
+        sources=[csv(tmp_path, "ventes"), FileSource(name="envolee", path=tmp_path / "absent.csv")]
+    )
+
+    inventaire = orchestrateur(ScriptedLLM(), catalogue, registre).inventaire_des_sources()
+
+    assert [s.name for s in inventaire] == ["ventes", "envolee"]
+    assert not inventaire[1].lu
+    assert "non relevée" in inventaire[1].faits
+
+
+def test_seule_une_source_declaree_est_reconnue_comme_telle(
+    tmp_path: Path, deux_sources: Catalog, registre: Registry
+):
+    """Le garde-fou du menu : un tableau intermédiaire du fil est interrogeable,
+    ce n'est pas une source de données, et le lier remplacerait la source de
+    travail par un résultat de requête."""
+    from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
+
+    ConversationWorkspace(tmp_path, "fil").save_table(["a"], [[1]], "un tour précédent")
+    agent = orchestrateur(ScriptedLLM(), deux_sources, registre)
+
+    assert agent.source_declaree("ventes")
+    assert not agent.source_declaree("resultat_1")
+    assert not agent.source_declaree("jamais-declaree")
