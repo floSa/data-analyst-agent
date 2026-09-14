@@ -1,0 +1,35 @@
+# Catalogue de mesure — NE PAS UTILISER EN PRODUCTION.
+#
+# Les TROIS types de source déclarables, un chacun, dans le même catalogue :
+# postgres, file et duckdb. C'est ce qu'aucun autre catalogue de mesure ne fait
+# — le catalogue réaliste a bien trois NATURES, mais deux d'entre elles sont le
+# même type (`file`, CSV et classeur).
+#
+# Les trois se recoupent : chacune a une colonne de date et une mesure
+# numérique, deux ont un `montant`. Une question ordinaire y est donc réellement
+# ambiguë. Leurs volumétries, elles, sont franchement distinctes (837 / 111 /
+# 40 052) : c'est sur elles qu'on lit QUELLE source a répondu.
+#
+# Données : `uv run python scripts/seed_catalogue_trois_types.py`.
+# Oracles et parcours de mesure : README.md.
+sources:
+  - type: postgres
+    name: commandes
+    description: >-
+      Commandes et clients d'une boutique (Postgres, deux tables jointes par
+      client_id) — date de commande, montant, ville et sexe du client.
+    dsn: postgresql+pg8000://${DAA_PG_USER}:${DAA_PG_PASSWORD}@${DAA_PG_HOST}:${DAA_PG_PORT}/daa_trois_types
+
+  - type: file
+    name: capteurs
+    description: >-
+      Relevés de température de sept capteurs (fichier CSV, une table plate) —
+      horodatage, capteur, température.
+    path: capteurs.csv
+
+  - type: duckdb
+    name: entrepot
+    description: >-
+      Entrepôt de ventes en étoile (base DuckDB, trois tables liées par clés
+      étrangères déclarées) — ventes par magasin et par article, jour, montant.
+    path: entrepot.duckdb

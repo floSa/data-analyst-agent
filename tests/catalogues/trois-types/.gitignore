@@ -1,0 +1,8 @@
+# La base est ENGENDRÉE par scripts/seed_catalogue_trois_types.py, avec un
+# tirage figé : son contenu est déterministe, ses octets ne le sont pas — un
+# fichier .duckdb porte des identifiants de blocs et un ordre d'écriture qui
+# changent d'une exécution à l'autre, et il pèse plusieurs mégaoctets.
+#
+# Le contenu, lui, est reproductible : c'est ce dont la mesure a besoin, et les
+# oracles qu'il donne sont consignés dans README.md, qui est versionné.
+entrepot.duckdb
