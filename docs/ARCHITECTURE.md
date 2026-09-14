@@ -288,9 +288,15 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
 
 ### 4.4 `agents/retrieval/` — capacité ① Récupération
 
-- `catalog.py` — catalogue **déclaratif** des sources (`sources/catalogue.yaml`) :
-  `postgres` (DSN SQLAlchemy, `${VARIABLES}` d'environnement autorisées) ou `file`
-  (CSV/Excel, chemin relatif au YAML). `open_source()` renvoie l'adaptateur adapté.
+- `catalog.py` — catalogue **déclaratif** des sources (`sources/catalogue.yaml`), en
+  **trois** types : `postgres` (DSN SQLAlchemy, `${VARIABLES}` d'environnement
+  autorisées), `file` (CSV/Excel, chemin relatif au YAML) et `duckdb` (base
+  `.duckdb`, chemin relatif au YAML). `open_source()` renvoie l'adaptateur adapté.
+  `duckdb` n'est pas un `file` de plus : un CSV et un classeur n'ont aucune
+  contrainte à déclarer, alors qu'une base porte ses clés primaires **et
+  étrangères** — un schéma en étoile arrive donc au modèle avec ses jointures au
+  lieu de le laisser les deviner. C'est aussi la forme qu'a n'importe quel gros jeu
+  de données local (éprouvé sur une base de 1,66 M de lignes et dix tables).
   Toute source peut déclarer un `dictionary` **facultatif** : un Markdown qui dit ce
   que les données *veulent dire*, là où le DDL ne dit que des types. C'est lui qu'on
   cite quand on demande le sens d'une colonne (§4.10).
@@ -304,10 +310,20 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   l'adaptateur Postgres via **pg8000** (BSD — psycopg est LGPL, écarté par la règle
   licences) ; les résultats normalisés (`Decimal`→float, dates→ISO) et tronqués à
   `retrieval_max_rows`.
-- `duckdb_excel.py` — les fichiers requêtés en SQL : CSV nativement
-  (`read_csv_auto`), Excel lu par pandas/openpyxl puis chaque feuille enregistrée
-  comme table DuckDB (une feuille = une table, jointures inter-feuilles possibles).
-  Aucune extension DuckDB à télécharger — compatible on-prem.
+- `duckdb_excel.py` — ce que DuckDB requête, par deux portes. `from_file` : CSV
+  nativement (`read_csv_auto`), Excel lu par pandas/openpyxl puis chaque feuille
+  enregistrée comme table DuckDB (une feuille = une table, jointures inter-feuilles
+  possibles). `from_database` : une base `.duckdb` ouverte **en lecture seule** —
+  `read_only` n'est pas qu'une ceinture de plus par-dessus le garde-fou SQL, il
+  laisse plusieurs process ouvrir la même base, sans quoi l'API et un notebook ne
+  pourraient pas cohabiter. Les contraintes déclarées sont relues par
+  `duckdb_constraints()` (clés primaires et étrangères), en *best-effort* : une
+  source qui n'en a pas ressort sans clés, ce qui est la vérité et non un défaut
+  d'introspection. Aucune extension DuckDB à télécharger — compatible on-prem.
+  Le **verrou d'accès à l'hôte** (`enable_external_access=false`) est posé dans
+  `__init__`, seul point de passage commun aux deux portes : `read_only` protège la
+  base, pas le disque autour, et une connexion en lecture seule reste capable de
+  `read_csv_auto('/etc/passwd')` tant qu'on ne l'a pas coupée.
 - `agent.py` — l'agent text-to-SQL à **tools typés** (`list_tables`, `get_schema`,
   `run_sql`). Une erreur SQL revient au modèle en texte pour self-correction ;
   `UsageLimits` borne les allers-retours. Renvoie le SQL exécuté, le résultat, le
@@ -589,13 +605,58 @@ Le catalogue YAML ne porte qu'une description écrite à la main. Pour choisir e
 plusieurs sources il faut savoir laquelle pèse trois cents lignes et laquelle couvre
 2024 : `agents/retrieval/faits.py` **lit** chaque source — nombre de tables, de lignes,
 et la période de sa première colonne de date s'il y en a une — et `RelevesDuCatalogue`
-garde le relevé pour la session.
+garde le relevé.
 
 - Le relevé est fait au **premier inventaire**, pas à l'ouverture du serveur : ouvrir
   toutes les sources au démarrage ferait payer le lancement à qui ne pose aucune
   question d'inventaire, et le ferait dépendre de la disponibilité de chaque base.
 - Une source injoignable **se voit** dans la liste (`lu = False`) au lieu d'en
   disparaître : l'inventaire dégrade cette ligne, il ne refuse pas le catalogue.
+
+**Gardé, et pas figé** — quatre bornes, toutes réglables (`DAA_RELEVE_*`, §7).
+Le relevé était auparavant fait une fois et conservé jusqu'au redémarrage, sans
+délai maximal ; trois défauts en découlaient, mesurés le 2026-09-14 avant et après
+correction.
+
+| Ce qui manquait | Avant | Après |
+|---|---|---|
+| une source revenue est re-tentée (`reprise`, 30 s) | Postgres arrêté puis relancé : « volumétrie non relevée » **pour toute la session** | la ligne redevient chiffrée à la première demande passé le délai de reprise |
+| un relevé réussi se périme (`peremption`, 15 min) | les chiffres du premier inventaire, jusqu'au redémarrage | relus passé la péremption, une source qui grossit finit par se redire |
+| une source muette ne retient personne (`delai`, 10 s) | une source dont le TCP part sans revenir bloquait le relevé **sans plafond** (mesuré : toujours bloqué au bout de 75 s) | dégradée en injoignable au bout du délai, avec sa raison |
+| une grande table est estimée (`seuil_approximation`, 100 000) | `count(*)` exact partout : 88 ms sur 5 M de lignes Postgres | `reltuples`, 1,5 ms pour la même valeur — et le chiffre est affiché avec un `~` |
+
+Les deux durées ne font qu'une seule chose chacune, et c'est pour ça qu'il y en a
+deux : « ce chiffre a-t-il bougé ? » et « la panne est-elle réparée ? » n'ont pas le
+même rythme. Une seule durée pour les deux les répondrait mal toutes les deux —
+courte, elle recompte des millions de lignes pour rien ; longue, elle fait mentir la
+réponse pendant toute la session.
+
+Le délai est tenu par un **fil démon**, et non par un `ThreadPoolExecutor` : ce qu'on
+abandonne est un appel bloquant dans un pilote de base, et `concurrent.futures` joint
+ses fils à la sortie de l'interpréteur — le process aurait refusé de s'arrêter tant
+que la source n'a pas répondu, ce qui déplace le blocage sans le supprimer. Le fil
+abandonné finit sa requête, referme sa connexion, et son résultat est jeté.
+
+**L'approximation est dite, jamais fondue dans le chiffre** : `~5000000 ligne(s)
+(mesures : ~5000000)`. Un ordre de grandeur affiché comme un compte exact serait le
+petit mensonge que ce module existe pour empêcher. En dessous du seuil rien n'est
+estimé — le comptage exact y est de toute façon gratuit, et on ne dégrade pas sans
+contrepartie.
+
+**Elle ne vaut que là où compter coûte, et c'est mesuré** (`faits.ESTIMATIONS`). Seul
+Postgres y figure : il balaie réellement (88 ms pour 5 M de lignes contre 1,5 ms de
+`reltuples`). DuckDB en est volontairement absent — il répond `count(*)` depuis ses
+métadonnées, et passer par `duckdb_tables()` a coûté **plus** cher (27,6 ms contre
+13,9 ms sur une table de 5 M). L'y estimer aurait décoré d'un `~` un chiffre qui était
+exact et gratuit, ce que le seuil existe précisément pour éviter.
+
+**Ce que la mesure a démenti** : le coût redouté du premier inventaire sur une grosse
+base. Sur la base DuckDB de 1,66 M de lignes et dix tables, il tient en **83,5 ms**
+(médiane de neuf relevés, cache disque vidé à chaque tour), comptages compris — les dix
+`count(*)` pèsent 2,7 ms à eux tous. Le bornage le porte à **95,0 ms** : les ~11 ms de
+plus sont le fil démon qui tient le délai, et c'est tout ce que coûte la borne. Elle
+n'a donc pas été ajoutée pour du temps CPU ; elle l'a été pour la source qui **ne
+répond pas**, seul cas où l'absence de plafond se paie réellement.
 - `GET /sources` rend ce catalogue augmenté, et la page de chat en fait un
   **indicateur permanent** au-dessus du fil, avec un menu pour changer de source sans
   la taper. Le changement passe par `PUT /conversations/{id}/source` et s'inscrit dans
@@ -657,13 +718,19 @@ tests/
   défaut.
 - Le scénario golden n°1 est vérifié contre un **oracle pandas** calculé
   indépendamment du pipeline.
-- Deux runners vivent **hors de la suite**, parce qu'ils interrogent le vrai système
+- Des runners vivent **hors de la suite**, parce qu'ils interrogent le vrai système
   et qu'un verdict rendu par un modèle n'a rien à faire dans une CI déterministe :
-  `scripts/live_scenarios.py` (cinq conversations en cascade contre l'API en marche)
-  et `scripts/mesure_surface_conversationnelle.py` (la batterie de questions **sur le
+  `scripts/live_scenarios.py` (cinq conversations en cascade contre l'API en marche),
+  `scripts/mesure_surface_conversationnelle.py` (la batterie de questions **sur le
   système**, oracle tiré des sources de vérité et compteur d'appels LLM —
-  [surface-conversationnelle.md](surface-conversationnelle.md)). Le second est fait
-  pour être **rejoué** : avant/après une correction, ou après un changement de
+  [surface-conversationnelle.md](surface-conversationnelle.md)),
+  `scripts/mesure_choix_de_source.py` (le parcours multi-tours du choix de source) et
+  `scripts/mesure_trois_types_de_source.py` (**les trois types de source à la fois** —
+  `postgres`, `file` et `duckdb` dans le même catalogue et la même conversation,
+  oracle porté par des volumétries franchement distinctes : 837 / 111 / 40 052, si
+  bien qu'une réponse qui prend le chiffre d'une autre source est *fausse* et non
+  imprécise ; catalogue et oracles dans `tests/catalogues/trois-types/`). Ils sont
+  faits pour être **rejoués** : avant/après une correction, ou après un changement de
   modèle.
 - CI GitHub Actions : lint (ruff) + suite complète avec build de l'image sandbox
   (cache buildx) — couverture exigée ≥ 85 %.
@@ -699,6 +766,10 @@ plafonds de la sandbox).
 | `DAA_ANALYSIS_MAX_ATTEMPTS` | `3` | essais de self-debug du code |
 | `DAA_ANALYSIS_TABLE_MAX_ROWS` | `10000` | lignes matérialisées par table pour l'analyse. **Au-delà, la table est coupée** et l'avertissement part dans le contexte du code généré, dans la trace et dans la réponse : un agrégat calculé sur un échantillon ne doit pas se présenter comme complet |
 | `DAA_MODELS_REGISTRY_PATH` | `models/registry.yaml` | registre des modèles ML |
+| `DAA_RELEVE_DELAI` | `10.0` | délai max du relevé d'**une** source (s). Au-delà, la ligne est dégradée en injoignable avec sa raison, au lieu de retenir l'inventaire. `0` = pas de délai |
+| `DAA_RELEVE_PEREMPTION` | `900.0` | durée de validité d'un relevé **réussi** (s). Une volumétrie bouge à l'échelle du chargement nocturne, pas de la minute. `0` = aucune mise en cache |
+| `DAA_RELEVE_REPRISE` | `30.0` | délai avant de re-tenter une source **injoignable** (s). Bien plus court : une panne se répare en minutes, et le coût d'une reprise inutile est une connexion refusée. `0` = aucune mise en cache |
+| `DAA_RELEVE_SEUIL_APPROXIMATION` | `100000` | au-dessus de ce nombre de lignes, la table est **estimée** par le moteur (`reltuples`) au lieu d'être comptée, et le chiffre est affiché avec un `~`. Sans effet sur DuckDB, qui compte depuis ses métadonnées (mesuré). `0` = jamais d'estimation |
 
 ### Mémoire de conversation et contexte du modèle
 

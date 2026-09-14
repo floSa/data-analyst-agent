@@ -193,23 +193,43 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 ## Performance
 
-### Le relevé d'une source n'est borné ni en temps, ni dans la durée
+### Le relevé d'une source n'était borné ni en temps, ni dans la durée
 
 - **Où** : [`agents/retrieval/faits.py`](../src/data_analyst_agent/agents/retrieval/faits.py),
   `RelevesDuCatalogue`, appelé au premier inventaire de la session.
 - **Constat** : décrire une source, c'est un `count(*)` par table plus un `min`/`max`
-  sur sa colonne de date. Aucun délai maximal, aucune limite de volume.
-- **Problème** : la plus grosse source mesurée fait 620 lignes. Sur la base Maxizoo
-  — 1,66 M de lignes, dix tables — le **premier** inventaire de la session paie tous
-  ces comptages d'un coup, et l'utilisateur attend sans savoir pourquoi.
-- **Second défaut, distinct** : le relevé n'est **jamais rafraîchi** après le premier
-  inventaire. Une source qui grossit ou qui redevient joignable pendant la session
-  continue d'être décrite avec les chiffres du début.
-- **Correction proposée** : un délai maximal par source, qui dégrade la ligne en
-  « injoignable » comme le fait déjà l'échec de connexion ; une approximation pour les
-  grandes tables (`reltuples` sous Postgres, métadonnées DuckDB) plutôt qu'un
-  `count(*)` exact ; et une péremption du relevé.
-- **Statut** : Ouvert. Relevé en mesurant C15, hors de son périmètre.
+  sur sa colonne de date. Aucun délai maximal, aucune limite de volume, et un relevé
+  gardé jusqu'au redémarrage.
+- **Problème n°1, le relevé n'était jamais rafraîchi.** Observé en vrai le
+  2026-09-14 : Postgres arrêté au démarrage, la réponse de liaison annonçait
+  « volumétrie non relevée » et continuait de l'annoncer alors que la base répondait
+  de nouveau depuis plusieurs minutes.
+- **Problème n°2, le relevé n'était pas borné en temps.** Une source **muette** — dont
+  le TCP part et ne revient jamais — retenait l'inventaire entier sans plafond
+  (mesuré : toujours bloqué au bout de 75 s, le temps du délai TCP du système).
+- **Corrigé** (C18) par quatre bornes réglables (`DAA_RELEVE_*`, cf.
+  [ARCHITECTURE §7](ARCHITECTURE.md#7-configuration-daa_)) :
+  une **reprise** courte pour une source injoignable (30 s), une **péremption** du
+  relevé réussi (15 min), un **délai maximal** par source (10 s) qui dégrade la ligne
+  en injoignable avec sa raison, et une **estimation** du moteur (`reltuples`)
+  au-dessus de 100 000 lignes plutôt qu'un `count(*)` exact — le chiffre s'affiche
+  alors avec un `~`, jamais fondu dans un total présenté comme exact. Le délai est
+  tenu par un fil démon : `concurrent.futures` joint ses fils à la sortie de
+  l'interpréteur, et le process aurait refusé de s'arrêter tant que la source n'a pas
+  répondu. Tout cela est rejouable — `scripts/mesure_releve_des_sources.py` monte les
+  trois bancs et joue chaque défaut avant/après dans la même exécution.
+- **Ce que la mesure a démenti** : le coût redouté du premier inventaire sur la grosse
+  base. Sur la base DuckDB de 1,66 M de lignes et dix tables, il tient en **83,5 ms**
+  (médiane de neuf relevés, cache disque vidé), comptages compris — DuckDB répond
+  `count(*)` depuis ses métadonnées, et les dix comptages pèsent 2,7 ms à eux tous.
+  Le bornage le porte à 95,0 ms, soit ~11 ms pour le fil qui tient le délai.
+  **Conséquence sur l'approximation** : elle n'est appliquée qu'à Postgres, qui balaie
+  vraiment (88 ms contre 1,5 ms de `reltuples`). L'appliquer à DuckDB coûtait *plus*
+  cher que compter (27,6 ms contre 13,9 ms) pour un chiffre moins sûr — c'était
+  dégrader sans contrepartie. Ce n'est donc pas elle qui justifie le bornage : c'est
+  la source qui ne répond pas.
+- **Statut** : **Traité** (C18, 2026-09-14). Relevé en mesurant C15, hors de son
+  périmètre.
 
 ### La période affichée est celle de la première colonne de date, sans choix
 
@@ -273,6 +293,26 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 ---
 
 ## Dette et portabilité
+
+### Le catalogue n'acceptait que `postgres` et `file`
+
+- **Où** : [`agents/retrieval/catalog.py`](../src/data_analyst_agent/agents/retrieval/catalog.py)
+- **Problème** : entre « un serveur Postgres » et « un fichier » manquait la forme qu'a
+  n'importe quel gros jeu de données local — une base DuckDB (`.duckdb`). Passée par la
+  porte `file`, elle aurait perdu ce qui en fait une base : un CSV et un classeur n'ont
+  aucune contrainte à déclarer, donc un schéma en étoile serait arrivé au modèle **sans
+  ses clés étrangères**, à charge pour lui de deviner les jointures.
+- **Corrigé** (C18) : un troisième type `duckdb`, avec son adaptateur
+  (`DuckDBAdapter.from_database`) — ouverture en lecture seule, pour que l'API et un
+  notebook puissent ouvrir la même base sans se voler le verrou disque ; relecture des
+  contraintes par `duckdb_constraints()` (clés primaires **et** étrangères) ; et le
+  verrou d'accès à l'hôte posé dans `__init__`, seul point de passage commun aux deux
+  portes — `read_only` protège la base, pas le disque autour.
+- **Mesuré** : les trois types déclarés dans le même catalogue et exercés dans la même
+  conversation, **6/6 tours justes** — `tests/catalogues/trois-types/` et
+  `scripts/mesure_trois_types_de_source.py`. Le portage est par ailleurs éprouvé sur une
+  base réelle de 1,66 M de lignes et dix tables.
+- **Statut** : **Traité** (C18, 2026-09-14).
 
 ### Seul le prompt du planificateur est budgété
 
@@ -353,6 +393,9 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 | P0 | Verrou DuckDB absent de la branche `Maxizoo` | Ouvert | Le SQL généré y lit les fichiers de l'hôte |
 | P1 | Anti-force brute par adresse derrière un frontal | Ouvert | Un échec quelconque verrouille tous les comptes |
 | — | Questions SUR le système sans route | **Corrigé** | Était : 8 replis et 4 réponses à côté sur 21 questions méta. Devenu 21/21, et 9 appels LLM au lieu de 43 |
+| — | Catalogue limité à `postgres` et `file` | **Corrigé** | Un troisième type `duckdb`, qui apporte les clés étrangères qu'aucun fichier ne déclare. Mesuré 6/6 sur les trois types à la fois |
+| — | Relevé jamais rafraîchi | **Corrigé** | Était : une source revenue restait « non relevée » toute la session. Devenue re-tentée au bout de 30 s, et périmée au bout de 15 min |
+| — | Relevé non borné en temps | **Corrigé** | Était : une source muette bloquait l'inventaire sans plafond (mesuré : > 75 s). Devenue dégradée en injoignable au bout de 10 s |
 | P1 | Migration des conversations réelles jamais exécutée | Ouvert | Les fils existants restent hors de l'arborescence par utilisateur |
 | P1 | Aucun fichier `LICENSE` | Ouvert | L'annonce MIT du README est sans portée |
 | P2 | argon2 non plafonné face au pool de threads | Ouvert | Une rafale de connexions réserve ~2,5 Gio |
