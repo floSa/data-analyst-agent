@@ -560,6 +560,17 @@ _PUCE = re.compile(r"^\s*[-*]\s")
 # contenant un blanc souligné, en revanche, n'est jamais de la prose française.
 _ENTRE_ACCENTS = re.compile(r"`([^`\n]{1,64})`")
 _EN_SERPENT = re.compile(r"\b([A-Za-z]+(?:_[A-Za-z0-9]+)+)\b")
+# Une énumération tenue sur UNE ligne : un deux-points suivi de noms, jusqu'au
+# point qui clôt la phrase (« Mes sources : `titanic`, `iris`. »). Le groupe
+# s'arrête sur `.` et sur `:` — la seconde borne parce qu'une même ligne en
+# porte deux (« … Mes modèles de prédiction : `iris`. ») et que chacune est une
+# énumération à part entière. Exige au moins un caractère non blanc : un
+# deux-points en FIN de ligne introduit ce qui suit, il n'énumère rien.
+_EN_LIGNE = re.compile(r":[^\S\n]*([^.:\n]*\S)")
+# Une citation Markdown. Les faits recopient là le dictionnaire de la source —
+# le seul texte de ce module que nous n'écrivons pas. Sa ponctuation ne nous
+# engage pas : on n'y lit aucune énumération.
+_CITATION = re.compile(r"^\s*>")
 
 
 def _identifiants(texte: str, *motifs: re.Pattern[str]) -> list[str]:
@@ -578,14 +589,16 @@ def _identifiants(texte: str, *motifs: re.Pattern[str]) -> list[str]:
 
 
 def _enumeres(faits: str) -> list[str]:
-    """Ce dont chaque puce des faits PARLE — ce qui doit revenir entier.
+    """Ce dont les faits PARLENT — ce qui doit revenir entier.
 
-    La règle tient en une phrase : *ce qu'une puce nomme doit revenir, ce
-    qu'elle en dit est du contexte.* Le premier nom décoré de la ligne est son
-    sujet ; ce qui suit — le type d'une colonne, la cible d'un modèle — est un
-    détail qu'une bonne réponse a le droit de ne pas recopier.
+    La règle tient en une phrase : *ce qu'un fait nomme doit revenir, ce qu'il
+    en dit est du contexte.* Les faits nomment de **deux** façons, et il a
+    fallu les mesurer pour le voir.
 
-    Trois conséquences, et chacune corrige un rejet mesuré à tort :
+    **Une puce.** Le premier nom décoré de la ligne en est le sujet ; ce qui
+    suit — le type d'une colonne, la cible d'un modèle — est un détail qu'une
+    bonne réponse a le droit de ne pas recopier. Trois conséquences, chacune
+    corrigeant un rejet mesuré à tort :
 
     - une ligne d'**en-tête** n'énumère rien (« La table `passengers` de la
       source `titanic` : ») — exiger `titanic` d'une réponse qui listait
@@ -594,17 +607,40 @@ def _enumeres(faits: str) -> list[str]:
       en SQL** — … ») ne réclame rien : elle ne nomme aucun identifiant ;
     - une puce **sans** décoration rend son premier jeton, ce qui rattrape les
       champs nus de ``describe_features``.
+
+    **Une énumération tenue sur une ligne**, et c'est ce qui manquait. Tous les
+    faits ne listent pas en puces : ``decrire_les_capacites`` termine par « Mes
+    sources : `titanic`, `iris`. Mes modèles de prédiction : … », une ligne
+    ordinaire qui nomme pourtant tout l'inventaire. La ceinture n'y voyait
+    rien, et le trou s'est mesuré le 2026-09-14 : à « Sur quoi peux-tu
+    travailler ? », le modèle appelait bel et bien son outil, recevait ces
+    noms, et rendait « Je peux interroger des sources en SQL, analyser… » — la
+    liste des capacités résumée, l'inventaire tombé. Rien ne l'arrêtait,
+    puisque aucune PUCE ne portait `titanic`. Ici, contrairement à la puce, ce
+    sont **tous** les noms du segment qui sont exigés : une énumération n'a pas
+    de sujet, elle n'a que des membres.
+
+    Le deux-points qui termine une ligne en est exclu — il introduit ce qui
+    suit, il n'énumère rien —, et les lignes de **citation** avec lui : elles
+    recopient le dictionnaire de la source, seul texte que ce module n'écrit
+    pas, dont la ponctuation ne nous engage donc pas.
     """
     noms: dict[str, None] = {}
-    for ligne in faits.splitlines():
-        if not _PUCE.match(ligne):
+    for brute in faits.splitlines():
+        ligne = brute.replace("\\", "")
+        if _CITATION.match(ligne):
             continue
-        decore = _DECORE.search(ligne.replace("\\", ""))
-        candidats = (
-            _identifiants(decore.group(0), _DECORE) if decore else _identifiants(ligne, _JETON)
-        )
-        if candidats:
-            noms.setdefault(candidats[0], None)
+        if _PUCE.match(ligne):
+            decore = _DECORE.search(ligne)
+            candidats = (
+                _identifiants(decore.group(0), _DECORE) if decore else _identifiants(ligne, _JETON)
+            )
+            if candidats:
+                noms.setdefault(candidats[0], None)
+            continue
+        for segment in _EN_LIGNE.findall(ligne):
+            for nom in _identifiants(segment, _DECORE):
+                noms.setdefault(nom, None)
     return list(noms)
 
 

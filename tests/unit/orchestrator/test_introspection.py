@@ -221,6 +221,67 @@ def test_ce_qu_une_puce_dit_de_son_sujet_n_est_pas_exigible():
     assert "titanic" in introspection.defaut_de_fondation("Je dispose d'un modèle.", faits)
 
 
+def test_un_inventaire_enumere_en_ligne_est_exigible(catalogue: Catalog, registre: Registry):
+    """Le défaut du 2026-09-14, et la mesure qui l'a montré.
+
+    « Sur quoi peux-tu travailler ? » : le modèle appelle bien
+    ``capacites_de_l_agent``, dont le texte finit par « Mes sources :
+    `titanic`, `iris`. Mes modèles de prédiction : … » — une ligne ordinaire,
+    sans puce. Il en rendait le résumé sans les noms, et la ceinture ne voyait
+    rien à redire puisqu'aucune PUCE ne les portait. Sous Ollama le même modèle
+    recopiait les faits au long et les noms survivaient par accident ; le
+    passage à vLLM, plus concis, a découvert le trou.
+    """
+    faits = introspection.decrire_les_capacites(catalogue, registre)
+    # la réponse réellement mesurée sous vLLM, mot pour mot
+    resumee = (
+        "Je peux interroger des sources en SQL, analyser et visualiser des données avec "
+        "du code Python, prédire des cas ou des individus en utilisant des modèles, et "
+        "répondre sur moi-même concernant mes sources, leurs structures, mes modèles et "
+        "leurs exigences."
+    )
+
+    defaut = introspection.defaut_de_fondation(resumee, faits)
+
+    assert "titanic" in defaut
+    assert "iris" in defaut
+    # et une formulation qui porte l'inventaire reste servie : la ceinture
+    # écarte une omission, elle ne rend pas le gabarit obligatoire
+    assert (
+        introspection.defaut_de_fondation(
+            "Je sais interroger, analyser et prédire. Mes sources : `titanic`, `iris` ; "
+            "mes modèles : `titanic`, `california_housing`.",
+            faits,
+        )
+        == ""
+    )
+
+
+def test_un_deux_points_en_fin_de_ligne_n_enumere_rien():
+    """Il introduit ce qui suit ; c'est la puce suivante qui nomme.
+
+    Sans cette borne, l'énumération en ligne aurait ressuscité le rejet mesuré
+    à tort du 2026-09-07 : exiger `titanic` d'une réponse qui listait
+    correctement les colonnes de `passengers`.
+    """
+    faits = (
+        "La table `passengers` de la source `titanic` :\n\n"
+        "- **passengers** (1 colonne) :\n    - `sex` (TEXT)"
+    )
+
+    reponse = "La table `passengers` a une colonne : `sex`."
+
+    assert introspection.defaut_de_fondation(reponse, faits) == ""
+
+
+def test_une_citation_du_dictionnaire_n_enumere_rien():
+    """Le seul texte de faits que ce module n'écrit pas : sa ponctuation
+    n'engage personne, et un `>` n'est pas une déclaration de nos artefacts."""
+    faits = "Ce qu'en dit le dictionnaire de `titanic` :\n> tarif : en `livres` sterling"
+
+    assert introspection.defaut_de_fondation("Le tarif est en livres.", faits) == ""
+
+
 def test_une_reponse_vide_ou_hors_sujet_ne_se_sert_pas():
     assert introspection.defaut_de_fondation("   ", "- `titanic`") == "réponse vide"
     assert introspection.defaut_de_fondation("AUTRE", "- `titanic`") == "réponse hors sujet"
