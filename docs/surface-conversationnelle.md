@@ -29,6 +29,7 @@ formulation à laquelle personne n'avait pensé.
 | 13 | ce qui restait ouvert **au moment du §12** | daté : le §14 en reprend deux points |
 | **14** | l'**ordre du catalogue** décidait de la réponse, mesuré dans les deux sens ; ce qui a été corrigé, et l'inventaire qui se lit au lieu de se réciter | **oui** |
 | **15** | la même batterie sur **deux moteurs** — le trou de la ceinture que vLLM a découvert, et la mesure à 36/36 des deux côtés | **oui** |
+| **16** | le typage des arguments d'outil : le **seul** champ que le schéma ne déclare pas, et la prédiction que seul Ollama rendait | **oui** |
 
 ## 1. Le défaut constaté, et sa cause
 
@@ -1483,9 +1484,11 @@ l'agent SQL, et ce n'était pas son objet.
 - **`temoin-colonnes-a-trous`** — l'agent SQL, sur les deux moteurs, par deux
   chemins différents. Le seul écart de la batterie qui ne soit pas expliqué
   par ce §15 ;
-- **les arguments d'outil en chaînes sous vLLM** — `'1'` pour un
-  `Literal[1, 2, 3]`. Vu ici sur une prédiction ; rien ne dit qu'il ne touche
-  que celle-là ;
+- ~~**les arguments d'outil en chaînes sous vLLM**~~ — **traité depuis**,
+  [§16](#16-literal1-2-3-refusait-1--la-prédiction-que-seul-ollama-rendait).
+  L'étendue mesurée n'était pas celle qu'on supposait : ce n'est pas vLLM qui
+  rend des chaînes, c'est `Plan.features` qui ne déclare aucun type — le seul
+  argument d'outil du système dans ce cas ;
 - **la ceinture ne garde que des noms.** « je peux te demander quoi ? » est
   rattrapé parce que la même réponse omettait aussi des noms. Une réponse qui
   citerait tous les noms et aucune action passerait — c'est un comportement de
@@ -1494,3 +1497,209 @@ l'agent SQL, et ce n'était pas son objet.
   prompt pour le faire dépasser. Le *fail-open* a fait son office — le tour est
   reparti au planificateur au lieu d'échouer — mais la réponse rendue n'était
   pas la bonne, et rien dans l'interface ne le disait.
+
+## 16. `Literal[1, 2, 3]` refusait `'1'` : la prédiction que seul Ollama rendait
+
+Le [§15.7](#157-ce-qui-reste-ouvert-après-le-15) laissait deux écarts ouverts.
+Celui-ci en ferme un : `temoin-prediction`, correct sous Ollama et **à côté sous
+vLLM**, pour la même question et le même modèle.
+
+> Le `.env` n'a pas été touché. Ollama reste le moteur en service ; les mesures
+> sous vLLM se font par `DAA_LLM_BASE_URL` et `DAA_LLM_MODEL` à l'exécution.
+
+### 16.1 Le défaut, reproduit sur les deux moteurs avant de toucher à rien
+
+Question de la batterie, conversation neuve, `HEAD d8c0142` :
+
+> Prédis la survie d'une passagère de 1re classe de 28 ans, tarif 80 livres,
+> embarquée à Southampton, sans frère, sœur, parent ni enfant à bord.
+
+Le plan rendu par le planificateur, valeur par valeur, avec son type Python :
+
+| Feature | Ollama | vLLM |
+|---|---|---|
+| `sex` | `'female'` *(str)* | `'female'` *(str)* |
+| `pclass` | `1` *(int)* | `'1'` *(str)* |
+| `age` | `28` *(int)* | `'28'` *(str)* |
+| `sibsp` | `0` *(int)* | `'0'` *(str)* |
+| `parch` | `0` *(int)* | `'0'` *(str)* |
+| `fare` | `80` *(int)* | `'80'` *(str)* |
+| `embarked` | `'S'` *(str)* | `'S'` *(str)* |
+
+**L'extraction est juste des deux côtés.** Le modèle a compris la question,
+traduit « 1re classe » en `pclass=1` et « Southampton » en `embarked='S'`. Seul
+le type diffère. Et les réponses divergent :
+
+```
+Ollama : Prédiction (titanic) : a survécu (probabilité 93.4%)
+         — détail : n'a pas survécu : 6.6%, a survécu : 93.4%
+
+vLLM   : Je ne peux pas encore lancer la prédiction titanic :
+         - pclass (Classe du billet (1re, 2e, 3e)) : Input should be 1, 2 or 3 (reçu : '1')
+         Peux-tu me donner ces informations ?
+```
+
+### 16.2 Ce n'est pas « vLLM rend des chaînes »
+
+C'était l'explication de travail, et elle est fausse. Un tool aux arguments
+**typés** a été posé aux deux serveurs — `integer`, `number`, `boolean`, et un
+`integer` sous `enum` — avec `tool_choice="required"`
+([`scripts/mesure_typage_des_arguments_d_outil.py`](../scripts/mesure_typage_des_arguments_d_outil.py)) :
+
+```
+Ollama : {"acompte":25.5,"convives":4,"etage":2,"nom":"Dupont","terrasse":true}
+vLLM   : {"acompte": 25.5, "convives": 4, "etage": 2, "nom": "Dupont", "terrasse": true}
+```
+
+**Types identiques, aux espaces près.** Quand le JSON Schema déclare le type,
+les deux serveurs le respectent. Ce qui les sépare, c'est ce qu'ils font quand
+il ne déclare **rien** — et le schéma du `Plan` a exactement un endroit comme
+ça :
+
+```json
+"features": { "additionalProperties": true, "type": "object" }
+```
+
+`Plan.features` est un `dict[str, Any]`, et c'est **délibéré** : le
+planificateur extrait des valeurs sans savoir encore de quel dataset elles
+relèvent. C'est le seul argument d'outil de tout le système qui arrive sans type
+annoncé. Tous les autres champs du plan — `capability`, `source`, `dataset`,
+`data_question`, `reason` — sont déclarés `string`, et sont indemnes : mesurés
+sous vLLM, ils rendent bien des `str` et des `None`. Les cinq tools de l'agent
+système et les trois de l'agent SQL n'ont que des arguments texte : indemnes par
+construction. Cela ferme aussi le premier point resté ouvert au
+[§8.3 de VLLM.md](VLLM.md#83-ce-qui-reste-non-mesuré-côté-agent-système).
+
+### 16.3 L'étendue : tout arrivait en chaînes, une seule chose cassait
+
+Les trois schémas de features, mesurés sous vLLM, question complète pour chacun :
+
+| Schéma | Champs rendus en chaînes | Validation | Prédiction |
+|---|---|---|---|
+| `titanic` | **7 / 7** | **échoue** sur `pclass` | refusée |
+| `iris` | **4 / 4** | passe | `setosa` (98.5 %) |
+| `california_housing` | **8 / 8** | passe | 4.139 |
+
+**Tout arrivait en chaînes ; une seule feature faisait échouer la validation.**
+Pydantic, en mode souple, lit déjà `'28'` comme un `float` et `'322'` comme un
+`int` — les dix-neuf champs `int`/`float` des trois schémas passaient donc tout
+seuls. Il ne rattrape pas `Literal[1, 2, 3]`, qui **compare des valeurs** : pour
+lui `'1'` n'est pas `1`. `pclass` est le seul `Literal` d'entiers des trois
+schémas ; `sex` et `embarked` sont des `Literal` de chaînes, et une chaîne est
+ce qu'ils attendent.
+
+Autrement dit **iris et california passaient par accident**, et le prochain
+`Literal` d'entiers ajouté à un schéma aurait rouvert le défaut. Il n'y a aucun
+champ booléen dans les trois schémas aujourd'hui — la question posée en amont
+n'était donc pas mesurable sur eux, et la conversion en traite un par avance.
+
+### 16.4 La correction : une conversion, à la frontière, pilotée par le schéma
+
+`validation.coerce_values`, entre le réalignement des clés et le schéma. Elle ne
+peut pas vivre plus tôt : **le type attendu d'une feature n'existe nulle part
+avant ce module**, puisque le planificateur ne connaît pas encore le dataset. Et
+elle ne vit pas non plus dans les schémas : elle lit leurs annotations, donc
+aucun des trois n'a à s'en soucier, ni le prochain.
+
+Ce qu'elle fait, et ce qu'elle refuse de faire :
+
+- elle ne touche **qu'aux chaînes** — une valeur déjà typée passe telle quelle ;
+- elle ne convertit que vers un type **sans ambiguïté** : `Literal[1, 2, 3]`
+  attend un `int`, `Literal['S', 'C', 'Q']` une `str` (rien à faire), un
+  `Literal[1, 'un']` ou un `int | str` ne désignent rien et sont laissés ;
+- une chaîne **illisible reste la chaîne d'origine**, pour que le schéma refuse
+  en citant ce qui a été écrit plutôt qu'une exception avalée ailleurs ;
+- les booléens passent par une table explicite, jamais par `bool()` — qui rend
+  `True` pour `'false'`.
+
+### 16.5 La garde n'a pas bougé
+
+C'était le risque : remplacer un défaut visible par un défaut muet. Les cas
+hostiles, tous rejoués après la correction :
+
+| Entrée | Verdict | Message rendu |
+|---|---|---|
+| `pclass='1'` | **acceptée** | — *(prédiction : a survécu, 93.4 %)* |
+| `pclass='4'` | **refusée** | `pclass (Classe du billet…) : Input should be 1, 2 or 3 (reçu : 4)` |
+| `pclass='abc'` | **refusée** | `… Input should be 1, 2 or 3 (reçu : 'abc')` |
+| `pclass='3e classe'` | **refusée** | `… Input should be 1, 2 or 3 (reçu : '3e classe')` |
+| `pclass=''` | **refusée** | `… Input should be 1, 2 or 3 (reçu : '')` |
+| `age='150'` | **refusée** | `age (Âge en années) : Input should be less than or equal to 100` |
+| `age='douze'` | **refusée** | `age : … unable to parse string as a number (reçu : 'douze')` |
+| `embarked='X'` | **refusée** | `embarked (Port d'embarquement…) : Input should be 'S', 'C' or 'Q'` |
+
+Deux chemins distincts, et c'est voulu. `'4'` **est** converti, en `4`, et c'est
+le `Literal` qui le refuse — le message cite `4`. `'abc'` n'est **pas**
+convertible, reste `'abc'`, et le `Literal` le refuse en citant `'abc'`. Dans
+les deux cas une erreur de validation lisible, jamais un silence.
+
+`'3e classe'` n'est pas un cas de laboratoire : c'est ce que rend la source
+Postgres sur le chemin `fetch_then_predict`, où la table `classes` porte le
+libellé humain. Il doit rester refusé, et il l'est.
+
+### 16.6 La batterie complète, sur les deux moteurs
+
+```bash
+# Ollama (le moteur du .env, inchangé)
+uv run python scripts/mesure_surface_conversationnelle.py
+
+# vLLM, par variables d'environnement
+DAA_LLM_BASE_URL=http://localhost:8100/v1 \
+DAA_LLM_MODEL=google/gemma-4-E4B-it-qat-w4a16-ct \
+uv run python scripts/mesure_surface_conversationnelle.py
+```
+
+| Moteur | Passage | Méta | Témoins | Appels LLM (36 méta) | Durée des 36 méta |
+|---|---|---|---|---|---|
+| vLLM | §15 (avant ce §16) | 36 / 36 | 2 / 4 | 78 | 118 s, 122 s |
+| vLLM | **après** | **36 / 36** | **3 / 4** | 78 | 79 s |
+| Ollama | §15 (avant ce §16) | 36 / 36 | 3 / 4 | 78 | 568 s, 334 s |
+| Ollama | **après** | **36 / 36** | **4 / 4** | 78 | 333 s |
+
+**Aucune régression sur les 36 questions méta**, et le coût en appels LLM est
+inchangé — 78 des deux côtés, comme au §15. Attendu : la correction est en aval
+du nœud système, sur le chemin d'inférence, et ne lui ôte ni ne lui ajoute un
+seul aller-retour. Les questions méta restent servies par l'agent système à 35
+sur 36 sous Ollama et 34 sur 36 sous vLLM, exactement comme au §15.
+
+Les durées ne comparent pas les deux serveurs : la même carte les servait tous
+les deux.
+
+### 16.7 Les témoins
+
+| Témoin | vLLM §15 | vLLM après | Ollama §15 | Ollama après |
+|---|---|---|---|---|
+| `temoin-comptage` | correct | correct | correct | correct |
+| `temoin-maximum` | correct | correct | correct | correct |
+| `temoin-colonnes-a-trous` | à côté | à côté | à côté / erreur | **correct** |
+| `temoin-prediction` | **à côté** | **correct** | correct | correct |
+
+**`temoin-prediction` passe désormais sous vLLM**, avec la réponse mot pour mot
+de l'oracle Ollama :
+
+> Prédiction (titanic) : a survécu (probabilité 93.4%) — détail : n'a pas
+> survécu : 6.6%, a survécu : 93.4%
+
+Deux appels LLM, `capability = predict`, synthèse « modèle (déterministe) » :
+même chemin, même coût, même résultat que sous Ollama.
+
+**`temoin-colonnes-a-trous` reste hors sujet, et il faut le dire proprement.**
+Il est passé sous Ollama à ce passage-ci — le §15.6 avait déjà relevé qu'il
+n'est **pas déterministe** de ce côté : il a consommé 10 appels LLM, soit
+exactement `retrieval_request_limit`, contre 5 pour les autres témoins. Il rate
+toujours sous vLLM, et par le même chemin qu'au §15 : `SELECT * FROM passengers
+WHERE … IS NULL`, 179 lignes rendues au lieu de la liste des colonnes. C'est un
+défaut de l'agent SQL, antérieur à ce chantier, **non traité ici** : il appelle
+sa propre mesure.
+
+### 16.8 Ce qui reste ouvert après le §16
+
+- **`temoin-colonnes-a-trous`** — le dernier écart de la batterie, sur les deux
+  moteurs. Inchangé depuis le §14 ;
+- **la conversion ne lit que des scalaires.** Hors booléen et nombre, elle
+  s'abstient et laisse le schéma trancher. Aucun schéma de features n'a
+  aujourd'hui de date, de décimal ni de liste ; le jour où l'un en aura, il
+  faudra remesurer plutôt que supposer ;
+- **`Plan.features` reste non typé**, et c'est le bon choix — mais c'est donc
+  toujours le seul argument d'outil du système dont le serveur devine le type.
+  La conversion rattrape la devinette ; elle ne la supprime pas.

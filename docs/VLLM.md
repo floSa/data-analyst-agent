@@ -631,20 +631,96 @@ avant.
 
 Les deux témoins qui restent en échec sont en aval du nœud système — l'agent
 SQL sur les deux moteurs, et sous vLLM une validation de features qui refuse
-`'1'` pour un `Literal[1, 2, 3]`. Ce dernier est le seul écart de cette mesure
-qui soit **propre à vLLM** : le modèle y rend ses arguments d'outil en chaînes
-là où Ollama rend des entiers. Il est détaillé au
+`'1'` pour un `Literal[1, 2, 3]`. Il est détaillé au
 [§15.6](surface-conversationnelle.md#156-les-témoins-et-les-deux-questions-de-données-qui-restent).
+
+> **Ce paragraphe disait « le modèle y rend ses arguments d'outil en chaînes là
+> où Ollama rend des entiers », et concluait à un écart propre à vLLM. Mesuré
+> depuis : c'est faux** — à type déclaré, les deux serveurs rendent la même
+> chose. L'écart tient à un champ que le schéma ne type pas, et il est corrigé.
+> Voir le [§8.4](#84-les-arguments-doutil-typés--ce-nest-pas-le-serveur-qui-stringifie).
+> `temoin-prediction` passe désormais sous vLLM.
 
 ### 8.3 Ce qui reste non mesuré côté agent système
 
-- **Les arguments d'outil typés.** Les cinq tools de l'agent système n'ont que
-  des arguments texte, facultatifs : la différence de typage vue sur la
-  prédiction ne s'y manifeste pas. Un tool à argument entier ou booléen n'a pas
-  été essayé sous vLLM ;
+- ~~**Les arguments d'outil typés.**~~ **Mesuré depuis** —
+  [§8.4](#84-les-arguments-doutil-typés--ce-nest-pas-le-serveur-qui-stringifie).
+  Un tool à arguments `integer`, `number`, `boolean` et `enum` d'entiers rend
+  les mêmes types sur les deux serveurs. Les cinq tools de l'agent système
+  n'ont, eux, que des arguments texte facultatifs : indemnes par construction ;
 - **le plafond d'allers-retours.** `systeme_request_limit = 4` a été dépassé
   sous vLLM par une simple consigne de prompt, sur une question qui tenait en
   deux appels sous Ollama. Le nombre de tours que le modèle veut mener dépend
   donc du serveur, et il n'est pas mesuré ;
 - **la concurrence**, toujours : ces 40 questions sont posées en série, comme
   toutes les mesures de ce document.
+
+### 8.4 Les arguments d'outil typés : ce n'est pas le serveur qui stringifie
+
+Le [§8.3](#83-ce-qui-reste-non-mesuré-côté-agent-système) laissait ouvert
+« un tool à argument entier ou booléen n'a pas été essayé sous vLLM », et le
+[§8.2](#82-la-batterie-complète-moteur-contre-moteur) imputait à vLLM le refus
+de `'1'` pour un `Literal[1, 2, 3]`. **Mesuré : l'imputation était fausse.**
+
+Mesure du 2026-09-14, un tool aux arguments explicitement typés — `string`,
+`integer`, `number`, `boolean`, et un `integer` sous `enum` (la forme que prend
+un `Literal[1, 2, 3]` en JSON Schema) — posé aux deux serveurs avec
+`tool_choice="required"`, température 0. Elle se rejoue :
+
+```bash
+uv run python scripts/mesure_typage_des_arguments_d_outil.py
+```
+
+> Réserve une table pour Dupont, 4 convives, 25.5 euros d'acompte, en terrasse,
+> au 2e étage.
+
+```
+Ollama : {"acompte":25.5,"convives":4,"etage":2,"nom":"Dupont","terrasse":true}
+vLLM   : {"acompte": 25.5, "convives": 4, "etage": 2, "nom": "Dupont", "terrasse": true}
+```
+
+| Argument | Type déclaré | Ollama | vLLM |
+|---|---|---|---|
+| `nom` | `string` | `'Dupont'` | `'Dupont'` |
+| `convives` | `integer` | `4` | `4` |
+| `acompte` | `number` | `25.5` | `25.5` |
+| `terrasse` | `boolean` | `True` | `True` |
+| `etage` | `integer` + `enum` | `2` | `2` |
+
+**Les deux serveurs rendent les mêmes types, aux espaces près.** Quand le JSON
+Schema déclare le type, vLLM le respecte — entier, flottant, booléen, et un
+entier sous `enum`, qui est justement la forme d'un `Literal[1, 2, 3]`.
+
+#### Où l'écart se produit réellement
+
+Dans le seul endroit du système où le schéma ne déclare **rien**. `Plan.features`
+est un `dict[str, Any]`, ce qui donne :
+
+```json
+"features": { "additionalProperties": true, "type": "object" }
+```
+
+C'est délibéré : le planificateur extrait des valeurs sans savoir encore de quel
+dataset elles relèvent. Sans type annoncé, chaque serveur devine — Ollama des
+nombres, vLLM des chaînes — et `Literal[1, 2, 3]`, qui compare des valeurs,
+refusait `'1'`.
+
+Tous les autres champs du plan (`capability`, `source`, `dataset`,
+`data_question`, `reason`) sont déclarés `string` : mesurés sous vLLM, indemnes.
+Les cinq tools de l'agent système et les trois de l'agent SQL n'ont que des
+arguments texte : indemnes par construction.
+
+La correction, l'étendue mesurée sur les trois schémas de features, les cas
+hostiles et la batterie complète rejouée sur les deux moteurs sont dans
+[surface-conversationnelle.md §16](surface-conversationnelle.md#16-literal1-2-3-refusait-1--la-prédiction-que-seul-ollama-rendait).
+Depuis, `temoin-prediction` passe sous vLLM avec la réponse mot pour mot de
+l'oracle Ollama.
+
+**Ce qu'il faut en retenir pour un futur banc.** Le §7.4 avait appris à ne pas
+valider un analyseur sur la seule sortie structurée ; le §8, à ne pas valider
+une bascule sur les seuls appels d'outils. Le §8.4 ajoute la marche d'après :
+**un `tool_calls` bien typé ne prouve rien là où le schéma ne dit pas le type.**
+Ce qui se compare d'un serveur à l'autre, ce n'est pas « rend-il des entiers »,
+c'est « que fait-il quand on ne lui demande rien ». Un schéma qui déclare tout
+ne laisse pas la question se poser — c'est aussi la parade la plus simple, quand
+le typage est connu à l'avance.
