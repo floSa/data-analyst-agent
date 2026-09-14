@@ -108,6 +108,50 @@ def test_flux_predict_complet(registry: Registry):
     assert answer.plan.capability == "predict"
 
 
+def test_flux_predict_complet_avec_des_features_en_chaines(registry: Registry):
+    """Le même plan, servi par vLLM : toutes les valeurs sont des chaînes.
+
+    Ce n'est pas une extraction ratée — c'est le moteur qui rend les arguments
+    d'appel d'outil en chaînes là où Ollama rend des nombres. Le tour doit
+    aboutir à la MÊME prédiction, sans quoi le serveur décide de ce que
+    l'utilisateur obtient.
+    """
+    en_chaines = {nom: str(valeur) for nom, valeur in TITANIC_OK.items()}
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [plan_response(Plan(capability="predict", dataset="titanic", features=en_chaines))],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)
+    answer = orchestrator.ask("Prédis la survie pour sexe=female, classe=1, âge=28...")
+
+    assert answer.error is None
+    assert "a survécu" in answer.answer
+    assert "88" in answer.answer
+    assert [s.node for s in answer.trace] == ["system", "plan", "inference", "synthesize"]
+
+
+def test_flux_predict_en_chaines_garde_la_garde(registry: Registry):
+    """Une classe inexistante reste refusée, chaîne ou pas : relance, pas prédiction."""
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(
+                Plan(
+                    capability="predict",
+                    dataset="titanic",
+                    features={**{n: str(v) for n, v in TITANIC_OK.items()}, "pclass": "4"},
+                )
+            )
+        ],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)
+    answer = orchestrator.ask("Prédis la survie d'une passagère de 4e classe")
+
+    assert answer.error is None
+    assert "Input should be 1, 2 or 3" in answer.answer
+    assert "a survécu" not in answer.answer
+
+
 def test_flux_predict_incomplet_redemande(registry: Registry):
     llm = ScriptedLLM().script(
         PLANNER,

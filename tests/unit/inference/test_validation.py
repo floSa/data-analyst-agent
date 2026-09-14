@@ -1,5 +1,10 @@
 """Validation des features : exhaustif sur les cas manquant/bornes/type/inconnu."""
 
+from datetime import date
+from typing import Literal
+
+from pydantic import BaseModel
+
 from data_analyst_agent.agents.inference.schemas import (
     SCHEMAS,
     CaliforniaHousingFeatures,
@@ -9,7 +14,11 @@ from data_analyst_agent.agents.inference.schemas import (
     field_choices,
     get_schema,
 )
-from data_analyst_agent.agents.inference.validation import format_reask, validate_features
+from data_analyst_agent.agents.inference.validation import (
+    coerce_values,
+    format_reask,
+    validate_features,
+)
 
 TITANIC_OK = {
     "sex": "female",
@@ -162,6 +171,159 @@ def test_champ_vraiment_inconnu_reste_signale():
 
     assert not outcome.valid
     assert any(i.problem == "champ_inconnu" and i.field == "couleur_petale" for i in outcome.issues)
+
+
+# -- arguments d'outil rendus en chaînes (vLLM vs Ollama) ------------------------
+
+# Ce que le planificateur a réellement rendu, servi par vLLM, pour « Prédis la
+# survie d'une passagère de 1re classe de 28 ans, tarif 80 livres, embarquée à
+# Southampton, sans frère, sœur, parent ni enfant à bord. » — l'extraction est
+# juste, TOUTES les valeurs sont des chaînes. Le même modèle servi par Ollama
+# rend `pclass=1`, `age=28`, `fare=80`, `sibsp=0`, `parch=0`.
+TITANIC_VLLM = {
+    "sex": "female",
+    "pclass": "1",
+    "age": "28",
+    "sibsp": "0",
+    "parch": "0",
+    "fare": "80",
+    "embarked": "S",
+}
+
+
+def test_prediction_complete_en_chaines_aboutit():
+    """Le moteur ne décide pas si une prédiction aboutit.
+
+    Refusée sous vLLM et acceptée sous Ollama, pour la même question et le même
+    modèle : c'est `Literal[1, 2, 3]` qui compare des valeurs, et pour qui '1'
+    n'est pas 1. Pydantic rattrapait déjà les `int`/`float` en mode souple.
+    """
+    outcome = validate_features(TitanicFeatures, TITANIC_VLLM)
+
+    assert outcome.valid, outcome.issues
+    assert outcome.features == TITANIC_OK
+
+
+def test_les_trois_schemas_encaissent_un_payload_tout_en_chaines():
+    """L'étendue mesurée : vLLM rend en chaînes TOUS les champs numériques."""
+    iris = validate_features(
+        IrisFeatures,
+        {"sepal_length": "5.1", "sepal_width": "3.5", "petal_length": "1.4", "petal_width": "0.2"},
+    )
+    assert iris.valid, iris.issues
+    assert iris.features == {
+        "sepal_length": 5.1,
+        "sepal_width": 3.5,
+        "petal_length": 1.4,
+        "petal_width": 0.2,
+    }
+
+    california = validate_features(
+        CaliforniaHousingFeatures,
+        {
+            "med_inc": "8.3",
+            "house_age": "41",
+            "ave_rooms": "6.98",
+            "ave_bedrms": "1.02",
+            "population": "322",
+            "ave_occup": "2.56",
+            "latitude": "37.88",
+            "longitude": "-122.23",
+        },
+    )
+    assert california.valid, california.issues
+    assert california.features["longitude"] == -122.23
+    assert california.features["population"] == 322.0
+
+
+def test_valeur_hors_bornes_en_chaine_reste_refusee():
+    """La coercition n'est pas un relâchement : '4' devient 4, et 4 est refusé."""
+    outcome = validate_features(TitanicFeatures, {**TITANIC_VLLM, "pclass": "4"})
+
+    assert not outcome.valid
+    issue = next(i for i in outcome.issues if i.field == "pclass")
+    assert issue.problem == "valeur_non_autorisee"
+    assert "Input should be 1, 2 or 3" in issue.message
+
+
+def test_valeur_non_convertible_reste_refusee_en_citant_ce_qui_a_ete_ecrit():
+    """Illisible => laissée telle quelle : le schéma refuse, et cite la chaîne.
+
+    C'est le cas réel de `fetch_then_predict`, où la source rend le libellé
+    humain « 3e classe » : il doit rester une erreur de validation lisible, pas
+    devenir un silence.
+    """
+    for valeur in ("abc", "3e classe", ""):
+        outcome = validate_features(TitanicFeatures, {**TITANIC_VLLM, "pclass": valeur})
+
+        assert not outcome.valid, valeur
+        issue = next(i for i in outcome.issues if i.field == "pclass")
+        assert repr(valeur) in issue.message
+
+    outcome = validate_features(TitanicFeatures, {**TITANIC_VLLM, "age": "douze"})
+    assert not outcome.valid
+    assert "'douze'" in next(i for i in outcome.issues if i.field == "age").message
+
+
+def test_les_bornes_valent_aussi_sur_une_chaine():
+    outcome = validate_features(TitanicFeatures, {**TITANIC_VLLM, "age": "150"})
+
+    assert not outcome.valid
+    issue = next(i for i in outcome.issues if i.field == "age")
+    assert issue.problem == "hors_bornes"
+
+
+def test_coercition_ne_touche_ni_aux_valeurs_deja_typees_ni_aux_champs_inconnus():
+    payload = {"pclass": 2, "age": 30.5, "sex": "male", "couleur_du_billet": "42"}
+
+    assert coerce_values(TitanicFeatures, payload) == payload
+
+
+def test_coercition_ignore_un_literal_de_chaines():
+    """`Literal['S', 'C', 'Q']` attend une str : rien à convertir, rien à casser."""
+    converti = coerce_values(TitanicFeatures, {"embarked": "S", "sex": "female"})
+
+    assert converti == {"embarked": "S", "sex": "female"}
+
+
+def test_coercition_lit_un_booleen_sans_passer_par_bool():
+    """`bool('false')` vaut True — d'où une table explicite plutôt qu'un appel."""
+
+    class AvecBooleen(BaseModel):
+        actif: bool
+        drapeau: Literal[True, False]
+
+    assert coerce_values(AvecBooleen, {"actif": "false", "drapeau": "0"}) == {
+        "actif": False,
+        "drapeau": False,
+    }
+    assert coerce_values(AvecBooleen, {"actif": " VRAI "}) == {"actif": True}
+    # illisible : laissé tel quel, le schéma tranchera
+    assert coerce_values(AvecBooleen, {"actif": "peut-être"}) == {"actif": "peut-être"}
+
+
+def test_coercition_deplie_l_optionnel_et_se_tait_sur_l_ambigu():
+    class Melange(BaseModel):
+        seuil: int | None = None
+        panache: Literal[1, "un"] = 1
+        indecis: int | str = 0
+
+    converti = coerce_values(Melange, {"seuil": "7", "panache": "1", "indecis": "3"})
+
+    assert converti["seuil"] == 7
+    # aucun type attendu sans ambiguïté : on ne touche à rien
+    assert converti["panache"] == "1"
+    assert converti["indecis"] == "3"
+
+
+def test_coercition_laisse_passer_un_type_qu_elle_ne_sait_pas_lire():
+    """Hors booléen et nombre, la conversion s'abstient : au schéma de trancher."""
+
+    class AvecDate(BaseModel):
+        jour: date
+
+    assert coerce_values(AvecDate, {"jour": "1912-04-15"}) == {"jour": "1912-04-15"}
+    assert validate_features(AvecDate, {"jour": "1912-04-15"}).valid
 
 
 # -- description des features pour le planificateur ------------------------------
