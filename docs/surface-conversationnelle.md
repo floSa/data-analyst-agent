@@ -28,6 +28,7 @@ formulation à laquelle personne n'avait pensé.
 | 12 | la **source de travail** d'une conversation : proposée, validée, portée par le fil | **oui**, mais le §12 croyait le choix acquis — cf. §14 |
 | 13 | ce qui restait ouvert **au moment du §12** | daté : le §14 en reprend deux points |
 | **14** | l'**ordre du catalogue** décidait de la réponse, mesuré dans les deux sens ; ce qui a été corrigé, et l'inventaire qui se lit au lieu de se réciter | **oui** |
+| **15** | la même batterie sur **deux moteurs** — le trou de la ceinture que vLLM a découvert, et la mesure à 36/36 des deux côtés | **oui** |
 
 ## 1. Le défaut constaté, et sa cause
 
@@ -1217,3 +1218,279 @@ tranché. S'y ajoutent :
 - **`sources-perimetre` et `temoin-prediction`** sont deux écarts constatés sur
   le chemin système, antérieurs à ce chantier et non expliqués. Ils appellent
   leur propre mesure.
+
+## 15. Deux moteurs, la même batterie — et le trou que vLLM a découvert
+
+La bascule du moteur vers vLLM ([VLLM.md §7](VLLM.md#7-le-modèle-du-vllm-partagé--gemma-4-e4b-it-qat-w4a16-ct))
+a fait tomber quatre questions qui tenaient sous Ollama. Même code, même
+modèle, deux serveurs. Le relevé du propriétaire, conversation neuve à chaque
+fois :
+
+| Question | vLLM | Ollama |
+|---|---|---|
+| « Sur quoi peux-tu travailler ? » | **raté**, 1 s | correct, 15 s |
+| « sur quoi je peux travailler ? » | **raté**, 1 s | correct, 16 s |
+| « montre-moi ce que tu as » | **raté**, 1 s | correct, 11 s |
+| « je peux te demander quoi ? » | **raté** | **raté** |
+
+Ce §15 dit ce que le fil brut en a montré, et pourquoi la cause n'était ni
+celle qu'on supposait ni, à proprement parler, une affaire de moteur.
+
+### 15.1 Le fil brut : l'outil est appelé, et sa réponse est jetée
+
+L'hypothèse de départ était que l'agent système n'appelait pas ses outils —
+une réponse en une seconde qui paraphrase le prompt système ressemble beaucoup
+à cela, et le [§7.4 de VLLM.md](VLLM.md#74-le-mauvais-analyseur--pas-un-400-un-faux-négatif-silencieux)
+avait justement montré qu'un analyseur inadapté laisse l'appel d'outil *fuir
+dans le texte*, sans le moindre code d'erreur. Deux causes opposées, deux
+remèdes opposés : il fallait regarder le fil, pas le déduire.
+
+Le fil a été capturé en branchant un `event_hook` httpx sur le client OpenAI du
+nœud système, sous vLLM, pour « Sur quoi peux-tu travailler ? ». Il tient en
+deux allers-retours.
+
+**Requête 1** — cinq outils offerts, `tool_choice` laissé au modèle :
+
+```
+tool_choice   : 'auto'
+tools envoyés : ['capacites_de_l_agent', 'sources_de_donnees', 'schema_d_une_source',
+                 'modeles_de_prediction', 'attributs_d_un_modele']
+```
+
+**Réponse 1** — le serveur rend un appel d'outil, structuré et extrait :
+
+```json
+{"message": {"content": null,
+             "tool_calls": [{"function": {"name": "capacites_de_l_agent", "arguments": "{}"}}]},
+ "finish_reason": "tool_calls", "usage": {"completion_tokens": 14}}
+```
+
+**Réponse 2**, après que l'outil a rendu ses faits :
+
+```
+Je peux interroger des sources en SQL, analyser et visualiser des données avec du
+code Python, prédire des cas ou des individus en utilisant des modèles, et répondre
+sur moi-même concernant mes sources, leurs structures, mes modèles et leurs
+exigences.
+```
+
+**Le modèle appelle bel et bien son outil, et le serveur rend l'appel.** Ni
+analyseur en défaut, ni tool calling muet : `finish_reason` vaut `tool_calls`,
+`outils_appeles` vaut `('capacites_de_l_agent',)`, et le nœud système déclare
+`concerne_le_systeme = True`. Ce qui manque est ailleurs — dans ce que l'outil
+a rendu et que la réponse a laissé tomber :
+
+```
+Je suis un agent d'analyse de données. Je sais :
+
+- **interroger une source en SQL** — … ;
+- …
+
+Mes sources : `titanic`, `iris`. Mes modèles de prédiction : `california_housing`, `iris`, `titanic`.
+```
+
+La dernière ligne porte exactement ce que la question demandait. Le modèle a
+résumé les puces et l'a jetée.
+
+### 15.2 Pourquoi la ceinture ne l'a pas retenu
+
+C'est le cœur de l'affaire, et le §14 l'avait **écrit un mois plus tôt sans le
+corriger** :
+
+> `sources-perimetre` … Le modèle appelle l'outil des capacités et sa
+> formulation omet les noms des sources, que l'oracle exige. La ceinture ne
+> l'attrape pas : elle n'exige que ce que les **puces** des faits nomment, et
+> « Mes sources : `titanic`, `iris` » n'en est pas une.
+
+`defaut_de_fondation` sert les faits tels quels dès qu'une réponse omet un nom
+rendu par un outil. Mais `_enumeres`, qui dit *quels* noms, ne lisait que les
+lignes commençant par une puce. L'inventaire de `decrire_les_capacites` tient
+sur une ligne ordinaire : il n'exigeait rien, et la ceinture laissait passer.
+
+**Ce que vLLM a changé n'est donc pas le mécanisme, c'est la verbosité.** Sous
+Ollama, le même modèle recopie les faits presque au long — d'où les 11 à 16
+secondes — et les noms survivent **par accident**. Sous vLLM il condense en une
+phrase, en une seconde, et l'accident ne se produit plus. Le défaut était déjà
+là ; un moteur plus concis l'a fait passer d'une question sur trente-six à
+quatre.
+
+C'est la leçon du §15 : **une ceinture qui ne se déclenche jamais ne prouve
+rien.** Celle-ci tenait parce que le modèle était bavard, pas parce qu'elle
+couvrait le cas.
+
+### 15.3 Ce qui a été corrigé
+
+**Une énumération tenue sur une ligne est exigible comme une puce**
+(`_enumeres`). Un deux-points suivi de noms décorés, jusqu'au point qui clôt la
+phrase, rend **tous** ses membres : une énumération n'a pas de sujet, elle n'a
+que des membres. Deux bornes la tiennent loin des rejets déjà mesurés à tort au
+§11 — un deux-points en **fin de ligne** introduit ce qui suit et n'énumère
+rien (« La table `passengers` de la source `titanic` : »), et les lignes de
+**citation** sont laissées de côté : elles recopient le dictionnaire de la
+source, le seul texte de faits que le module n'écrit pas.
+
+**Le prompt exige les noms sans qu'on ait demandé une liste.** « Quand on te
+demande une liste, rends-la ENTIÈRE » ne s'appliquait qu'à une demande
+explicite, et « Sur quoi peux-tu travailler ? » n'en est pas une. La ceinture
+rattrape désormais l'omission, mais la rattraper sert le gabarit : le modèle
+est plus utile quand il n'a pas à être repris.
+
+**Et une prédiction retourne au planificateur.** Ajouté à la liste de ce qui
+n'est pas pour l'agent système : « Prédis la survie d'une passagère de 1re
+classe de 28 ans, tarif 80 livres… » donne des **valeurs d'attributs**, et
+l'agent système y répondait par son registre de modèles.
+
+#### Une consigne écrite, mesurée, et retirée
+
+Une quatrième idée visait « je peux te demander quoi ? » : « nomme les ACTIONS
+que tu sais faire avant les ressources sur lesquelles elles portent ». Elle
+faisait effectivement citer les actions — et elle poussait le modèle à
+**ratisser** : « de quoi disposes-tu ? » partait lire le schéma de chaque
+source, quatre outils au lieu d'un, et dépassait `systeme_request_limit = 4`.
+Le nœud système tombait alors en *fail-open* vers le planificateur, qui
+renvoyait une clarification.
+
+La bisection, sur `sources-disposes`, deux essais par variante sous vLLM :
+
+| Variante du prompt | Verdict | Appels LLM | Trace du nœud système |
+|---|---|---|---|
+| A — prompt d'origine | correct | 2 | `capacites_de_l_agent` — faits servis tels quels |
+| B — A + « cite-les tous » | correct | 2 | `capacites_de_l_agent` — formulé par le modèle |
+| **C — B + « nomme les actions »** | **à côté** | **5** | **agent système écarté — passe au planificateur** |
+| D — C + l'exemple de prédiction | à côté | 5 | agent système écarté — passe au planificateur |
+
+Le défaut apparaît avec ce paragraphe et avec lui seul. Il a été retiré : la
+ceinture suffit à traiter « je peux te demander quoi ? », puisque les faits
+omis sont servis et qu'ils portent les actions. **Une consigne de prompt qui
+corrige une question peut en casser une autre par un chemin qui n'a rien à voir
+— ici le plafond d'allers-retours.** La ligne A du tableau dit aussi ceci : la
+correction de la ceinture, à elle seule, rendait déjà la bonne réponse.
+
+### 15.4 Les quatre questions, rejouées sur les deux moteurs
+
+Conversation neuve à chaque fois, `--only` sur les quatre clés :
+
+| Question | vLLM avant | vLLM après | Ollama avant | Ollama après |
+|---|---|---|---|---|
+| `sources-reformulee` — « Sur quoi peux-tu travailler ? » | **à côté**, 1,4 s | correct, 1,6 s | correct, 18,8 s | correct, 5,8–18,5 s |
+| `sources-premiere-personne` — « sur quoi je peux travailler ? » | **à côté**, 1,3 s | correct, 1,6 s | correct, 13,3 s | correct, 15,3–21,3 s |
+| `sources-montre-moi` — « montre-moi ce que tu as » | **à côté**, 1,2 s | correct, 3,3 s | correct, 11,5 s | correct, 12,5–18,4 s |
+| `capacites-demander-quoi` — « je peux te demander quoi ? » | **à côté**, 0,9 s | correct, 2,1–2,4 s | correct, 7,0 s | correct, 7,2–11,0 s |
+
+Deux remarques d'honnêteté sur ce tableau.
+
+**Les trois premières manquaient `titanic` et `iris`** — l'oracle le dit mot
+pour mot (`manque : titanic, iris`). La quatrième manquait `analys` : le modèle
+avait gardé l'inventaire et jeté les actions. **C'est un défaut distinct**, il
+est antérieur à la bascule, et c'est celui que le propriétaire signalait comme
+raté sur les deux moteurs.
+
+**Il n'est pas déterministe sous Ollama.** Le passage de référence rejoué ici
+l'a compté correct ; le relevé du propriétaire l'avait compté raté. Sous vLLM,
+en revanche, il ratait **à chaque fois** — c'est là qu'il a pu être observé, et
+c'est le second service que la bascule aura rendu. Les deux défauts sont
+traités par la même mécanique (les faits omis sont servis), mais par deux
+chemins : pour les trois premières, l'omission portait sur des **noms** ; pour
+la quatrième, sur des **actions**, que la ceinture ne garde pas — elle ne
+connaît que des noms. Ce sont les noms omis de la même réponse qui la font
+partir.
+
+### 15.5 La batterie complète, sur les deux moteurs
+
+```bash
+# Ollama (le moteur du .env, inchangé)
+uv run python scripts/mesure_surface_conversationnelle.py
+
+# vLLM, par variables d'environnement — le .env n'est pas touché
+DAA_LLM_BASE_URL=http://localhost:8100/v1 \
+DAA_LLM_MODEL=google/gemma-4-E4B-it-qat-w4a16-ct \
+uv run python scripts/mesure_surface_conversationnelle.py
+```
+
+| Moteur | Passage | Méta | Témoins | Appels LLM (36 méta) | Durée des 36 méta | Moyenne |
+|---|---|---|---|---|---|---|
+| vLLM | avant | 32 / 36 | 2 / 4 | 82 | 70 s | 1,9 s |
+| vLLM | **après, passage 1** | **36 / 36** | 2 / 4 | 78 | 118 s | 3,3 s |
+| vLLM | **après, passage 2** | **36 / 36** | 2 / 4 | 78 | 122 s | 3,4 s |
+| Ollama | avant | 34 / 36 | 2 / 4 | 83 | 305 s | 8,5 s |
+| Ollama | **après, passage 1** | **36 / 36** | **3 / 4** | 78 | 568 s | 15,8 s |
+| Ollama | **après, passage 2** | **36 / 36** | **3 / 4** | 78 | 334 s | 9,3 s |
+
+**36 / 36 sur les quatre passages, et sur les deux moteurs.** Aucun passage de
+référence antérieur n'avait fait mieux que 36 (§11, §14), et les deux passages
+du §14 plafonnaient à 35.
+
+Le **coût en appels LLM baisse** — 78 contre 82 et 83 — parce qu'une réponse
+servie par la ceinture ne coûte pas d'aller-retour supplémentaire. Le temps de
+paroi, lui, monte : les réponses sont **plus longues d'environ 20 %** (354 →
+428 caractères en moyenne sous vLLM, 634 → 715 sous Ollama), puisqu'elles
+portent désormais les noms qu'elles laissaient tomber. Le reste de l'écart —
+334 s contre 568 s pour deux passages Ollama identiques — est la variance de la
+machine, qui servait les deux moteurs sur la même carte pendant toute la
+mesure : ce tableau ne compare pas des vitesses de serveurs.
+
+Les questions méta sous Ollama restent servies à **35 sur 36 par l'agent
+système** (34 avant), et sous vLLM à 34 sur 36 : la correction n'a déplacé
+aucune question vers le planificateur.
+
+### 15.6 Les témoins, et les deux questions de données qui restent
+
+Les témoins ne mesurent pas l'agent système : ils vérifient qu'**il ne prend
+pas** ce qui ne lui appartient pas.
+
+| Témoin | vLLM avant | vLLM après | Ollama avant | Ollama après |
+|---|---|---|---|---|
+| `temoin-comptage` | correct | correct | correct | correct |
+| `temoin-maximum` | correct | correct | correct | correct |
+| `temoin-colonnes-a-trous` | à côté | à côté | à côté | **à côté / erreur** |
+| `temoin-prediction` | à côté | à côté | **à côté** | **correct** |
+
+Sur les quatre passages d'après, **le nœud système laisse passer les quatre
+témoins** : « aucun outil appelé — passe au planificateur ». C'était déjà vrai
+sous vLLM ; sous Ollama, `temoin-prediction` était **pris** par l'agent système,
+qui répondait par son registre de modèles au lieu de prédire. L'exemple ajouté
+au prompt le rend au planificateur — 3 essais sur 3 avant la batterie, puis les
+deux passages complets.
+
+Restent deux échecs, tous deux **en aval du nœud système**, et ce que leur
+trace en dit :
+
+- **`temoin-colonnes-a-trous`, sur les deux moteurs.** « Quelles colonnes de la
+  table `passengers` contiennent des valeurs manquantes ? » Sous Ollama, l'agent
+  SQL boucle et épuise son `retrieval_request_limit = 10` (`incident e65aaf64`,
+  112 s) ou finit par renoncer (97 s) ; rejoué **seul**, il écrit pourtant la
+  bonne requête — un `CASE WHEN COUNT(col) < COUNT(*)` par colonne — et rend
+  `grounded = True`. Sous vLLM il écrit `SELECT * FROM passengers WHERE age IS
+  NULL OR …` et rend 179 lignes : la réponse est le tableau, pas la liste des
+  colonnes que l'oracle exige. C'est un défaut de l'agent SQL, il est antérieur
+  à ce chantier — le [§14](#14-lordre-du-catalogue-décidait-de-la-réponse) l'a
+  déjà constaté et non reproduit — et il n'a pas été traité ici ;
+- **`temoin-prediction`, sous vLLM seulement.** Le nœud système le laisse
+  passer, le planificateur le classe `predict` — et la validation refuse :
+  `pclass (Classe du billet) : Input should be 1, 2 or 3 (reçu : '1')`. Le
+  modèle servi par vLLM rend ses arguments d'outil en **chaînes**, là où Ollama
+  rend des entiers, et `Literal[1, 2, 3]` refuse `'1'`. C'est un écart de
+  typage sur le chemin d'inférence, pas sur le chemin système ; le corriger
+  touche `SCHEMAS` et la validation des features, et appelle sa propre mesure.
+
+**Les témoins sous Ollama sont donc à 3 / 4 et non 4 / 4.** Le quatrième est
+`temoin-colonnes-a-trous`, qui ratait déjà avant ce chantier : la correction
+n'a rien déplacé vers le planificateur, mais elle n'a pas non plus réparé
+l'agent SQL, et ce n'était pas son objet.
+
+### 15.7 Ce qui reste ouvert après le §15
+
+- **`temoin-colonnes-a-trous`** — l'agent SQL, sur les deux moteurs, par deux
+  chemins différents. Le seul écart de la batterie qui ne soit pas expliqué
+  par ce §15 ;
+- **les arguments d'outil en chaînes sous vLLM** — `'1'` pour un
+  `Literal[1, 2, 3]`. Vu ici sur une prédiction ; rien ne dit qu'il ne touche
+  que celle-là ;
+- **la ceinture ne garde que des noms.** « je peux te demander quoi ? » est
+  rattrapé parce que la même réponse omettait aussi des noms. Une réponse qui
+  citerait tous les noms et aucune action passerait — c'est un comportement de
+  modèle, tenu par le prompt et par la mesure, pas par du code ;
+- **`systeme_request_limit = 4` est serré.** Il a suffi d'une consigne de
+  prompt pour le faire dépasser. Le *fail-open* a fait son office — le tour est
+  reparti au planificateur au lieu d'échouer — mais la réponse rendue n'était
+  pas la bonne, et rien dans l'interface ne le disait.

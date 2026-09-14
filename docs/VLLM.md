@@ -544,9 +544,9 @@ pas de moteur.
 
 ### 7.8 Ce qui n'a pas été mesuré
 
-- **L'agent système et ses cinq tools.** Le banc en couvre trois (agent SQL).
-  Rien n'indique que le nombre de tools change quoi que ce soit une fois
-  l'analyseur correct, mais ce n'est pas mesuré.
+- ~~**L'agent système et ses cinq tools.**~~ **Mesuré depuis** — [§8](#8-lagent-système-et-ses-cinq-tools-le-trou-du-78-refermé).
+  Le nombre de tools ne change rien : le modèle appelle, vLLM extrait. Ce que
+  ce trou cachait était ailleurs, et n'était pas une affaire de moteur.
 - **La concurrence réelle.** Toutes les mesures sont séquentielles, comme
   celles de C7 ([§5.5](#5-ce-qui-reste-à-vérifier-avant-une-bascule-réelle)).
   Les « 4,58 × » sont le calcul de vLLM sur la taille de son cache, pas un
@@ -556,3 +556,95 @@ pas de moteur.
 - **La cohabitation avec l'embedding.** `nomic-embed-text` reste à servir pour
   le projet RAG ([§5 bis](#5-bis-la-bascule-se-fait-dans-llm-service-et-elle-sert-deux-applications)) :
   le budget VRAM ci-dessus ne le compte pas.
+
+## 8. L'agent système et ses cinq tools, le trou du §7.8 refermé
+
+Mesure du 2026-09-14, après la bascule du vLLM partagé (`localhost:8100`,
+`google/gemma-4-E4B-it-qat-w4a16-ct`, `--tool-call-parser gemma4
+--enable-auto-tool-choice`). Elle répond au premier point du
+[§7.8](#78-ce-qui-na-pas-été-mesuré) — **l'agent système et ses cinq tools**,
+que le banc ne couvrait pas.
+
+> **Le `.env` n'a pas été touché.** Ollama reste le moteur en service ; les
+> mesures sous vLLM se font par `DAA_LLM_BASE_URL` et `DAA_LLM_MODEL` à
+> l'exécution.
+
+**Verdict : le nombre de tools n'y est pour rien.** Cinq tools au lieu de
+trois, aucun argument obligatoire, des descriptions plus courtes : rien de tout
+cela n'empêche le modèle d'appeler, ni vLLM d'extraire.
+
+### 8.1 Ce que le fil brut montre
+
+Le symptôme ressemblait pourtant au faux négatif du
+[§7.4](#74-le-mauvais-analyseur--pas-un-400-un-faux-négatif-silencieux) : sous
+vLLM, « Sur quoi peux-tu travailler ? » recevait une paraphrase du prompt
+système en une seconde, là où Ollama répondait juste en quinze. Le fil, capturé
+par un `event_hook` httpx sur le client du nœud système, dit autre chose :
+
+```json
+{"message": {"content": null,
+             "tool_calls": [{"function": {"name": "capacites_de_l_agent", "arguments": "{}"}}]},
+ "finish_reason": "tool_calls", "usage": {"completion_tokens": 14}}
+```
+
+`tool_calls` peuplé, `finish_reason` à `tool_calls`, `content` nul — l'inverse
+exact de la fuite du §7.4, où l'appel apparaissait *dans le texte*. Les cinq
+tools sont offerts avec `tool_choice: "auto"`, et le modèle en choisit un.
+
+La cause est en aval de vLLM, dans la formulation : le modèle servi par vLLM
+**condense** ce que l'outil lui rend, là où le même modèle servi par Ollama le
+recopie presque au long. Un inventaire rendu en fin de texte disparaissait dans
+le résumé, et la ceinture de l'application ne l'exigeait pas. Le détail, la
+correction et la mesure sont dans
+[surface-conversationnelle.md §15](surface-conversationnelle.md#15-deux-moteurs-la-même-batterie--et-le-trou-que-vllm-a-découvert).
+
+**Ce qu'il faut en retenir pour un futur banc.** Un `grounded=True` et un
+`tool_calls` peuplé prouvent que le mécanisme marche ; ils ne prouvent rien sur
+ce que le modèle fait des faits reçus. Le §7.4 avait appris à ne pas valider un
+analyseur sur la seule sortie structurée ; le §8 ajoute : **ne pas valider une
+bascule de moteur sur les seuls appels d'outils.** Ce qui change d'un serveur à
+l'autre, à modèle identique, c'est aussi la longueur des réponses — et une
+vérification qui ne tenait que par la verbosité tombe avec elle.
+
+### 8.2 La batterie complète, moteur contre moteur
+
+40 questions, conversation neuve à chaque fois
+([`scripts/mesure_surface_conversationnelle.py`](../scripts/mesure_surface_conversationnelle.py)) :
+36 questions **sur l'agent**, qui passent par ses cinq tools, et 4 **témoins**
+sur les données, qui ne doivent pas y passer.
+
+| Moteur | Passage | Méta | Témoins | Appels LLM (36 méta) | Durée des 36 méta |
+|---|---|---|---|---|---|
+| vLLM | avant correction | 32 / 36 | 2 / 4 | 82 | 70 s |
+| vLLM | après, 2 passages | **36 / 36** | 2 / 4 | 78 | 118 s, 122 s |
+| Ollama | avant correction | 34 / 36 | 2 / 4 | 83 | 305 s |
+| Ollama | après, 2 passages | **36 / 36** | 3 / 4 | 78 | 568 s, 334 s |
+
+**Les deux moteurs rendent le même verdict sur les 36 questions méta.** C'est
+la réponse à la question que posait le §7.8.
+
+Les durées ne comparent **pas** les deux serveurs : la même carte servait les
+deux pendant toute la mesure, et l'écart de 334 s à 568 s entre deux passages
+Ollama identiques suffit à le dire. Ce qui se compare est le **nombre d'appels
+LLM**, qui ne dépend pas de la charge : 78 des deux côtés, contre 82 et 83
+avant.
+
+Les deux témoins qui restent en échec sont en aval du nœud système — l'agent
+SQL sur les deux moteurs, et sous vLLM une validation de features qui refuse
+`'1'` pour un `Literal[1, 2, 3]`. Ce dernier est le seul écart de cette mesure
+qui soit **propre à vLLM** : le modèle y rend ses arguments d'outil en chaînes
+là où Ollama rend des entiers. Il est détaillé au
+[§15.6](surface-conversationnelle.md#156-les-témoins-et-les-deux-questions-de-données-qui-restent).
+
+### 8.3 Ce qui reste non mesuré côté agent système
+
+- **Les arguments d'outil typés.** Les cinq tools de l'agent système n'ont que
+  des arguments texte, facultatifs : la différence de typage vue sur la
+  prédiction ne s'y manifeste pas. Un tool à argument entier ou booléen n'a pas
+  été essayé sous vLLM ;
+- **le plafond d'allers-retours.** `systeme_request_limit = 4` a été dépassé
+  sous vLLM par une simple consigne de prompt, sur une question qui tenait en
+  deux appels sous Ollama. Le nombre de tours que le modèle veut mener dépend
+  donc du serveur, et il n'est pas mesuré ;
+- **la concurrence**, toujours : ces 40 questions sont posées en série, comme
+  toutes les mesures de ce document.
