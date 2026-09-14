@@ -103,9 +103,29 @@ class QueryResult(BaseModel):
         return len(self.rows)
 
     def to_markdown(self, max_rows: int = 20) -> str:
-        """Rendu texte compact (pour le LLM et l'affichage)."""
+        """Rendu texte compact — c'est ce que le modèle LIT (l'outil ``run_sql``).
+
+        **Une ligne unique est rendue verticalement**, un couple par ligne, et
+        non en tableau. Ce n'est pas une préférence d'écriture : un tableau
+        d'une seule ligne oblige à aligner de tête un en-tête et une rangée de
+        valeurs sur toute leur largeur, et c'est une lecture que le modèle en
+        service rate. Mesuré, sur la mesure des colonnes à trous de
+        ``passengers`` — un agrégat correct, ``0 | 177 | 0 | 0 | 0 | 2`` sous
+        six en-têtes, que le modèle formulait en nommant ``name`` (mesuré à 0)
+        à côté de ``age`` et ``embarked``. La même valeur rendue
+        ``name_missing : 0`` n'a plus d'alignement à faire, et la réponse
+        devient exacte. Deux reformulations du prompt n'y avaient rien changé :
+        le défaut était dans ce qu'on donnait à lire, pas dans la consigne.
+
+        Un agrégat rend presque toujours UNE ligne : c'est donc la forme
+        normale de tout ce qui compte, agrège ou décrit, pas un cas particulier.
+        Le tableau affiché à l'utilisateur est construit ailleurs (artefact,
+        cf. ``_table_artifact``) et n'est pas touché.
+        """
         if not self.columns:
             return "(résultat vide)"
+        if len(self.rows) == 1 and len(self.columns) > 1:
+            return "\n".join(f"{c} : {v}" for c, v in zip(self.columns, self.rows[0], strict=True))
         shown = self.rows[:max_rows]
         head = "| " + " | ".join(self.columns) + " |"
         sep = "| " + " | ".join("---" for _ in self.columns) + " |"

@@ -172,6 +172,27 @@ def test_to_markdown():
     assert "| 1 | x |" in markdown
 
 
+def test_une_ligne_unique_est_rendue_verticalement():
+    """Un agrégat rend UNE ligne : la donner en tableau force un alignement raté.
+
+    Mesuré sur ``passengers`` : ``0 | 177 | 0 | 0 | 0 | 2`` sous six en-têtes,
+    et le modèle nommait ``name`` — mesuré à 0 — parmi les colonnes à trous.
+    """
+    result = QueryResult(
+        columns=["name_missing", "age_missing", "embarked_missing"], rows=[[0, 177, 2]]
+    )
+
+    rendu = result.to_markdown()
+
+    assert rendu == "name_missing : 0\nage_missing : 177\nembarked_missing : 2"
+    assert "|" not in rendu
+
+
+def test_une_ligne_a_une_seule_colonne_garde_le_tableau():
+    """Rien à aligner sur une seule colonne : le rendu qui marche ne bouge pas."""
+    assert "| 342 |" in QueryResult(columns=["count"], rows=[[342]]).to_markdown()
+
+
 # --- ontologie -----------------------------------------------------------------
 
 

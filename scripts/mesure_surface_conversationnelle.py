@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import unicodedata
@@ -117,6 +118,17 @@ def replie(texte: str) -> str:
     return nu.replace("\\", "").replace("*", "").replace("`", "")
 
 
+def _nomme(plat: str, nom: str) -> bool:
+    """Le texte cite-t-il ce nom de colonne, entier ?
+
+    Une sous-chaîne ne suffit pas, et le contre-exemple est dans la source :
+    la colonne ``sex`` vit à l'intérieur du mot « sexe », que toute réponse
+    française écrit. Un interdit cherché en sous-chaîne déclarerait fausse une
+    réponse juste qui parle du sexe des passagers.
+    """
+    return re.search(rf"(?<![a-z0-9_]){re.escape(replie(nom))}(?![a-z0-9_])", plat) is not None
+
+
 @dataclass(frozen=True)
 class QuestionMeta:
     """Une question et l'oracle qui décide de son verdict.
@@ -138,6 +150,16 @@ class QuestionMeta:
     ``capacite_attendue`` : la capacité par laquelle la demande doit passer.
     Renseignée sur les témoins : c'est ce qui prouve qu'un routeur de
     questions méta ne s'est pas emparé d'une question sur les données.
+
+    ``interdits`` : les chaînes qu'une réponse juste ne PEUT pas contenir.
+    Ajouté parce que l'oracle a compté juste une réponse fausse : à « quelles
+    colonnes contiennent des valeurs manquantes ? », le modèle répondait
+    « `name`, `age`, `fare`, `embarked` » — ``age`` et ``embarked`` y sont,
+    donc ``attendus_tous`` était satisfait, et le verdict tombait vert sur une
+    réponse qui nomme deux colonnes sans le moindre trou. Une question dont
+    l'oracle est une LISTE EXHAUSTIVE se juge sur les deux bords : ce qu'elle
+    doit nommer, et ce qu'elle ne doit pas. Les interdits sont dérivés de la
+    source comme le reste — jamais écrits à la main.
     """
 
     cle: str
@@ -145,6 +167,7 @@ class QuestionMeta:
     question: str
     attendus_tous: tuple[str, ...] = ()
     attendus_parmi: tuple[str, ...] = ()
+    interdits: tuple[str, ...] = ()
     clarification_admise: tuple[str, ...] = ()
     capacite_attendue: str | None = None
 
@@ -154,6 +177,7 @@ class QuestionMeta:
         manquants = [a for a in self.attendus_tous if replie(a) not in plat]
         if self.attendus_parmi and not any(replie(a) in plat for a in self.attendus_parmi):
             manquants.append("aucun de : " + ", ".join(self.attendus_parmi))
+        manquants += [f"nomme {i} à tort" for i in self.interdits if _nomme(plat, i)]
         return not manquants, manquants
 
 
@@ -271,6 +295,20 @@ class VeriteTerrain:
             ages_max=ages_max,
             survivants=survivants,
             colonnes_a_trous=a_trous,
+        )
+
+    def colonnes_pleines(self, cle_table: str) -> tuple[str, ...]:
+        """Les colonnes de cette table qui n'ont AUCUN trou — le complément.
+
+        ``passenger_id`` en est exclu : il apparaît dans les noms des autres
+        colonnes (« passenger_id » contient… non, mais la réponse cite souvent
+        la table « passengers »), et un interdit qui se déclenche sur un mot
+        de la phrase mesurerait la formulation, pas le fond.
+        """
+        return tuple(
+            c
+            for c in self.colonnes[cle_table]
+            if c not in self.colonnes_a_trous and c not in ("passenger_id",)
         )
 
     def oracle_de_periode(self, cle_table: str) -> tuple[str, ...]:
@@ -571,6 +609,9 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             FAMILLE_TEMOIN,
             "Quelles colonnes de la table passengers contiennent des valeurs manquantes ?",
             attendus_tous=vt.colonnes_a_trous,
+            # l'autre bord de l'oracle : les colonnes PLEINES, qu'une réponse
+            # juste ne nomme pas. Dérivées, comme les colonnes à trous.
+            interdits=vt.colonnes_pleines("titanic.passengers"),
             capacite_attendue="query",
         ),
         QuestionMeta(
