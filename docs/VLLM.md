@@ -309,3 +309,250 @@ première réponse du serveur, il ne la moyenne pas.
 le banc comme après, avec ses 4 902 Mio de VRAM inchangés du début à la fin.
 Le dimensionnement de `--gpu-memory-utilization` a été calculé pour ne jamais
 mordre dessus.
+
+## 7. Le modèle du vLLM partagé : `gemma-4-E4B-it-qat-w4a16-ct`
+
+Banc du 2026-09-14, même machine (L4 23 034 Mio, vLLM `0.28.0`,
+`vllm/vllm-openai:latest`). Il répond au trou n° 1 du [§5](#5-ce-qui-reste-à-vérifier-avant-une-bascule-réelle) :
+**le banc de C7 validait le mécanisme, pas un modèle.** Celui-ci valide le
+modèle que servira le vLLM partagé — `google/gemma-4-E4B-it-qat-w4a16-ct`,
+quantification QAT officielle de Google au format compressed-tensors.
+
+L'enjeu tient en une phrase : trois applications vont être servies par une
+seule instance vLLM, Elivie sert déjà ce modèle mais **ne fait que des
+complétions simples**. Le tool calling n'y avait jamais été vérifié, et c'est
+ce dont dépendent notre planificateur, notre agent SQL et notre agent système.
+
+> **Rien n'a été basculé.** Ollama reste le moteur en service ; ni `.env` ni
+> `config.py` n'ont été touchés. Les conteneurs du banc ont été supprimés.
+
+**Verdict : GO.** Les trois épreuves passent, avec l'analyseur de sa famille.
+
+### 7.1 L'analyseur : `gemma4`, et la raison de ne pas s'arrêter au nom
+
+L'image en propose deux dont le nom évoque gemma — `functiongemma` et
+`gemma4`. Le choix a été fait sur le code, pas sur le nom :
+
+| Analyseur | Syntaxe qu'il extrait | Pour quel modèle |
+|---|---|---|
+| `functiongemma` | `<start_function_call>call:f{…}<end_function_call>` | `google/functiongemma-270m-it` — un autre modèle |
+| `gemma4` | `<\|tool_call>call:…` | la famille Gemma 4 |
+
+Et le chat template du modèle, lu dans son dépôt avant tout téléchargement,
+tranche : il émet `<|tool_call>`, `<|tool_response>`, `<|tool>`. C'est
+`gemma4`.
+
+**Un détail de `Gemma4EngineToolParser` qui compte pour le planificateur.** Il
+déclare `supports_required_and_named = False`. Loin d'être un défaut, c'est
+délibéré : Gemma 4 émet sa syntaxe native plutôt qu'un JSON contraint, et
+forcer le *guided decoding* entrerait en conflit avec elle. Conséquence,
+lisible dans `vllm/parser/abstract_parser.py` : un `tool_choice="required"`
+bascule sur le **chemin d'extraction automatique**. Donc
+**`--enable-auto-tool-choice` est indispensable pour le planificateur aussi**,
+et pas seulement pour l'agent SQL comme le laissait croire le [§4](#4-ce-qui-casse-sans-les-bonnes-options--résumé).
+
+### 7.2 La commande qui a marché
+
+```bash
+docker run -d --name vllm-bench --gpus all \
+  -v /home/ubuntu/.cache/huggingface:/root/.cache/huggingface \
+  -p 8000:8000 --ipc=host \
+  vllm/vllm-openai:latest \
+  --model google/gemma-4-E4B-it-qat-w4a16-ct \
+  --gpu-memory-utilization 0.62 \
+  --max-model-len 32768 \
+  --enable-auto-tool-choice \
+  --tool-call-parser gemma4
+```
+
+```bash
+uv run python scripts/vllm_bench.py --base-url http://localhost:8000/v1 \
+    --model google/gemma-4-E4B-it-qat-w4a16-ct
+```
+
+### 7.3 Les trois épreuves
+
+**Épreuve 1 — le planificateur rend-il un `Plan` structuré ? Oui.**
+
+```
+Plan           : Plan(capability='query', source='iris', dataset=None, features={},
+                      data_question='compter le nombre de fleurs par espèce', reason='')
+tokens prompt (serveur) : 1203
+```
+
+À comparer au témoin Ollama du [§3.1](#31-le-planificateur-rend-il-un-plan-structuré) :
+`Plan(capability='query', source='iris', …)`. **Même modèle, même capability,
+même source** — le passage d'Ollama à vLLM ne change pas la décision du
+planificateur.
+
+**Épreuve 2 — l'agent SQL appelle-t-il ses trois tools ? `grounded` est-il
+vrai ? Oui.**
+
+```
+tools appelés  : ['get_schema', 'run_sql']
+grounded       : True
+SQL exécuté    : SELECT species, count(*) AS nombre_fleurs FROM iris GROUP BY species;
+synthèse       : Il y a 50 fleurs pour chaque espèce ('virginica', 'versicolor' et 'setosa').
+```
+
+C'est l'épreuve qui comptait : `tool_choice="auto"`, donc le modèle **décide**
+d'appeler ses tools au lieu d'y être forcé. C'est là que le 1,5 B de C7 avait
+échoué alors que le mécanisme, lui, marchait.
+
+**Épreuve 3 — le dépassement de contexte est-il un refus explicite ? Oui, et
+`is_context_refusal()` le reconnaît.**
+
+```
+exception      : pydantic_ai.exceptions.ModelHTTPError
+status_code    : 400
+body           : {'message': "This model's maximum context length is 32768 tokens. However, you
+                  requested 0 output tokens and your prompt contains at least 32769 input tokens,
+                  for a total of at least 32769 tokens. …", 'type': 'BadRequestError',
+                  'param': 'input_tokens', 'code': 400}
+is_context_refusal : True
+```
+
+Même corps d'erreur qu'au [§3.3](#33-dépassement-de-contexte--refus-explicite-ou-troncature-silencieuse) :
+le message ne dépend pas du modèle servi, il est produit par vLLM.
+
+### 7.4 Le mauvais analyseur : pas un 400, un faux négatif silencieux
+
+C'était le risque annoncé — accuser le modèle à tort. **Il est pire que prévu.**
+Le même banc, même modèle, même serveur, seul `--tool-call-parser` change :
+
+| Analyseur | Épreuve 1 (planificateur) | Épreuve 2 (agent SQL) |
+|---|---|---|
+| `gemma4` | **OK** | **OK**, `grounded=True` |
+| `hermes` (famille Qwen, celui de C7) | *OK — trompeur* | **ÉCHEC**, `grounded=False` |
+| `functiongemma` | *non mesuré* | **ÉCHEC**, `grounded=False` |
+
+Aucun HTTP 400 : le serveur démarre, répond 200, et voici ce que l'agent SQL
+reçoit comme « synthèse » avec `hermes` — comme avec `functiongemma` :
+
+```
+tools appelés  : (aucun)
+grounded       : False
+SQL exécuté    : None
+synthèse       : <|tool_call>call:get_schema{}<tool_call|>
+```
+
+**Lire cette ligne pour ce qu'elle est.** Le modèle a parfaitement émis son
+appel d'outil, dans sa syntaxe native. C'est l'analyseur qui ne sait pas la
+lire : l'appel n'est pas extrait, il **fuit dans le texte de la réponse**, et
+`grounded` tombe à faux. Un banc lancé avec l'analyseur de C7 aurait conclu
+« gemma-4 ne sait pas appeler d'outils » — c'est faux, et rien dans les codes
+HTTP ne l'aurait signalé.
+
+Deux conséquences pour qui refera ce banc :
+
+1. **L'épreuve 1 ne détecte pas un mauvais analyseur.** Avec `hermes`, le
+   planificateur rend un `Plan` — le chemin `required` passe par un JSON
+   contraint qui, lui, ne dépend pas de la syntaxe native. Seule l'épreuve 2,
+   en `tool_choice="auto"`, révèle le problème. **Ne jamais valider un
+   analyseur sur la seule sortie structurée.**
+2. La ligne « analyseur inadapté » du [§4](#4-ce-qui-casse-sans-les-bonnes-options--résumé),
+   marquée *non mesuré* par C7, l'est désormais : ce n'est pas un refus, c'est
+   un silence.
+
+### 7.5 La mémoire, et ce que `--gpu-memory-utilization` ne borne pas
+
+`ollama-central` occupait 4 901 Mio pendant tout le banc, laissant **17,06 Gio
+libres** sur les 22,04 Gio que vLLM mesure.
+
+| `--gpu-memory-utilization` | Budget annoncé | Résultat |
+|---|---|---|
+| 0,75 | 16,87 Gio | **OOM pendant la capture CUDAGraph** |
+| 0,62 | 13,66 Gio | démarre ; 15,48 Gio réellement occupés |
+
+À `0,62`, le détail donné par vLLM :
+
+```
+Free memory on device (17.06/22.04 GiB) on startup. Desired GPU memory utilization is (0.62, 13.66 GiB).
+Actual usage is 10.29 GiB for consumed memory (weights + non-torch), 0.27 GiB for peak activation,
+and 0.78 GiB for CUDAGraph memory. … Current kv cache memory in use is 3.1 GiB.
+```
+
+**Le constat qui manquait à C7 : `--gpu-memory-utilization` n'est pas une borne
+dure.** Budget demandé 13,66 Gio, occupation réelle mesurée au `nvidia-smi`
+**15,48 Gio** — 1,8 Gio de plus. À `0,75`, ce dépassement mord sur ce qui n'est
+pas à vLLM, et l'OOM tombe pendant la capture des CUDAGraph en mode `FULL` :
+
+```
+Capturing CUDA graphs (PIECEWISE): 100%|██████████| 51/51
+Capturing CUDA graphs (FULL):  57%|█████▋    | 20/35
+[rank0] memory allocation failed with OOM on device 0 while trying to allocate 2097152 bytes
+        (free: 2031616, total: 23661248512)
+RuntimeError: Engine core initialization failed.
+```
+
+Noter que le cache KV, lui, avait été correctement dimensionné (5,97 Gio,
+288 826 tokens) : **l'échec n'est pas un manque de cache, c'est la capture
+CUDAGraph qui déborde après coup.** Contrairement à la fenêtre trop grande du
+[§3.4](#34-ce-que---max-model-len-tient-réellement), vLLM n'annonce ici aucune
+valeur de repli — il plante, et c'est à l'exploitant de laisser la marge.
+
+**Et `ollama-central` a survécu à cette OOM** : l'allocation qui échoue est
+celle de vLLM, pas la sienne. Vérifié à chaud — conteneur `healthy`, génération
+réussie, 4 901 Mio inchangés, **même PID (506387) du début à la fin**.
+
+### 7.6 La fenêtre tenable, et `DAA_CONTEXT_MODEL_WINDOW`
+
+Le modèle déclare `max_position_embeddings = 131072`, avec une attention
+glissante de 512 sur l'essentiel de ses 42 couches — d'où un cache KV très
+économe. **Les deux fenêtres testées démarrent**, à `0,62` et 3,1 Gio de cache :
+
+| `--max-model-len` | Tokens en cache KV | Requêtes concurrentes |
+|---|---|---|
+| 32 768 | 150 167 | **4,58 ×** |
+| 131 072 (fenêtre native) | 186 796 | **1,43 ×** |
+
+**La fenêtre tenable est donc la fenêtre native du modèle, 131 072** — la VRAM
+n'est pas ce qui la limite ici, et c'est une différence nette avec le 7 B de
+C7.
+
+Ce qui reste un arbitrage, pas une mesure : à 131 072, il ne reste qu'**1,43
+requête concurrente**. Or le parallélisme est *la* raison de basculer
+([§5 bis](#5-bis-la-bascule-se-fait-dans-llm-service-et-elle-sert-deux-applications))
+et le serveur devra tenir **trois** applications. `32 768` garde 4,58 × pour la
+même carte, et c'est la fenêtre qu'Ollama sert aujourd'hui — donc aucune
+régression.
+
+**Recommandation : `--max-model-len 32768`, et `DAA_CONTEXT_MODEL_WINDOW=32768`
+en face.** C'est déjà la valeur par défaut du réglage : à fenêtre inchangée,
+**il n'y a rien à modifier côté application**. Les deux valeurs doivent rester
+accordées — sans quoi la détection de débordement mesure une fenêtre qui n'est
+pas celle servie ([§5.3](#5-ce-qui-reste-à-vérifier-avant-une-bascule-réelle)).
+L'arbitrage fenêtre / concurrence appartient à `llm-service`, pas à ce dépôt.
+
+### 7.7 Démarrage, poids, et durées
+
+| Mesure | Valeur |
+|---|---|
+| Poids à télécharger | **10,72 Gio** (`model.safetensors`, dépôt total 10,75 Gio) |
+| Durée du téléchargement | **24,4 s** (mesure vLLM, sans jeton HF) |
+| Chargement des poids, une fois en cache | 3,7 s, pour 9,81 Gio en VRAM |
+| Compilation `torch.compile` | 68,0 s |
+| Capture des CUDAGraph | 12 s, 0,78 Gio |
+| `init engine` (profil + cache KV + warmup) | 114,5 s |
+| **Démarrage total, poids en cache → serveur prêt** | **234 s** |
+
+**Plus du double des 80–110 s du [§5.6](#5-ce-qui-reste-à-vérifier-avant-une-bascule-réelle)**,
+mesurées sur le 7 B de C7 : le modèle est plus gros et la compilation pèse à
+elle seule 68 s. À compter dans toute procédure de redémarrage de
+`llm-service` — quatre minutes pendant lesquelles les trois applications n'ont
+pas de moteur.
+
+### 7.8 Ce qui n'a pas été mesuré
+
+- **L'agent système et ses cinq tools.** Le banc en couvre trois (agent SQL).
+  Rien n'indique que le nombre de tools change quoi que ce soit une fois
+  l'analyseur correct, mais ce n'est pas mesuré.
+- **La concurrence réelle.** Toutes les mesures sont séquentielles, comme
+  celles de C7 ([§5.5](#5-ce-qui-reste-à-vérifier-avant-une-bascule-réelle)).
+  Les « 4,58 × » sont le calcul de vLLM sur la taille de son cache, pas un
+  débit observé à trois applications.
+- **La qualité des réponses hors épreuves**, et le multimodal : le modèle
+  accepte image, audio et vidéo, dont l'application ne fait rien.
+- **La cohabitation avec l'embedding.** `nomic-embed-text` reste à servir pour
+  le projet RAG ([§5 bis](#5-bis-la-bascule-se-fait-dans-llm-service-et-elle-sert-deux-applications)) :
+  le budget VRAM ci-dessus ne le compte pas.
