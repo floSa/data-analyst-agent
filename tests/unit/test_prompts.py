@@ -41,6 +41,35 @@ def test_le_gabarit_du_planificateur_garde_ses_marqueurs():
     assert "{datasets}" in gabarit
 
 
+def test_le_planificateur_interdit_de_substituer_une_valeur_autorisee():
+    """Les valeurs autorisées traduisent ce qui est dit ; elles ne corrigent rien.
+
+    Le remède de ce défaut est ICI, et pas dans la validation — qui faisait
+    déjà son travail. Le planificateur lit « valeurs autorisées : 1, 2, 3 »
+    dans le prompt et, sur « une passagère de 4e classe », rendait `pclass=3` :
+    la validation recevait un 3 valide et ne pouvait rien voir. L'utilisateur
+    recevait une probabilité sur une question qu'il n'avait pas posée, et la
+    substitution n'apparaissait que dans `reason`, que l'interface ne montre
+    pas (mesuré sur les deux moteurs, docs/surface-conversationnelle.md §17).
+
+    Ce test garde la RÈGLE, pas sa rédaction : ses deux faces, sans lesquelles
+    elle ne tient pas. Rendre l'agent littéral casserait l'extraction, qui est
+    sa raison d'être — « 1re classe », « classe 1 », « embarquée à
+    Southampton » doivent continuer d'aboutir ; une valeur que rien n'autorise
+    doit remonter telle quelle pour que le refus la cite.
+    """
+    # à plat : le prompt est replié à 79 colonnes, et une règle ne vaut pas
+    # moins parce qu'un retour à la ligne tombe au milieu d'elle
+    gabarit = " ".join(planner_template().split())
+
+    # traduire : la face sans laquelle l'extraction meurt
+    assert "embarked='S'" in gabarit
+    assert "pclass=1" in gabarit
+    # transmettre : la face sans laquelle la substitution revient
+    assert "telle qu'il l'a écrite" in gabarit
+    assert "la valeur autorisée la plus proche" in gabarit
+
+
 # --- substitution ----------------------------------------------------------------
 
 

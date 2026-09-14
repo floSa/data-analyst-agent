@@ -152,6 +152,54 @@ def test_flux_predict_en_chaines_garde_la_garde(registry: Registry):
     assert "a survécu" not in answer.answer
 
 
+@pytest.mark.parametrize(
+    ("champ", "valeur", "cite"),
+    [
+        ("pclass", "4", "4"),
+        ("pclass", "4e classe", "'4e classe'"),
+        ("embarked", "Marseille", "'Marseille'"),
+        ("sex", "neutre", "'neutre'"),
+    ],
+)
+def test_valeur_hors_liste_refusee_en_la_citant(
+    registry: Registry, champ: str, valeur: str, cite: str
+):
+    """Chaque champ énuméré, refusé en RENDANT À L'UTILISATEUR ce qu'il a écrit.
+
+    Le test voisin ne couvrait que ``pclass='4'``, et le chemin complet n'en
+    produisait jamais un : le planificateur lisait « valeurs autorisées : 1, 2,
+    3 » et rendait 3, en reléguant la substitution dans ``reason`` — un champ
+    que l'interface ne montre pas. La garde était donc mesurée sur une entrée
+    que le système ne fabriquait pas (cf. docs/surface-conversationnelle.md
+    §17).
+
+    Ce que ce test garde, une fois le planificateur corrigé pour transmettre :
+    la valeur arrive ici telle que l'utilisateur l'a dite — convertible
+    (``'4'``) ou pas (``'4e classe'``, ce que rend Ollama) — et le refus la
+    CITE. Sans la citation, la relance reproche un champ sans dire ce qui
+    clochait, et l'utilisateur redonne la même valeur.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(
+                Plan(
+                    capability="predict",
+                    dataset="titanic",
+                    features={**TITANIC_OK, champ: valeur},
+                )
+            )
+        ],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)
+    answer = orchestrator.ask("Prédis la survie de ce passager")
+
+    assert answer.error is None
+    assert champ in answer.answer
+    assert cite in answer.answer  # ce que l'utilisateur a écrit lui est rendu
+    assert "a survécu" not in answer.answer  # aucune prédiction n'a été lancée
+
+
 def test_flux_predict_incomplet_redemande(registry: Registry):
     llm = ScriptedLLM().script(
         PLANNER,

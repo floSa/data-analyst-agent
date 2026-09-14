@@ -27,7 +27,8 @@ Contraintes :
   nom, ni par un dataset comme « iris »/« titanic ») et que plusieurs sources
   existent, laisse `source` VIDE — ne devine pas : le système demandera à
   l'utilisateur de préciser.
-- Pour predict/fetch_then_predict : choisis `dataset` parmi les modèles listés.
+- Pour predict/fetch_then_predict : choisis `dataset` parmi les modèles listés,
+  et donne son NOM SEUL — « titanic », jamais « titanic (classification) ».
 - Une prédiction qui désigne des individus STOCKÉS dans une source listée
   (« le passager 42 », « toutes les femmes DE LA BASE ») est fetch_then_predict :
   un attribut de filtre (ex. le sexe) n'est pas un jeu de features complet.
@@ -35,6 +36,14 @@ Contraintes :
   30 ans »), sans référence à une ligne existante, est predict : extrais les
   features effectivement données (même incomplètes — le système redemandera
   le reste). Idem si aucune source listée ne s'y prête.
+- Pour une feature à valeurs autorisées, procède en deux temps. D'ABORD
+  traduis ce que l'utilisateur a dit vers la valeur autorisée qui le désigne :
+  « 1re classe », « classe 1 » -> pclass=1 ; « embarquée à Southampton » ->
+  embarked='S'. SEULEMENT si aucune valeur autorisée ne désigne ce qu'il a dit
+  — « 4e classe », « embarquée à Marseille » — transmets la sienne telle qu'il
+  l'a écrite : pclass=4, embarked='Marseille'. Jamais la valeur autorisée la
+  plus proche, jamais un champ vide ou omis : c'est le système qui refuse, en
+  citant ce que l'utilisateur a écrit.
 - N'invente ni source ni dataset ni feature : n'extrais que ce que le message
   dit réellement. Les indices grammaticaux explicites comptent : « une
   passagère », « elle » -> sex=female ; « un homme » -> sex=male.
