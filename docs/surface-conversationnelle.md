@@ -30,6 +30,7 @@ formulation à laquelle personne n'avait pensé.
 | **14** | l'**ordre du catalogue** décidait de la réponse, mesuré dans les deux sens ; ce qui a été corrigé, et l'inventaire qui se lit au lieu de se réciter | **oui** |
 | **15** | la même batterie sur **deux moteurs** — le trou de la ceinture que vLLM a découvert, et la mesure à 36/36 des deux côtés | **oui** |
 | **16** | le typage des arguments d'outil : le **seul** champ que le schéma ne déclare pas, et la prédiction que seul Ollama rendait | **oui** |
+| **17** | le planificateur **substituait** une valeur légale à l'entrée impossible : la garde mesurée sur une entrée que le système ne fabriquait pas | **oui** |
 
 ## 1. Le défaut constaté, et sa cause
 
@@ -1703,3 +1704,277 @@ sa propre mesure.
 - **`Plan.features` reste non typé**, et c'est le bon choix — mais c'est donc
   toujours le seul argument d'outil du système dont le serveur devine le type.
   La conversion rattrape la devinette ; elle ne la supprime pas.
+
+---
+
+## 17. La 4e classe n'existe pas, et l'agent prédisait quand même
+
+Les §15 et §16 ont fermé des écarts de *couverture* : une question à laquelle
+l'agent ne savait pas répondre, une prédiction qu'un seul moteur rendait.
+Celui-ci en ferme un autre, de nature différente : une question à laquelle
+l'agent répondait **alors qu'il n'aurait pas dû**.
+
+> « Prédis la survie d'une passagère de **4e classe** de 28 ans, tarif 80
+> livres, embarquée à Southampton, sans frère, sœur, parent ni enfant à
+> bord. »
+
+La 4e classe n'existe pas : `pclass` vaut 1, 2 ou 3.
+
+| Moteur | Réponse, prompt d'origine |
+|---|---|
+| Ollama | « Je ne peux pas encore lancer la prédiction titanic : pclass … (reçu : 4) » |
+| vLLM | **« Prédiction (titanic) : a survécu (probabilité 64,6 %) »** |
+
+Le plan rendu sous vLLM :
+
+```json
+"features": {"pclass": "3", "...": "..."},
+"reason": "... Note: '4e classe' est interprété comme pclass=3 car les
+           valeurs autorisées pour pclass sont 1, 2, 3."
+```
+
+**Le planificateur lit les valeurs autorisées dans le prompt et substitue une
+valeur légale à l'entrée impossible.** La validation ne peut rien voir : elle
+reçoit un `3` parfaitement valide. L'utilisateur reçoit une probabilité sur une
+question qu'il n'a pas posée, et la substitution n'apparaît que dans `reason`,
+un champ que l'interface ne montre pas.
+
+### 17.1 La leçon de méthode, avant la correction
+
+Le §16 avait testé `pclass='4'` — et l'avait vu refusé :
+
+```python
+def test_flux_predict_en_chaines_garde_la_garde(registry):
+    """Une classe inexistante reste refusée, chaîne ou pas : relance, pas prédiction."""
+```
+
+Ce test **attaque le validateur directement**, en scriptant le plan. Il mesure
+donc la dernière porte sur une entrée que **le chemin complet ne fabrique
+jamais** : la substitution a lieu en amont, et aucun `4` n'atteint la
+validation. Une garde vérifiée sur une entrée que le système ne produit pas ne
+garde rien.
+
+D'où la règle appliquée ici : **un cas hostile part d'un message utilisateur et
+traverse toute la chaîne.** Les mesures de ce § sont prises par un runner qui
+appelle `Orchestrator.ask()` avec la phrase telle qu'un utilisateur l'écrirait,
+et relève `plan.features`, `plan.reason` et la réponse rendue.
+
+### 17.2 L'étendue, mesurée champ par champ
+
+Six entrées impossibles, sur les deux moteurs, prompt d'origine. « Refusé en
+citant » veut dire : aucune prédiction, et la relance **rend à l'utilisateur la
+valeur qu'il a écrite**.
+
+| Cas hostile | Champ | vLLM | Ollama |
+|---|---|---|---|
+| « 4e classe » | `pclass` (`Literal[1,2,3]`) | **substitué -> `'3'`, prédiction rendue** | refusé, cite `4` |
+| « embarquée à Marseille » | `embarked` (`Literal['S','C','Q']`) | **substitué -> `'C'`, prédiction rendue** | refusé, cite `'Marseille'` |
+| « de sexe neutre » | `sex` (`Literal['male','female']`) | refusé, cite `'neutral'` | refusé, cite `'neutre'` |
+| « deux cent trente ans » | `age` (`ge=0, le=100`) | refusé, cite `230.0` | refusé, cite `230` |
+| « tarif mille cinq cents livres » | `fare` (`ge=0, le=600`) | refusé, cite `1500.0` | refusé, cite `1500` |
+| « un iris de l'espèce dracula » | — | prédiction rendue | prédiction rendue |
+
+Quatre choses que la mesure apprend, et qu'il aurait été faux d'extrapoler :
+
+- **Seuls les champs `Literal` sont exposés.** Ce sont les seuls dont
+  `describe_features` montre les valeurs autorisées au planificateur. Les
+  bornes numériques (`ge`/`le`) ne lui sont **pas** montrées : il ne peut pas
+  rabattre `age=230` sur 100, et ne l'a jamais fait. Les trois champs `Literal`
+  de tout le système sont `sex`, `pclass` et `embarked` — tous sur Titanic ;
+  `IrisFeatures` et `CaliforniaHousingFeatures` n'en ont aucun.
+- **La substitution demande une valeur légale plausible.** « 4e classe » a un
+  voisin (3), « Marseille » en a un (Cherbourg, le port français). « neutre »
+  n'en a aucun : il est passé tel quel, et refusé. La substitution n'est donc
+  pas un mécanisme uniforme — elle se déclenche là où le modèle croit
+  reconnaître ce que l'utilisateur *voulait* dire.
+- **Le défaut est propre à vLLM.** Ollama refusait déjà les cinq. Vérifié par
+  trois passages sur `pclass` et `embarked` : refus 3 fois sur 3. Un quatrième
+  passage, antérieur, avait produit un `pclass=None` avec un `dataset` corrompu
+  — **non reproduit**, et rapporté ici comme tel.
+- **L'iris n'est pas de cette famille.** `species` est la **cible** du modèle,
+  pas une de ses features : le schéma ne la connaît pas, et « dracula » n'a
+  jamais été une valeur à substituer. C'est un défaut distinct — une contrainte
+  posée sur la sortie, silencieusement ignorée — et il n'est **pas traité ici**.
+
+### 17.3 Le remède : où il est, et où il n'est pas
+
+Il n'est pas dans la validation, qui faisait déjà son travail. Il n'est pas non
+plus dans `describe_features` : ce que cette fonction rend est servi au
+planificateur (`graph.py:_datasets_description`) **et à l'utilisateur**
+(`introspection.py`, « il me faut 7 attribut(s) : … »). Y glisser une consigne
+d'extraction la ferait lire par quelqu'un à qui elle n'est pas adressée.
+
+Il est dans `prompts/planner.txt`, à l'endroit exact où la tentation naît :
+
+```
+- Pour une feature à valeurs autorisées, procède en deux temps. D'ABORD
+  traduis ce que l'utilisateur a dit vers la valeur autorisée qui le désigne :
+  « 1re classe », « classe 1 » -> pclass=1 ; « embarquée à Southampton » ->
+  embarked='S'. SEULEMENT si aucune valeur autorisée ne désigne ce qu'il a dit
+  — « 4e classe », « embarquée à Marseille » — transmets la sienne telle qu'il
+  l'a écrite : pclass=4, embarked='Marseille'. Jamais la valeur autorisée la
+  plus proche, jamais un champ vide ou omis : c'est le système qui refuse, en
+  citant ce que l'utilisateur a écrit.
+```
+
+**Une règle à deux faces, et l'ordre entre elles est le remède.** Les
+formulations qui posaient les deux faces comme deux interdits concurrents ont
+toutes échoué d'un côté ou de l'autre — c'est mesuré au §17.5. Ce qui tient,
+c'est de les **ordonner** : traduire d'abord, transmettre seulement à défaut.
+
+### 17.4 Le défaut, après
+
+| Cas hostile | vLLM avant | vLLM après | Ollama avant | Ollama après |
+|---|---|---|---|---|
+| « 4e classe » | **prédiction** | refusé, cite `4` | refusé | refusé, cite `4` |
+| « embarquée à Marseille » | **prédiction** | refusé, cite `'Marseille'` | refusé | refusé, cite `'Marseille'` |
+| « de sexe neutre » | refusé | refusé, cite `'neutre'` | refusé | refusé, cite `'neutre'` |
+| « deux cent trente ans » | refusé | refusé, cite `230.0` | refusé | refusé, cite `230` |
+| « tarif mille cinq cents livres » | refusé | refusé, cite `1500.0` | refusé | refusé, cite `1500` |
+| **Total refusé en citant** | **3 / 5** | **5 / 5** | **4 / 5** | **5 / 5** |
+
+Et la réponse rendue à la question d'ouverture, désormais identique sur les
+deux moteurs :
+
+> Je ne peux pas encore lancer la prédiction titanic :
+> - pclass (Classe du billet (1re, 2e, 3e)) : Input should be 1, 2 or 3 (reçu : 4)
+> Peux-tu me donner ces informations ?
+
+### 17.5 Ne pas casser l'inverse : les formes légitimes
+
+Une correction qui rendrait l'agent littéral casserait l'extraction, qui est sa
+raison d'être. Sept formulations légitimes, mesurées **avant et après**, trois
+passages par variante et par moteur (les deux moteurs se sont montrés
+reproductibles : les trois passages d'une même variante sont identiques).
+
+| Forme légitime | vLLM avant | vLLM après | Ollama avant | Ollama après |
+|---|---|---|---|---|
+| « 1re classe » | aboutit | aboutit | aboutit | aboutit |
+| « première classe » | aboutit | *sex manquant* | aboutit | aboutit |
+| « classe 1 » | *sex manquant* | *sex manquant* | aboutit | aboutit |
+| « pclass 1 » | *sex manquant* | *sex manquant* | aboutit | aboutit |
+| « pclass 1 », registre mixte | *sex manquant* | aboutit | *incident* | aboutit |
+| « embarquée à Southampton » | *embarked omis* | aboutit | aboutit | aboutit |
+| « embarquée à Cherbourg » | aboutit | aboutit | aboutit | aboutit |
+| **Total** | **3 / 7** | **4 / 7** | **6 / 7** | **7 / 7** |
+
+**`pclass` et `embarked` sont correctement traduits dans les 7 cas, sur les
+deux moteurs, avant comme après.** Les quatre écritures de `pclass` — « 1re
+classe », « première classe », « classe 1 », « pclass 1 » — donnent toutes
+`pclass=1` ; les deux ports donnent `'S'` et `'C'`. Aucune n'est devenue
+littérale.
+
+**Les trois cas qui n'aboutissent pas sous vLLM échouent tous sur `sex`**, que
+le modèle doit déduire de « une passagère » — jamais sur la forme d'écriture
+qu'on mesurait. Ce défaut-là **préexiste** : le prompt d'origine perdait `sex`
+sur les deux mêmes cas, à l'identique sur trois passages. Il est sensible à
+toute perturbation du prompt, dans les deux sens, et le `reason` montre que le
+modèle *sait* : « Toutes les features requises sont présentes ou déduites
+(sex=female, pclass=1…) » — pendant que la clé `sex` manque du dictionnaire. Ce
+n'est donc pas un défaut de compréhension mais de génération structurée, et il
+n'est **pas traité ici**.
+
+### 17.6 Les variantes essayées, et ce qu'elles coûtaient
+
+Quatre rédactions, toutes mesurées sur les deux moteurs plutôt qu'arbitrées à
+l'intuition. Toutes ferment le défaut (5/5 hostiles) ; elles se départagent sur
+ce qu'elles coûtent aux formes légitimes.
+
+| Rédaction | vLLM légitimes | Ollama légitimes |
+|---|---|---|
+| prompt d'origine | 3 / 7 | 6 / 7 |
+| deux interdits concurrents, « transmettre » en dernier | 5 / 7 | 5 / 7, **incident** sur « 1re classe » |
+| idem + « donne son NOM SEUL » pour `dataset` | 3 / 7 | 6 / 7 |
+| **ordonnée « D'ABORD / SEULEMENT SI », allégée** (retenue) | **4 / 7** | **7 / 7** |
+| idem + « toute feature déduite doit FIGURER » | 2 / 7 | (abandonnée) |
+
+Deux enseignements qui dépassent ce §.
+
+- **Allonger le prompt n'est pas gratuit**, exactement comme élargir
+  `Capability` ne l'était pas (cf. `orchestrator/plan.py`). La dernière ligne
+  du tableau est la plus parlante : une consigne de *complétude* — « toute
+  feature que tu as su déduire doit figurer dans `features` » — a fait tomber
+  les légitimes de 4/7 à 2/7. Ajoutée pour récupérer `sex`, elle a rendu le
+  modèle plus prudent sur la déduction, et il a cessé de déduire.
+- **`dataset` avait besoin de sa propre précision.** La variante sans elle
+  faisait rendre `dataset='titanic (classification)'` — le libellé du prompt
+  recopié en entier — d'où un `KeyError` remonté à l'utilisateur en
+  « incident », 3 fois sur 3 sur « 1re classe ». La contrainte dit désormais
+  « choisis `dataset` parmi les modèles listés, **et donne son NOM SEUL** ».
+
+### 17.7 Ce que la suite garde
+
+Deux tests, et aucun ne remplace l'autre.
+
+- `tests/unit/test_prompts.py` — la **règle** est dans le prompt, ses deux
+  faces. C'est le lieu du remède ; le test compare sur un gabarit aplati, pour
+  qu'un repli de ligne ne fasse pas passer une règle pour absente.
+- `tests/unit/orchestrator/test_graph.py` — la valeur transmise ressort
+  **citée**, pour les trois champs énumérés, convertible (`'4'`) ou pas
+  (`'4e classe'`, ce que rend réellement Ollama). Sans la citation, la relance
+  reproche un champ sans dire ce qui clochait, et l'utilisateur redonne la
+  même valeur.
+
+Ces tests ne peuvent pas garder le **comportement du modèle** : seul le runner
+de ce § le mesure, et c'est pourquoi ses chiffres sont ici.
+
+### 17.8 Pas de régression : la batterie complète, sur les deux moteurs
+
+```bash
+# Ollama (le moteur du .env, inchangé)
+uv run python scripts/mesure_surface_conversationnelle.py
+
+# vLLM, par variables d'environnement
+DAA_LLM_BASE_URL=http://localhost:8100/v1 \
+DAA_LLM_MODEL=google/gemma-4-E4B-it-qat-w4a16-ct \
+uv run python scripts/mesure_surface_conversationnelle.py
+```
+
+| Moteur | Passage | Méta | Témoins | Appels LLM (36 méta) | Durée des 36 méta |
+|---|---|---|---|---|---|
+| vLLM | §16 (avant ce §17) | 36 / 36 | 3 / 4 | 78 | 79 s |
+| vLLM | **après** | **36 / 36** | **3 / 4** | 78 | 77 s |
+| Ollama | §16 (avant ce §17) | 36 / 36 | 4 / 4 | 78 | 333 s |
+| Ollama | **après** | **36 / 36** | 3 / 4 | 78 | 326 s |
+
+**36 / 36 sur les deux moteurs, et 78 appels LLM des deux côtés** — inchangé
+depuis le §15. Attendu : la correction ne touche qu'au contenu d'un prompt, pas
+au nombre d'allers-retours.
+
+`temoin-prediction` reste **correct sur les deux moteurs**, avec la même
+réponse qu'au §16 (2 appels LLM, `capability = predict`, synthèse « modèle
+(déterministe) ») : la correction n'a pas fermé le chemin qu'elle venait
+d'ouvrir.
+
+**Le témoin Ollama passe de 4/4 à 3/4, et il faut le dire sans l'arrondir.**
+Le quatrième est `temoin-colonnes-a-trous`, dont les §15.6 et §16.7 avaient
+déjà relevé qu'il **n'est pas déterministe sous Ollama** : compté correct au
+passage du §16, à côté ici, où il a consommé 12 appels LLM en tournant sur des
+colonnes qu'il croyait absentes. Il rate sous vLLM à tous les passages, par le
+chemin connu (`SELECT * … IS NULL`, 179 lignes au lieu de la liste des
+colonnes). C'est un défaut de l'agent SQL, antérieur à ce chantier et
+**explicitement hors de son périmètre**.
+
+### 17.9 Ce qui reste ouvert après le §17
+
+- **`temoin-colonnes-a-trous`** — le dernier écart de la batterie, sur les deux
+  moteurs. Inchangé depuis le §14 ;
+- **`sex` déduit de « une passagère », sous vLLM.** Trois formulations
+  légitimes sur sept le perdent, de façon stable, avant comme après ce
+  chantier. Le modèle le nomme dans `reason` sans l'émettre dans `features` :
+  c'est un défaut de génération structurée, pas de compréhension, et le prompt
+  y est un mauvais levier — deux rédactions ont fait bouger le chiffre dans les
+  deux sens sans qu'aucune ne le fixe ;
+- **un `dataset` inconnu remonte en « incident ».** `run_inference` lève un
+  `KeyError` que l'orchestrateur ne rattrape qu'en erreur générique, là où la
+  bonne réponse serait une relance. La contrainte de nommage rend le cas rare ;
+  elle ne le supprime pas, et un modèle qui écrira autre chose le rouvrira ;
+- **l'espèce d'iris, contrainte posée sur la CIBLE.** « Un iris de l'espèce
+  dracula » rend une prédiction sans broncher, sur les deux moteurs : `species`
+  n'est pas une feature, rien ne la valide, et l'agent n'a aucun endroit où
+  remarquer que l'utilisateur a contraint ce qu'il était censé prédire ;
+- **la substitution n'est fermée que là où le prompt montre des valeurs.**
+  Les bornes numériques ne lui sont pas montrées, et c'est ce qui les protège
+  aujourd'hui. Le jour où un schéma portera une énumération hors `Literal` — ou
+  où `describe_features` montrera les bornes — il faudra **remesurer** plutôt
+  que supposer que la règle couvre le nouveau cas.
