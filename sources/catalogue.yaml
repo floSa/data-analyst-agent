@@ -1,6 +1,9 @@
 # Catalogue déclaratif des sources de données (CADRAGE §7-①).
 # - postgres : DSN SQLAlchemy (driver pg8000) ; ${VARIABLES} d'environnement autorisées.
 # - file     : chemin CSV/Excel, relatif à ce fichier.
+# - duckdb   : chemin d'une base .duckdb, relatif à ce fichier. Une BASE, pas un
+#              fichier : elle apporte ses clés primaires et étrangères, donc ses
+#              jointures, que ni un CSV ni un classeur ne peuvent déclarer.
 #
 # `dictionary` (facultatif) : Markdown décrivant la source, relatif à ce fichier. Le
 # DDL dit les types ; le dictionnaire dit ce que les données VEULENT dire — c'est lui

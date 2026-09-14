@@ -1,7 +1,7 @@
 """Catalogue déclaratif des sources de données (YAML) — CADRAGE §7-①.
 
-Une source est soit une base Postgres (DSN, variables d'environnement
-autorisées), soit un fichier Excel/CSV. Le routeur choisit une source par son
+Une source est une base Postgres (DSN, variables d'environnement autorisées),
+une base DuckDB, ou un fichier Excel/CSV. Le routeur choisit une source par son
 nom ; ``open_source`` fournit l'adaptateur SQL correspondant.
 """
 
@@ -71,7 +71,19 @@ class FileSource(SourceBase):
     path: Path
 
 
-Source = Annotated[PostgresSource | FileSource, Field(discriminator="type")]
+class DuckDBSource(SourceBase):
+    """Base DuckDB (fichier ``.duckdb``), ouverte en lecture seule.
+
+    Contrairement à ``FileSource``, qui expose un unique fichier sans relations,
+    une base porte ses tables ET ses clés : le schéma en étoile arrive au modèle
+    avec ses jointures déjà déclarées.
+    """
+
+    type: Literal["duckdb"] = "duckdb"
+    path: Path
+
+
+Source = Annotated[PostgresSource | FileSource | DuckDBSource, Field(discriminator="type")]
 
 
 class Catalog(BaseModel):
@@ -97,7 +109,7 @@ def load_catalog(path: Path) -> Catalog:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     catalog = Catalog.model_validate(data)
     for source in catalog.sources:
-        if isinstance(source, FileSource) and not source.path.is_absolute():
+        if isinstance(source, (FileSource, DuckDBSource)) and not source.path.is_absolute():
             source.path = (path.parent / source.path).resolve()
         if source.dictionary is not None and not source.dictionary.is_absolute():
             source.dictionary = (path.parent / source.dictionary).resolve()
@@ -105,7 +117,9 @@ def load_catalog(path: Path) -> Catalog:
 
 
 def open_source(source: Source) -> DatabaseAdapter:
-    """Ouvre l'adaptateur SQL adapté à la source (Postgres ou fichier DuckDB)."""
+    """Ouvre l'adaptateur SQL adapté à la source (Postgres, base DuckDB, fichier)."""
     if isinstance(source, PostgresSource):
         return PostgresAdapter.from_dsn(source.resolved_dsn())
+    if isinstance(source, DuckDBSource):
+        return DuckDBAdapter.from_database(source.path)
     return DuckDBAdapter.from_file(source.path)
