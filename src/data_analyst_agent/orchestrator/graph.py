@@ -41,7 +41,7 @@ from data_analyst_agent.agents.retrieval.catalog import (
     load_catalog,
     open_source,
 )
-from data_analyst_agent.agents.retrieval.faits import RelevesDuCatalogue
+from data_analyst_agent.agents.retrieval.faits import ReglagesDuReleve, RelevesDuCatalogue
 from data_analyst_agent.agents.retrieval.sql import QueryResult
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
@@ -272,11 +272,15 @@ class Orchestrator:
         self.model = model or build_model(self.settings)
         self.catalog = catalog if catalog is not None else load_catalog(self.settings.catalog_path)
         # Ce que les sources disent d'elles-mêmes quand on les LIT — tables,
-        # lignes, période. Relevé au premier inventaire et gardé pour la
-        # session : ouvrir toutes les sources ici ferait payer le démarrage du
-        # serveur à qui ne pose aucune question d'inventaire, et le ferait
-        # dépendre de la disponibilité de chaque base.
-        self.releves = RelevesDuCatalogue(self.catalog)
+        # lignes, période. Relevé au premier inventaire, pas au démarrage :
+        # ouvrir toutes les sources ici ferait payer le démarrage du serveur à
+        # qui ne pose aucune question d'inventaire, et le ferait dépendre de la
+        # disponibilité de chaque base. Gardé ensuite le temps que disent les
+        # réglages — et pas pour la vie du processus : une source revenue doit
+        # cesser d'être annoncée injoignable (cf. `ReglagesDuReleve`).
+        self.releves = RelevesDuCatalogue(
+            self.catalog, ReglagesDuReleve.from_settings(self.settings)
+        )
         self.registry = (
             registry if registry is not None else Registry.load(self.settings.models_registry_path)
         )

@@ -13,15 +13,33 @@ d'où le test de la source injoignable, qui doit rendre la RAISON de son silence
 et aucun chiffre.
 """
 
-from contextlib import closing
+import time
+from contextlib import closing, contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
-from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
+import duckdb
+
+from data_analyst_agent.agents.retrieval.catalog import (
+    Catalog,
+    DuckDBSource,
+    FileSource,
+    PostgresSource,
+)
 from data_analyst_agent.agents.retrieval.faits import (
     FaitsDeSource,
+    ReglagesDuReleve,
     RelevesDuCatalogue,
+    _estimation,
     relever,
 )
+from data_analyst_agent.agents.retrieval.sql import (
+    ColumnInfo,
+    QueryResult,
+    SchemaInfo,
+    TableInfo,
+)
+from data_analyst_agent.config import Settings
 
 VENTES = """date_vente,client,montant
 2024-01-15,alice,100
@@ -197,3 +215,295 @@ def test_une_colonne_de_date_sans_aucune_valeur_ne_donne_pas_de_periode():
         assert _colonne_de_date(adaptateur.schema()) == ("jours", "jour")
 
         assert _periode(adaptateur, "jours", "jour") is None
+
+
+# --- la fraîcheur : un relevé se garde, il ne se fige pas ---------------------
+#
+# Le cache d'origine gardait le premier relevé jusqu'au redémarrage. Défaut
+# observé en vrai le 2026-09-14 : Postgres arrêté au démarrage, la réponse
+# annonçait « volumétrie non relevée » et continuait de l'annoncer alors que la
+# base répondait de nouveau depuis plusieurs minutes. Les tests ci-dessous
+# pilotent l'horloge plutôt que d'attendre — un quart d'heure de péremption ne
+# se vérifie pas en dormant un quart d'heure.
+
+
+class Horloge:
+    """Une horloge monotone qu'on avance à la main."""
+
+    def __init__(self) -> None:
+        self.instant = 0.0
+
+    def __call__(self) -> float:
+        return self.instant
+
+    def avance(self, secondes: float) -> None:
+        self.instant += secondes
+
+
+def test_une_source_revenue_cesse_detre_annoncee_injoignable(tmp_path: Path):
+    """Le défaut du 2026-09-14, reproduit et corrigé : absente, puis revenue."""
+    horloge = Horloge()
+    chemin = tmp_path / "ventes.csv"
+    catalogue = Catalog(sources=[FileSource(name="ventes", path=chemin)])
+    releves = RelevesDuCatalogue(
+        catalogue, ReglagesDuReleve(reprise=30.0, peremption=900.0), horloge
+    )
+
+    assert not releves.de("ventes").lu  # le fichier n'existe pas encore
+
+    chemin.write_text(VENTES, encoding="utf-8")
+    horloge.avance(29.0)
+    assert not releves.de("ventes").lu  # toujours dans le délai de reprise
+
+    horloge.avance(2.0)
+    assert releves.de("ventes").lignes == 3
+
+
+def test_un_releve_reussi_se_perime_et_se_refait(tmp_path: Path):
+    """Une source qui grossit finit par se redire — au bout de la péremption."""
+    horloge = Horloge()
+    chemin = tmp_path / "ventes.csv"
+    chemin.write_text(VENTES, encoding="utf-8")
+    releves = RelevesDuCatalogue(
+        Catalog(sources=[FileSource(name="ventes", path=chemin)]),
+        ReglagesDuReleve(reprise=30.0, peremption=900.0),
+        horloge,
+    )
+
+    assert releves.de("ventes").lignes == 3
+
+    chemin.write_text(VENTES + "2024-12-31,denis,10\n", encoding="utf-8")
+    horloge.avance(899.0)
+    assert releves.de("ventes").lignes == 3  # encore frais
+
+    horloge.avance(2.0)
+    assert releves.de("ventes").lignes == 4
+
+
+def test_la_source_injoignable_est_retentee_bien_avant_la_peremption(tmp_path: Path):
+    """Les deux durées répondent à deux questions, et la panne est la plus pressée.
+
+    Une seule durée pour les deux les répondrait mal toutes les deux : courte,
+    elle recompte des millions de lignes pour rien ; longue, elle fait mentir la
+    réponse pendant toute la session.
+    """
+    reglages = ReglagesDuReleve()
+
+    assert reglages.reprise < reglages.peremption
+
+
+def test_sans_peremption_le_releve_est_refait_a_chaque_demande(tmp_path: Path):
+    """``0`` ne veut pas dire « pour toujours » : il veut dire « pas de cache »."""
+    chemin = tmp_path / "ventes.csv"
+    chemin.write_text(VENTES, encoding="utf-8")
+    releves = RelevesDuCatalogue(
+        Catalog(sources=[FileSource(name="ventes", path=chemin)]),
+        ReglagesDuReleve(peremption=0.0, reprise=0.0),
+    )
+
+    assert releves.de("ventes").lignes == 3
+    chemin.unlink()
+    assert not releves.de("ventes").lu
+
+
+def test_les_reglages_par_defaut_sont_ceux_du_parametrage():
+    """Un seul jeu de valeurs : celui de ``Settings``, justifié là-bas."""
+    assert ReglagesDuReleve.from_settings(Settings()) == ReglagesDuReleve()
+
+
+# --- le bornage : une source muette ne retient pas l'inventaire ---------------
+
+
+def test_une_source_qui_ne_repond_pas_est_abandonnee_au_delai():
+    """Le cas qui n'a pas de message d'erreur : le TCP part et ne revient jamais.
+
+    Sans délai, ``relever`` attendait le délai du système (mesuré : toujours
+    bloqué au bout de 75 s) et tout l'inventaire attendait avec lui. Simulé ici
+    par une source qui dort, pour ne pas faire dépendre un test du réseau.
+    """
+
+    class Endormie(FileSource):
+        pass
+
+    def dormir(_: object) -> None:
+        time.sleep(30)
+
+    with patch("data_analyst_agent.agents.retrieval.faits.open_source", dormir):
+        debut = time.monotonic()
+        faits = relever(
+            Endormie(name="muette", path=Path("/inexistant")), ReglagesDuReleve(delai=0.2)
+        )
+        duree = time.monotonic() - debut
+
+    assert duree < 5  # on n'a pas attendu les trente secondes
+    assert not faits.lu
+    assert "pas de réponse en moins de 0.2 s" in faits.en_clair()
+
+
+def test_le_depassement_de_delai_se_dit_autrement_quun_refus(tmp_path: Path):
+    """Les deux dégradent la ligne en injoignable ; seule la RAISON les sépare,
+    et c'est elle qui dit quoi réparer."""
+    absente = relever(FileSource(name="absente", path=tmp_path / "nulle-part.csv"))
+
+    assert "la source n'a pas répondu" in absente.en_clair()
+
+
+def test_sans_delai_le_releve_attend_ce_quil_faut(tmp_path: Path):
+    """``0`` rend le comportement d'avant, pour qui le veut. Et sans fil du tout."""
+    faits = relever(source(tmp_path, "ventes", VENTES), ReglagesDuReleve(delai=0.0))
+
+    assert faits.lignes == 3
+
+
+# --- l'approximation : un ordre de grandeur, annoncé comme tel ----------------
+#
+# Elle ne concerne que les moteurs où COMPTER coûte — Postgres. La doublure
+# ci-dessous en joue un : la suite unitaire n'ouvre aucun serveur, et ce qu'on
+# vérifie ici n'est pas le SQL de `pg_class` (c'est l'affaire de
+# `scripts/mesure_releve_des_sources.py`, sur une vraie base de 5 M de lignes)
+# mais la RÈGLE — au-dessus du seuil on estime, en dessous on compte, et ce qui
+# est estimé se dit.
+
+
+class FauxPostgres:
+    """Un adaptateur qui répond comme Postgres, et qui compte ce qu'on lui demande."""
+
+    dialect = "postgresql"
+
+    def __init__(self, lignes: int, estimation: int | None = None) -> None:
+        self.lignes = lignes
+        self.estimation = lignes if estimation is None else estimation
+        self.comptages = 0
+
+    def schema(self) -> SchemaInfo:
+        return SchemaInfo(
+            dialect=self.dialect,
+            tables=[TableInfo(name="mesures", columns=[ColumnInfo(name="id", type="INTEGER")])],
+        )
+
+    def run(self, query: str, max_rows: int = 200) -> QueryResult:
+        if "pg_class" in query:
+            return QueryResult(columns=["reltuples"], rows=[[self.estimation]])
+        self.comptages += 1
+        return QueryResult(columns=["n"], rows=[[self.lignes]])
+
+    def close(self) -> None:
+        pass
+
+
+@contextmanager
+def source_postgres(adaptateur: FauxPostgres):
+    """``relever`` ouvre la source par ``open_source`` : on lui substitue la doublure."""
+    with patch("data_analyst_agent.agents.retrieval.faits.open_source", lambda _: adaptateur):
+        yield PostgresSource(name="volumetrie", dsn="postgresql+pg8000://u:p@h:5432/b")
+
+
+def test_une_grande_table_est_estimee_et_le_dit():
+    """Au-dessus du seuil, le moteur donne son ordre de grandeur — et la phrase
+    rendue porte un ``~``, parce qu'un ordre de grandeur affiché comme un compte
+    exact est le petit mensonge que ce module existe pour empêcher."""
+    adaptateur = FauxPostgres(lignes=50_000)
+    with source_postgres(adaptateur) as source:
+        faits = relever(source, ReglagesDuReleve(seuil_approximation=1000))
+
+    assert faits.estimees == ["mesures"]
+    assert adaptateur.comptages == 0  # la table n'a PAS été balayée
+    assert "mesures : ~50000" in faits.en_clair()
+    assert "~50000 ligne(s)" in faits.en_clair()
+
+
+def test_une_petite_table_reste_comptee_exactement():
+    """En dessous du seuil, le comptage est de toute façon gratuit : on ne
+    dégrade jamais gratuitement."""
+    adaptateur = FauxPostgres(lignes=10)
+    with source_postgres(adaptateur) as source:
+        faits = relever(source, ReglagesDuReleve(seuil_approximation=1000))
+
+    assert faits.estimees == []
+    assert adaptateur.comptages == 1
+    assert "mesures : 10" in faits.en_clair()
+
+
+def test_un_seuil_nul_compte_tout():
+    adaptateur = FauxPostgres(lignes=50_000)
+    with source_postgres(adaptateur) as source:
+        faits = relever(source, ReglagesDuReleve(seuil_approximation=0))
+
+    assert faits.estimees == []
+    assert "~" not in faits.en_clair()
+
+
+def test_une_table_jamais_analysee_est_comptee():
+    """``reltuples`` vaut -1 tant qu'aucun ``ANALYZE`` n'est passé. Sans cette
+    garde, une table volumineuse mais neuve s'afficherait « ~-1 »."""
+    adaptateur = FauxPostgres(lignes=50_000, estimation=-1)
+    with source_postgres(adaptateur) as source:
+        faits = relever(source, ReglagesDuReleve(seuil_approximation=1000))
+
+    assert faits.estimees == []
+    assert faits.lignes_par_table == {"mesures": 50_000}
+
+
+def test_duckdb_n_est_pas_estime_parce_quil_compte_pour_rien(tmp_path: Path):
+    """La décision mesurée : DuckDB répond ``count(*)`` depuis ses métadonnées.
+
+    L'y estimer décorerait d'un « ~ » un chiffre exact et gratuit. Le seuil ne
+    change donc rien sur une base DuckDB, si grosse soit-elle.
+    """
+    chemin = tmp_path / "gros.duckdb"
+    connexion = duckdb.connect(str(chemin))
+    connexion.execute("CREATE TABLE mesures AS SELECT i AS id FROM range(50000) AS t(i)")
+    connexion.close()
+
+    faits = relever(
+        DuckDBSource(name="gros", path=chemin), ReglagesDuReleve(seuil_approximation=1000)
+    )
+
+    assert faits.estimees == []
+    assert faits.lignes_par_table == {"mesures": 50_000}
+
+
+def test_un_moteur_sans_estimation_retombe_sur_le_comptage():
+    """Le dispatch ne devine pas : un moteur qu'on ne connaît pas est compté."""
+
+    class Exotique:
+        dialect = "sqlite"
+
+    assert _estimation(Exotique(), "mesures") is None
+
+
+def test_une_estimation_qui_echoue_ne_bloque_rien():
+    """L'estimation est un bonus : un moteur qui refuse la requête de catalogue
+    — droits manquants, catalogue inaccessible — rend un relevé compté, pas un
+    relevé en échec."""
+
+    class Boudeur(FauxPostgres):
+        def run(self, query: str, max_rows: int = 200) -> QueryResult:
+            if "pg_class" in query:
+                raise RuntimeError("pas le droit de lire le catalogue")
+            return super().run(query, max_rows)
+
+    adaptateur = Boudeur(lignes=50_000)
+    with source_postgres(adaptateur) as source:
+        faits = relever(source, ReglagesDuReleve(seuil_approximation=1000))
+
+    assert faits.lu
+    assert faits.estimees == []
+    assert faits.lignes_par_table == {"mesures": 50_000}
+
+
+def test_une_table_absente_du_catalogue_du_moteur_est_comptee():
+    """``to_regclass`` rend NULL d'une table que le catalogue ne connaît pas."""
+
+    class Muet(FauxPostgres):
+        def run(self, query: str, max_rows: int = 200) -> QueryResult:
+            if "pg_class" in query:
+                return QueryResult(columns=["reltuples"], rows=[[None]])
+            return super().run(query, max_rows)
+
+    adaptateur = Muet(lignes=50_000)
+    with source_postgres(adaptateur) as source:
+        faits = relever(source, ReglagesDuReleve(seuil_approximation=1000))
+
+    assert faits.estimees == []
+    assert adaptateur.comptages == 1

@@ -70,6 +70,40 @@ class Settings(BaseSettings):
     # Borne d'allers-retours LLM (tools compris) : coupe les boucles infinies.
     retrieval_request_limit: int = 10
 
+    # Relevé d'une source — volumétrie et période LUES dedans (cf.
+    # `agents/retrieval/faits.py`). Quatre bornes, parce que sans elles un
+    # inventaire attend indéfiniment une source muette et sert des chiffres du
+    # démarrage jusqu'au redémarrage.
+    #
+    # DÉLAI maximal par source. Au-delà, la ligne est dégradée en « injoignable »
+    # plutôt qu'attendue : le relevé est ce qui s'affiche AVANT la première
+    # question, et une source muette bloquait l'inventaire entier sans plafond
+    # (mesuré : toujours bloqué au bout de 75 s, le temps du délai TCP du
+    # système). 10 s, c'est déjà deux à trois fois un tour de modèle complet.
+    # 0 = pas de délai.
+    releve_delai: float = 10.0
+    # PÉREMPTION d'un relevé réussi. Une volumétrie sert à CHOISIR une source,
+    # pas à répondre : elle bouge à l'échelle du chargement nocturne, pas de la
+    # minute. Un quart d'heure borne la fraîcheur sans refaire les comptages à
+    # chaque inventaire d'une même séance de travail. 0 = aucune mise en cache.
+    releve_peremption: float = 900.0
+    # REPRISE d'une source injoignable — bien plus courte que la péremption, et
+    # c'est tout l'enjeu : une panne ne se mesure pas en quarts d'heure, elle se
+    # répare en minutes. Observé le 2026-09-14 : Postgres arrêté au démarrage,
+    # relancé quelques minutes plus tard, et la réponse annonçait encore
+    # « volumétrie non relevée ». Le coût d'une reprise inutile est une
+    # connexion refusée, immédiate. 0 = aucune mise en cache.
+    releve_reprise: float = 30.0
+    # SEUIL au-delà duquel le nombre de lignes d'une table est ESTIMÉ par le
+    # moteur (`reltuples`) plutôt que compté. Mesuré sur 5 M de lignes Postgres :
+    # 88 ms de `count(*)` contre 1,5 ms de lecture du catalogue, pour la même
+    # valeur. En dessous du seuil, le comptage exact est de toute façon gratuit
+    # et reste exact — on ne dégrade pas sans contrepartie. Sans effet sur une
+    # base DuckDB, qui répond `count(*)` depuis ses métadonnées : la liste des
+    # moteurs concernés, et pourquoi, est dans `faits.ESTIMATIONS`.
+    # 0 = jamais d'estimation.
+    releve_seuil_approximation: int = 100_000
+
     # --- Agent Système (questions SUR l'agent : cf. orchestrator/systeme.py) ---
     # Bien plus court que celui de la récupération, et pour une raison : l'agent
     # système n'a pas de boucle de correction à mener. Un appel pour choisir
