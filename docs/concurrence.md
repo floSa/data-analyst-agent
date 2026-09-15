@@ -77,12 +77,29 @@ Elles n'ont pas le même profil, et c'est pour ça qu'on les sépare :
 
 ### 1.4 La commande
 
+La campagne de référence (§2, §5, §6) :
+
 ```bash
 uv run python scripts/mesure_concurrence.py \
+    --epreuve socle --epreuve charge --epreuve cloisonnement --epreuve meme-fil \
     --paliers 1,2,4,8,16 --tours 3 --delai-client 300 \
     --llm-base-url http://localhost:8100/v1 \
     --llm-model google/gemma-4-E4B-it-qat-w4a16-ct \
     --json mesures.json
+```
+
+Les deux épreuves qui ne visent pas l'application se lancent à part : celle de la
+base (§3.2) a besoin du catalogue du projet, celle des moteurs (§7.2) de deux URL.
+
+```bash
+uv run python scripts/mesure_concurrence.py --epreuve postgres \
+    --paliers 1,2,4,8,16 --tirs-socle 50
+
+uv run python scripts/mesure_concurrence.py --epreuve moteurs \
+    --paliers-moteurs 1,2,4,8 --tokens-moteurs 200 \
+    --llm-base-url http://localhost:8100/v1 \
+    --llm-model google/gemma-4-E4B-it-qat-w4a16-ct \
+    --moteur-b http://localhost:11434/v1 --modele-b gemma4:e4b
 ```
 
 Le moteur est **mutualisé** avec d'autres projets de la machine. Le banc relève
@@ -96,9 +113,10 @@ un moteur au repos.
 ## 2. Latences et débit
 
 Trois tours par utilisateur et par palier, un fil neuf à chaque palier, un tour
-de chauffe jeté avant le premier. Percentiles **par rang le plus proche** : sur
-des échantillons de trois à quarante-huit points, interpoler inventerait une
-précision qu'on n'a pas — les valeurs citées ont réellement été observées.
+de chauffe jeté avant le premier — 279 tours en tout. Percentiles **par rang le
+plus proche** : sur des échantillons de trois à quarante-huit points, interpoler
+inventerait une précision qu'on n'a pas, les valeurs citées ont réellement été
+observées.
 
 Les deux dernières colonnes sont la sonde du moteur : combien de requêtes vLLM
 traitait **en même temps**, et combien attendaient en file. C'est ce qui
@@ -106,23 +124,25 @@ distingue « le moteur est saturé » de « on ne lui envoie rien ».
 
 | capacité | N | requêtes | abouties | p50 (s) | p95 (s) | débit (req/min) | moteur : en vol / en file |
 |---|---|---|---|---|---|---|---|
-| query | 1 | 3 | 3 | 3,1 | 3,1 | 20,3 | 1 / 0 |
-| query | 2 | 6 | 6 | 2,8 | 3,4 | 42,2 | 2 / 0 |
-| query | 4 | 12 | 12 | 3,3 | 3,9 | 74,0 | 4 / 1 |
-| query | 8 | 24 | 24 | 4,7 | 5,3 | **109,0** | 8 / 2 |
-| query | 16 | 48 | 48 | 7,4 | 13,6 | **118,7** | 16 / 5 |
-| analyze | 1 | 3 | 3 | 12,1 | 24,4 | 4,8 | 1 / 0 |
-| analyze | 2 | 6 | 6 | 11,7 | 23,7 | 9,9 | 2 / 0 |
-| analyze | 4 | 12 | 12 | 12,1 | 25,6 | 18,5 | 4 / 0 |
-| analyze | 8 | 24 | 24 | 12,4 | 37,8 | **23,2** | 8 / 0 |
-| analyze | 16 | 48 | 47 | 23,7 | 74,0 | **22,7** | 16 / 1 |
-| predict | 1 | 3 | 3 | 1,7 | 2,8 | 29,5 | 1 / 0 |
-| predict | 2 | 6 | 6 | 1,7 | 1,8 | 71,4 | 2 / 0 |
-| predict | 4 | 12 | 12 | 1,8 | 1,9 | 134,8 | 4 / 0 |
-| predict | 8 | 24 | 24 | 1,9 | 2,2 | 234,8 | 8 / 0 |
-| predict | 16 | 48 | 48 | 2,2 | 2,7 | **411,0** | 16 / 0 |
+| query | 1 | 3 | 3 | 4,5 | 5,7 | 13,1 | 1 / 0 |
+| query | 2 | 6 | 6 | 3,8 | 6,4 | 26,2 | 2 / 0 |
+| query | 4 | 12 | 12 | 4,7 | 5,5 | 48,8 | 4 / 0 |
+| query | 8 | 24 | 24 | 6,8 | 11,2 | **67,6** | 8 / 1 |
+| query | 16 | 48 | 48 | 11,4 | 21,0 | **83,1** | 16 / **12** |
+| analyze | 1 | 3 | 3 | 16,0 | 34,0 | 3,5 | 1 / 0 |
+| analyze | 2 | 6 | 6 | 13,7 | 28,6 | 8,4 | 2 / 0 |
+| analyze | 4 | 12 | 12 | 12,1 | 25,1 | 18,6 | 4 / 0 |
+| analyze | 8 | 24 | 24 | 12,3 | 39,8 | **20,8** | 8 / 0 |
+| analyze | 16 | 48 | 48 | 32,7 | 76,4 | **21,9** | 16 / 0 |
+| predict | 1 | 3 | 3 | 1,7 | 2,9 | 28,9 | 1 / 0 |
+| predict | 2 | 6 | 6 | 1,6 | 1,7 | 71,3 | 2 / 0 |
+| predict | 4 | 12 | 12 | 1,8 | 1,8 | 134,5 | 4 / 0 |
+| predict | 8 | 24 | 24 | 1,9 | 2,1 | 243,4 | 8 / 0 |
+| predict | 16 | 48 | 48 | 2,1 | 2,7 | **410,0** | 16 / 0 |
 
-### Où le débit cesse de croître
+**279 tours sur 279 aboutis, aucune erreur, à aucun palier.**
+
+### 2.1 Où le débit cesse de croître
 
 Trois réponses, et **elles sont différentes selon la capacité** — c'est le
 premier résultat de ce chantier, et c'est ce qui justifie de ne pas avoir mesuré
@@ -130,14 +150,36 @@ premier résultat de ce chantier, et c'est ce qui justifie de ne pas avoir mesur
 
 | capacité | dernier palier qui paie | ce que le palier suivant ajoute |
 |---|---|---|
-| `predict` | **jamais atteint** — 411 req/min à N=16, croissance encore proche du linéaire | +75 % de N=8 à N=16 |
-| `query` | **N=8** | +9 % seulement de N=8 à N=16, pour un p50 qui passe de 4,7 à 7,4 s |
-| `analyze` | **N=8** | **−2 %** : le débit ne monte plus du tout, et le p50 double (12,4 → 23,7 s) |
+| `predict` | **jamais atteint** — 410 req/min à N=16 | +68 % de N=8 à N=16 |
+| `query` | **N=8** | +23 % de N=8 à N=16, pour un p50 qui passe de 6,8 à 11,4 s |
+| `analyze` | **N=8** | **+5 %** : le débit ne monte plus, et le p50 est multiplié par 2,7 (12,3 → 32,7 s) |
 
 `predict` est le témoin : il ne fait qu'un appel au planificateur et une
 prédiction sklearn en mémoire. Il tient seize utilisateurs sans plier, ce qui
 dit que **ni le serveur HTTP, ni le pool de threads, ni le magasin de sessions
 ne plafonnent à seize** — le plafond des deux autres capacités est ailleurs.
+
+### 2.2 Ce que ces chiffres valent
+
+Deux campagnes complètes ont été menées après la correction du §4, à quelques
+dizaines de minutes d'intervalle, avec le même banc et les mêmes paliers. La
+seconde — celle du tableau ci-dessus — a tourné pendant qu'un autre projet de la
+machine sollicitait Ollama sur la même carte ; la première avait la carte pour
+elle.
+
+| capacité | N | 1re campagne | 2e campagne (le tableau) |
+|---|---|---|---|
+| query | 8 | 109,0 req/min | 67,6 req/min |
+| query | 16 | 118,7 req/min | 83,1 req/min |
+| analyze | 16 | 22,7 req/min | 21,9 req/min |
+| predict | 16 | 411,0 req/min | 410,0 req/min |
+
+Les **valeurs absolues bougent d'un tiers** sur ce que le moteur sert, et pas du
+tout sur ce que le bac à sable borne — ce qui est exactement cohérent avec le
+§3. La **forme** — où le débit cesse de croître, quel nœud grandit, quelle
+sonde monte — est identique dans les deux. C'est elle qui porte les conclusions
+de ce document ; les valeurs absolues ne valent que pour cette machine, ce jour,
+et ce qu'elle portait d'autre.
 
 ---
 
@@ -157,16 +199,16 @@ Un verrou unique traversé par tout le trafic est un candidat sérieux.
 
 | K clients | `/health` | `/me` (verrou + réécriture du fichier) |
 |---|---|---|
-| 1 | 605 req/s | 563 req/s |
-| 4 | 1 119 req/s | 701 req/s |
-| 8 | 1 143 req/s | 713 req/s |
-| 16 | 1 065 req/s | **735 req/s** (p50 21,5 ms) |
+| 1 | 559 req/s | 599 req/s |
+| 4 | 1 097 req/s | 697 req/s |
+| 8 | 1 194 req/s | 773 req/s |
+| 16 | 1 107 req/s | **687 req/s** (p50 21,6 ms) |
 
-La session **coûte** — `/me` plafonne à ~700 req/s là où `/health` dépasse
-1 000 — mais ce plafond vaut **44 000 requêtes par minute**, contre 119 pour la
-capacité applicative la plus rapide hors `predict`. Deux ordres de grandeur
-d'écart : le socle n'est pas le goulot, et le verrou du magasin de sessions non
-plus.
+La session **coûte** : `/me` plafonne autour de 700 req/s là où `/health` dépasse
+1 000, et son p50 passe de 1,6 à 21,6 ms entre un client et seize. Mais ce
+plafond vaut **41 000 requêtes par minute**, quand la capacité applicative la
+plus rapide en rend 410. Cent fois moins : le socle n'est pas le goulot, et le
+verrou du magasin de sessions non plus.
 
 ### 3.2 Écarté — Postgres
 
@@ -182,82 +224,91 @@ courante.
 | 8 | 1 515 req/s | 4,3 ms | 7,1 ms |
 | 16 | **1 323 req/s** | 9,7 ms | 18,6 ms |
 
-79 000 requêtes par minute. Trois ordres de grandeur au-dessus de ce que
-l'application consomme. Postgres est hors de cause.
+1 300 requêtes SQL par seconde à seize connexions simultanées, en moins de
+10 ms au p50. L'application, elle, rend au mieux deux réponses par seconde, et
+un tour de `query` émet une poignée d'instructions SQL : deux ordres de grandeur
+séparent ce que la base peut servir de ce qu'on lui demande. Postgres est hors
+de cause.
 
 ### 3.3 Écarté — le verrou par conversation
 
 Il est **par conversation**, pas global : seize utilisateurs sur seize fils
-différents ne s'attendent pas, et c'est ce que montre `predict` à N=16 (411
+différents ne s'attendent pas, et c'est ce que montre `predict` à N=16 (410
 req/min, aucune dégradation). Le cas où il mord — deux tours simultanés sur le
 **même** fil — est éprouvé à part : les quatre messages sont persistés, aucun
 n'est perdu (§5.3). Ce n'est donc pas un plafond de débit ; c'est une
 sérialisation voulue, et elle ne concerne qu'un fil à la fois.
 
-### 3.4 **Le goulot de `analyze` : le sémaphore du bac à sable**
+### 3.4 La preuve : où le temps passe, nœud par nœud
 
-La réponse porte sa propre trace, un pas par nœud du graphe avec sa durée.
-C'est elle qui désigne, au lieu de laisser déduire :
+La réponse porte sa propre trace, un pas par nœud du graphe avec sa durée. C'est
+elle qui **désigne** le goulot, au lieu de laisser déduire — et les trois
+capacités donnent trois signatures franchement différentes.
 
-| capacité | N | bout en bout p50 | `plan` | `retrieval` | **`analysis`** | `synthesize` |
-|---|---|---|---|---|---|---|
-| analyze | 1 | 12,2 s | 0,9 | — | **10,4** | 0,6 |
-| analyze | 4 | 12,3 s | 0,8 | — | **10,6** | 0,8 |
-| analyze | 16 | 47,5 s | 0,9 | — | **44,8** | 1,2 |
+| capacité | N | bout en bout p50 | `plan` | `rappel` | `retrieval` | **`analysis`** | `synthesize` |
+|---|---|---|---|---|---|---|---|
+| predict | 1 | 1,7 s | 1,6 | — | — | — | 0,0 |
+| predict | 16 | 2,1 s | **1,8** | — | — | — | 0,0 |
+| query | 1 | 4,5 s | 1,4 | 0,1 | 2,1 | — | 0,0 |
+| query | 4 | 4,7 s | 1,5 | 0,2 | 2,4 | — | 0,0 |
+| query | 8 | 6,8 s | 2,2 | 0,6 | 3,1 | — | 0,0 |
+| query | 16 | 11,4 s | **4,3** | **1,7** | **3,2** | — | 0,0 |
+| analyze | 1 | 16,0 s | 1,0 | 0,3 | — | **13,3** | 0,9 |
+| analyze | 4 | 12,1 s | 0,7 | 0,4 | — | **10,6** | 0,7 |
+| analyze | 8 | 12,3 s | 0,8 | 0,4 | — | **21,0** | 0,7 |
+| analyze | 16 | 32,7 s | **0,9** | 0,6 | — | **45,4** | 0,7 |
 
-De 1 à 16 utilisateurs, `plan` ne bouge pas (0,9 → 0,9 s) et `synthesize`
-double à peine (0,6 → 1,2 s) : **les nœuds qui appellent le modèle ne sont pas
-ce qui ralentit.** Seul `analysis` explose, ×4,3 — et c'est le seul nœud qui
-ouvre un conteneur.
+Trois lectures, et aucune n'a besoin d'un raisonnement :
 
-Le réglage qui le borne est `DAA_SANDBOX_MAX_SESSIONS=4` : quatre conteneurs
-vivants au plus, les suivants attendent une place, et au bout de
-`sandbox_queue_timeout=60 s` ils sont refusés. Deux confirmations
+- **`predict`** : rien ne grandit. Le seul nœud LLM passe de 1,6 à 1,8 s entre
+  un utilisateur et seize. Il n'y a pas de goulot à ce palier.
+- **`query`** : **tous** les nœuds qui parlent au modèle grandissent ensemble —
+  `plan` ×3,1, `rappel` ×17, `retrieval` ×1,5 — et aucun ne domine. C'est la
+  signature d'un serveur d'inférence qui répartit son débit entre ses clients.
+- **`analyze`** : `plan` ne bouge pas (1,0 → 0,9 s) et `synthesize` non plus
+  (0,9 → 0,7 s). **Seul `analysis` explose**, ×3,4 de 1 à 16 — et c'est le seul
+  nœud qui ouvre un conteneur.
+
+### 3.5 Le goulot de `analyze` : le sémaphore du bac à sable
+
+Le réglage qui borne `analysis` est `DAA_SANDBOX_MAX_SESSIONS=4` : quatre
+conteneurs vivants au plus, les suivants attendent une place, et au bout de
+`sandbox_queue_timeout=60 s` ils sont refusés. Trois confirmations
 indépendantes :
 
-- le débit plafonne **exactement** entre N=8 et N=16 (23,2 puis 22,7 req/min)
-  alors que le nombre de demandeurs double ;
-- à N=16, un refus explicite apparaît — « toutes les sandboxes sont occupées
-  (4 en parallèle) : pas de place libérée en 60 s » (§6).
+- la durée du nœud `analysis` décroche **exactement entre N=4 et N=8** — 10,6 s
+  puis 21,0 s — c'est-à-dire au palier où le nombre de demandeurs dépasse le
+  nombre de places ;
+- le débit plafonne au même endroit (18,6 → 20,8 → 21,9 req/min) alors que le
+  nombre de demandeurs double deux fois ;
+- un refus explicite apparaît à N=16 dans l'une des deux campagnes — « toutes les
+  sandboxes sont occupées (4 en parallèle) : pas de place libérée en 60 s »
+  (§6).
 
 Et une confirmation par la négative : à N=16 sur `analyze`, la sonde du moteur
-ne relève **jamais plus d'une requête en file**, là où `query` au même palier en
-relève cinq. Les analyses n'atteignent pas le moteur ensemble — elles attendent
+ne relève **jamais aucune requête en file**, là où `query` au même palier en
+relève douze. Les analyses n'atteignent pas le moteur ensemble — elles attendent
 avant, devant le sémaphore.
 
-### 3.5 **Le goulot de `query` : vLLM**
+### 3.6 Le goulot de `query` : vLLM
 
-Le même tableau, pour `query` :
-
-| capacité | N | bout en bout p50 | `plan` | `rappel` | `retrieval` | `system` |
-|---|---|---|---|---|---|---|
-| query | 1 | 3,0 s | 0,7 | 0,2 | 1,4 | 0,1 |
-| query | 4 | 2,7 s | 0,8 | 0,6 | 1,6 | 0,2 |
-| query | 16 | 5,9 s | **1,2** | **1,4** | **2,9** | 0,2 |
-
-Ici, **tous** les nœuds qui parlent au modèle grandissent ensemble — `plan`
-×1,7, `retrieval` ×2,1, `rappel` ×7 — et aucun ne domine. C'est la signature
-d'un serveur d'inférence qui répartit son débit entre ses clients, pas d'une
-ressource contendue dans l'application.
-
-La sonde le confirme directement : `vllm:num_requests_waiting` passe de 0 (N≤2)
-à 1 (N=4), 2 (N=8) puis **5** (N=16). Le moteur met des requêtes en file
-d'attente, et c'est à ce moment-là que le débit cesse de croître (109,0 →
-118,7 req/min, +9 %).
+La sonde le dit directement : `vllm:num_requests_waiting` vaut 0 jusqu'à N=4,
+1 à N=8, puis **12 à N=16**. Le moteur met des requêtes en file, et c'est à ce
+moment-là que le débit cesse de croître pendant que le p50 double.
 
 **Pourquoi `predict` ne plafonne pas au même endroit** : un tour `predict` fait
-un appel au modèle, un tour `query` en fait quatre à six (le planificateur, puis
-la boucle de l'agent SQL, puis la reprise). Ce n'est pas le nombre de requêtes
-HTTP qui sature vLLM, c'est le nombre de jetons — et `query` en consomme
-plusieurs fois plus par réponse rendue.
+un appel au modèle, un tour `query` en fait quatre à six — le planificateur, la
+boucle de l'agent SQL, la reprise. Ce n'est pas le nombre de requêtes HTTP qui
+sature vLLM, c'est le nombre de jetons, et `query` en consomme plusieurs fois
+plus par réponse rendue.
 
-### 3.6 Le résumé
+### 3.7 Le résumé
 
 | capacité | goulot | la mesure qui le désigne |
 |---|---|---|
-| `predict` | **aucun à N=16** | 411 req/min, `num_requests_waiting` à 0 |
-| `query` | **vLLM** | tous les nœuds LLM grandissent ensemble ; `num_requests_waiting` = 5 à N=16 |
-| `analyze` | **le sémaphore du bac à sable (4)** | seul `analysis` grandit (×4,3) ; débit plat 23,2 → 22,7 ; refus explicite à N=16 |
+| `predict` | **aucun à N=16** | 410 req/min ; le nœud `plan` passe de 1,6 à 1,8 s ; rien en file chez le moteur |
+| `query` | **vLLM** | tous les nœuds LLM grandissent ensemble ; `num_requests_waiting` = 12 à N=16 |
+| `analyze` | **le sémaphore du bac à sable (4)** | seul `analysis` grandit, et il décroche entre N=4 et N=8 ; débit plat ; refus explicite à N=16 |
 
 ---
 
@@ -279,9 +330,11 @@ normalement, puis **s'effondre** au palier 16 :
 | analyze | 16 | **6,2** | **38/48** |
 
 Un débit de 7,3 req/min à seize utilisateurs, contre 86,6 à huit. Ce n'est pas
-une saturation — une saturation aplatit une courbe, elle ne la renverse pas. Et
-la sonde du moteur disait que vLLM n'était pas en cause : onze requêtes en vol,
-une seule en file.
+une saturation — une saturation aplatit une courbe, elle ne la renverse pas, et
+c'est bien ce qu'on observe partout ailleurs dans ce document. La sonde du moteur
+disait d'ailleurs que vLLM n'était pas en cause : onze requêtes en vol, **une
+seule en file**, là où les campagnes d'après correction en mettent cinq puis
+douze au même palier.
 
 Dans les réponses, dix erreurs sur quarante-huit, de deux natures :
 `ModelAPIError: Connection error.` et l'abandon du banc au bout de 300 s. Dans
@@ -336,7 +389,11 @@ de Starlette.
 
 ### 4.4 Ce que ça a changé
 
-Même banc, même machine, même moteur, même délai d'abandon (300 s) :
+Deux campagnes **appariées** : même banc, même machine, même moteur, mêmes
+paliers, même délai d'abandon (300 s), à une heure d'intervalle. Ce sont les
+seuls chiffres de ce document qu'on peut soustraire l'un à l'autre — ceux du §2
+viennent d'une troisième campagne, plus tardive, et n'ont pas à être comparés à
+ceux-ci (cf. §2.2).
 
 | capacité | N | débit AVANT | débit APRÈS | abouties AVANT | abouties APRÈS |
 |---|---|---|---|---|---|
@@ -348,13 +405,16 @@ Même banc, même machine, même moteur, même délai d'abandon (300 s) :
 | analyze | 16 | 6,2 | **22,7** | 38/48 | **47/48** |
 | predict | 16 | 341,5 | **411,0** | 47/48 | **48/48** |
 
-Sur la campagne entière — 279 réponses — les erreurs passent de **quinze de
-quatre natures** à **une seule**, et cette dernière est un refus voulu (§6).
+Sur la campagne entière — 279 tours — les échecs passent de **vingt-cinq, de
+trois natures** (254 tours aboutis) à **un seul** (278 aboutis), et ce dernier
+est un refus voulu (§6).
 
 Une conséquence qu'il faut dire : ce n'est qu'**après** la correction que le
 goulot réel devient lisible. Avant, `vllm:num_requests_waiting` ne dépassait
 jamais 1, parce que les requêtes se perdaient en réessais au lieu d'atteindre le
-moteur. Après, il monte à 5 — et §3.5 devient démontrable.
+moteur. Après, il monte à 5 puis à 12 selon la campagne — et le §3.6 devient
+démontrable. Un défaut de concurrence ne cache pas seulement une panne : il cache
+la mesure qu'on était venu faire.
 
 ---
 
@@ -367,12 +427,15 @@ repos : Alice puis Bob, chacun son tour ([`tests/unit/api/test_cloisonnement.py`
 
 Seize utilisateurs, seize comptes, seize sessions, seize sources, **seize jetons
 distincts**. La campagne complète mène 279 tours. Ensuite, cinq vérifications —
-et la **première ne porte pas sur le cloisonnement mais sur le protocole** :
+et la **première ne porte pas sur le cloisonnement mais sur le protocole**. Les
+chiffres ci-dessous sont ceux de la campagne de référence ; les **trois**
+campagnes complètes menées ce jour-là rendent exactement le même verdict, avant
+comme après la correction du §4 :
 
 | vérification | ce qu'elle interdit | résultat |
 |---|---|---|
 | **le canari est actif** | qu'« aucune fuite » soit vrai parce que personne n'a rien lu | **TENU** — 16/16 ont reçu leur propre jeton |
-| aucune réponse ne porte le jeton d'un autre | une donnée d'autrui dans ma réponse | **TENU** — 279 réponses relues intégralement (2 134 Kio) |
+| aucune réponse ne porte le jeton d'un autre | une donnée d'autrui dans ma réponse | **TENU** — 279 réponses relues intégralement (2 147 Kio) |
 | chacun ne liste que ses propres fils | le fil d'autrui dans ma liste | **TENU** — 16 listes, 93 fils, aucun intrus |
 | le fil d'un autre répond 404 | un fil ouvrable par son identifiant, et un 403 qui confirmerait son existence | **TENU** — 480 tentatives croisées, toutes en 404 |
 | sur le disque, aucune transcription ne porte le jeton d'un autre | un fichier au mauvais endroit, que l'API ne montrerait pas | **TENU** — 93 transcriptions relues |
@@ -423,17 +486,23 @@ mémoire, l'autre un quota plus large.
 
 ### 6.1 Après correction
 
-Sur les 279 tours de la campagne complète, **une seule erreur** :
+Deux campagnes complètes après correction, 279 tours chacune. **Une seule erreur
+sur les 558**, et elle n'est pas une panne :
 
 | nature | palier d'apparition | message rendu |
 |---|---|---|
-| **plafond de sandbox** | `analyze`, **N=16** (1 tour sur 48) | « toutes les sandboxes sont occupées (4 en parallèle) : pas de place libérée en 60 s » |
+| **plafond de sandbox** | `analyze`, **N=16** — 1 tour sur 48 dans une campagne, 0 sur 48 dans l'autre | « toutes les sandboxes sont occupées (4 en parallèle) : pas de place libérée en 60 s » |
 
 C'est le comportement **voulu** de `DAA_SANDBOX_MAX_SESSIONS=4` avec
 `sandbox_queue_timeout=60 s` : au-delà du plafond, une session attend son tour,
 et au bout d'une minute elle est refusée explicitement plutôt que laissée en
-attente indéfinie. Le seuil d'apparition est donc mesuré : **entre 8 et 16
-analyses simultanées**, sur cette machine, avec ces réglages.
+attente indéfinie.
+
+Qu'il apparaisse dans une campagne et pas dans l'autre n'est pas une
+contradiction : à N=16, le nœud `analysis` dure 45 s au p50 et son p95 monte à
+76 s, c'est-à-dire que l'attente d'une place frôle le délai de 60 s. **Le seuil
+est là**, entre huit et seize analyses simultanées sur cette machine, et de part
+et d'autre de ce seuil un refus est une affaire de quelques secondes.
 
 Trois natures que le banc sait nommer ne se sont **pas** présentées, et
 l'absence est un résultat :
@@ -446,9 +515,11 @@ l'absence est un résultat :
 
 ### 6.2 Avant correction, pour mémoire
 
+Vingt-cinq échecs sur 279 tours, de trois natures :
+
 | nature | paliers | total |
 |---|---|---|
-| connexion au moteur (§4) | `query` 8 et 16, `analyze` 4, 8 et 16, `predict` 16 | 14 |
+| connexion au moteur (§4) | `query` 8 et 16, `analyze` 4, 8 et 16, `predict` 16 | 15 |
 | délai du moteur | `analyze` 16 | 1 |
 | abandon du banc à 300 s | `query` 16, `analyze` 16 | 9 |
 
