@@ -1,0 +1,32 @@
+# Ce que le SEMIS engendre, et qui n'a donc rien à faire dans le dépôt.
+# Reconstruit à l'identique par :
+#
+#     uv run python scripts/seed_catalogue_demonstration.py
+#
+# La base Postgres `daa_demonstration` n'est pas listée ici pour la raison
+# évidente qu'elle n'est pas un fichier — mais elle est engendrée par le même
+# script, et recréée à chaque exécution.
+
+# 18,6 Mo, et 547 820 lignes. Son CONTENU est reproductible — deux exécutions
+# rendent la même empreinte de contenu — mais pas ses OCTETS : un fichier
+# .duckdb porte des identifiants de blocs et un ordre d'écriture qui changent
+# d'une exécution à l'autre. Versionner 18 Mo qui diffèrent à chaque semis
+# n'apporterait rien et coûterait cher.
+telemetrie.duckdb
+
+# Le classeur, lui, EST figé octet pour octet (`figer_le_classeur` neutralise
+# les horodatages du zip et de docProps). Il reste hors du dépôt pour une autre
+# raison : c'est un binaire de 230 ko qu'aucune revue ne peut lire, et le semis
+# le rend en deux secondes.
+facturation.xlsx
+
+# ---------------------------------------------------------------------------
+# NE SONT PAS IGNORÉS, et c'est délibéré :
+#
+#   catalogue.yaml       la déclaration — c'est elle qu'on relit en revue
+#   dictionnaires/*.md   le sens des colonnes et les pièges ; rien ne les
+#                        régénère, ils sont écrits à la main
+#   referentiel.csv      8 ko, 150 lignes, et c'est un ORACLE : les tests
+#                        comptent dessus, et ses octets sont stables
+#   interventions.csv    68 ko, 900 lignes, même raison
+# ---------------------------------------------------------------------------

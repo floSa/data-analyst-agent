@@ -1,0 +1,88 @@
+# Catalogue de DÉMONSTRATION — réseau de recharge pour véhicules électriques.
+#
+# Cinq sources, un seul domaine métier, les trois types que le socle sait
+# ouvrir. Il remplace `titanic` + `iris` devant un prospect : un naufrage de
+# 1912 et des fleurs ne ressemblent à aucun système d'information, ni par leur
+# volumétrie, ni par leur modélisation, ni par les questions qu'on leur pose.
+#
+#   exploitation   postgres    6 tables, 5 clés étrangères — le SI métier
+#   telemetrie     duckdb      547 820 lignes — la volumétrie qui se voit
+#   interventions  file (CSV)  la main courante de la maintenance
+#   referentiel    file (CSV)  la correspondance libellé → code station
+#   facturation    file (XLSX) trois feuilles — l'export de la compta
+#
+# Les sources SE RECOUPENT : `code_station` vit dans quatre d'entre elles,
+# `code_tarif` et `code_client` dans deux. C'est ce qui donne au verrou de
+# source quelque chose à protéger — « combien de stations ? » a deux réponses
+# légitimes, 120 côté exploitation et 150 côté référentiel, et l'écart est un
+# fait du métier : le référentiel garde les stations démontées.
+#
+# Chaque source déclare son DICTIONNAIRE. Le DDL dit les types ; le
+# dictionnaire dit ce que les colonnes VEULENT dire — les codes, les unités, et
+# les quatre pièges de modélisation assumés de ce catalogue.
+#
+# Données : `uv run python scripts/seed_catalogue_demonstration.py`.
+# Oracles, volumétries et parcours de démonstration : docs/sources-de-demonstration.md.
+sources:
+  - type: postgres
+    name: exploitation
+    description: >-
+      Le SI d'exploitation du réseau de recharge (Postgres, six tables liées
+      par clés étrangères) — stations, bornes, clients, tarifs et sessions de
+      recharge. 48 000 sessions sur l'année 2025.
+    dsn: postgresql+pg8000://${DAA_PG_USER}:${DAA_PG_PASSWORD}@${DAA_PG_HOST}:${DAA_PG_PORT}/daa_demonstration
+    dictionary: dictionnaires/exploitation.md
+    # Quatre colonnes de date dans le schéma — `stations.date_mise_en_service`,
+    # `clients.date_inscription`, `sessions.debut_session` et
+    # `sessions.fin_session`. La période qui intéresse le métier est celle de
+    # l'activité, pas celle du parc ni celle du fichier client.
+    date_reference: sessions.debut_session
+
+  - type: duckdb
+    name: telemetrie
+    description: >-
+      Télémétrie des bornes (base DuckDB, trois tables liées par clés
+      étrangères déclarées) — relevés de puissance horaires, incidents réseau.
+      547 200 relevés sur soixante jours.
+    path: telemetrie.duckdb
+    dictionary: dictionnaires/telemetrie.md
+    # `incidents_reseau` porte deux dates de plus. La période de la source est
+    # celle des relevés : c'est la table qui fait sa volumétrie et son intérêt.
+    date_reference: releves_puissance.horodatage
+
+  - type: file
+    name: interventions
+    description: >-
+      Main courante de la maintenance (fichier CSV, une table plate) — un
+      signalement par ligne, sa nature, sa résolution et la durée
+      d'indisponibilité. La station y est désignée par son LIBELLÉ.
+    path: interventions.csv
+    dictionary: dictionnaires/interventions.md
+    # Deux colonnes de date. Une intervention se compte au jour où elle est
+    # SIGNALÉE : c'est la date que l'exploitant a sous les yeux, et la seule qui
+    # existe pour un ticket encore ouvert.
+    date_reference: date_signalement
+
+  - type: file
+    name: referentiel
+    description: >-
+      Référentiel des stations (fichier CSV, une table plate) — code, libellé,
+      région, statut et date de mise en service des 150 stations, DÉMONTÉES
+      COMPRISES. C'est la table de correspondance entre libellés et codes.
+    path: referentiel.csv
+    dictionary: dictionnaires/referentiel.md
+    # Pas de `date_reference` : une seule colonne de date dans le schéma, donc
+    # rien à désigner. La désignation se lit là où elle sert — l'écrire partout
+    # par précaution en ferait une formalité au lieu d'un choix.
+
+  - type: file
+    name: facturation
+    description: >-
+      Export de facturation (classeur Excel, trois feuilles) — factures
+      clients, lignes de facture par station, et postes tarifaires. Douze
+      échéances mensuelles sur 2025.
+    path: facturation.xlsx
+    dictionary: dictionnaires/facturation.md
+    # `date_emission` et `date_echeance` sur la même feuille : une facture se
+    # rattache à l'exercice où elle est ÉMISE, pas à celui où elle est due.
+    date_reference: factures.date_emission

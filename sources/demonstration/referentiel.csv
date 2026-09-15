@@ -1,0 +1,151 @@
+code_station,libelle_station,region,statut,date_mise_en_service,nb_points
+ST-001,Colmar — Université,Grand Est,ACT,2024-06-11,8
+ST-002,Nantes — Parc des Expos,Pays de la Loire,ACT,2023-06-26,4
+ST-003,Rouen — Université,Normandie,ACT,2019-01-05,4
+ST-004,Nantes — Zone Nord,Pays de la Loire,ACT,2020-10-17,2
+ST-005,Poitiers — Centre,Nouvelle-Aquitaine,ACT,2020-02-15,6
+ST-006,Rennes — Marché,Bretagne,ACT,2021-07-02,2
+ST-007,Toulouse — Port,Occitanie,ACT,2021-08-29,2
+ST-008,Bordeaux — Centre,Nouvelle-Aquitaine,ACT,2021-09-03,6
+ST-009,Angers — Port,Pays de la Loire,ACT,2020-03-26,8
+ST-010,Nancy — Port,Grand Est,ACT,2022-06-08,2
+ST-011,Nîmes — Stade,Occitanie,ACT,2023-02-05,8
+ST-012,Laval — Gare,Pays de la Loire,ACT,2019-12-18,4
+ST-013,Quimper — Centre,Bretagne,ACT,2024-01-25,2
+ST-014,Lorient — Gare,Bretagne,ACT,2022-04-26,6
+ST-015,Nantes — Marché,Pays de la Loire,ACT,2019-03-03,2
+ST-016,Le Mans — Marché,Pays de la Loire,ACT,2023-04-04,4
+ST-017,La Roche — Stade,Pays de la Loire,ACT,2023-07-03,2
+ST-018,Le Havre — Marché,Normandie,ACT,2021-07-28,4
+ST-019,Rennes — Port,Bretagne,ACT,2024-01-21,2
+ST-020,Cherbourg — Zone Nord,Normandie,ACT,2020-05-13,2
+ST-021,Strasbourg — Parc des Expos,Grand Est,ACT,2024-03-09,2
+ST-022,Perpignan — Parc des Expos,Occitanie,ACT,2023-06-27,4
+ST-023,Laval — Hôpital,Pays de la Loire,ACT,2024-02-11,2
+ST-024,Strasbourg — Gare,Grand Est,ACT,2022-02-13,2
+ST-025,Angers — Gare,Pays de la Loire,ACT,2020-04-13,8
+ST-026,Montpellier — Aéroport,Occitanie,ACT,2019-12-08,6
+ST-027,Bordeaux — Université,Nouvelle-Aquitaine,ACT,2023-08-01,2
+ST-028,Rouen — Hôpital,Normandie,ACT,2022-01-03,4
+ST-029,Limoges — Centre,Nouvelle-Aquitaine,ACT,2021-07-11,2
+ST-030,Le Havre — Stade,Normandie,ACT,2020-07-13,4
+ST-031,Angers — Marché,Pays de la Loire,ACT,2021-06-13,4
+ST-032,Bordeaux — Zone Nord,Nouvelle-Aquitaine,ACT,2022-06-14,6
+ST-033,Nantes — Port,Pays de la Loire,ACT,2020-04-14,2
+ST-034,Bordeaux — Marché,Nouvelle-Aquitaine,ACT,2021-07-06,8
+ST-035,Perpignan — Marché,Occitanie,ACT,2021-10-03,4
+ST-036,Le Mans — Port,Pays de la Loire,ACT,2021-02-06,6
+ST-037,Bordeaux — Hôpital,Nouvelle-Aquitaine,ACT,2023-09-24,2
+ST-038,Le Mans — Parc des Expos,Pays de la Loire,ACT,2024-05-28,4
+ST-039,Laval — Zone Nord,Pays de la Loire,ACT,2019-07-08,8
+ST-040,Rennes — Université,Bretagne,ACT,2021-05-09,4
+ST-041,Colmar — Stade,Grand Est,ACT,2022-11-21,2
+ST-042,Angers — Parc des Expos,Pays de la Loire,ACT,2020-01-15,8
+ST-043,Metz — Hôpital,Grand Est,ACT,2023-09-14,6
+ST-044,Strasbourg — Stade,Grand Est,ACT,2023-10-26,2
+ST-045,Rouen — Aéroport,Normandie,ACT,2020-09-03,8
+ST-046,Pau — Marché,Nouvelle-Aquitaine,ACT,2022-11-19,2
+ST-047,Nancy — Centre,Grand Est,ACT,2023-03-05,6
+ST-048,Bordeaux — Port,Nouvelle-Aquitaine,ACT,2020-01-26,2
+ST-049,Limoges — Hôpital,Nouvelle-Aquitaine,ACT,2022-04-16,8
+ST-050,Brest — Port,Bretagne,ACT,2021-09-15,2
+ST-051,Angoulême — Zone Nord,Nouvelle-Aquitaine,ACT,2019-01-01,2
+ST-052,Évreux — Aéroport,Normandie,ACT,2020-06-08,2
+ST-053,Bordeaux — Aéroport,Nouvelle-Aquitaine,ACT,2019-08-23,8
+ST-054,Cherbourg — Aéroport,Normandie,ACT,2020-06-03,8
+ST-055,Reims — Université,Grand Est,ACT,2023-05-22,4
+ST-056,Vannes — Zone Nord,Bretagne,ACT,2023-10-31,8
+ST-057,Lorient — Marché,Bretagne,ACT,2022-01-15,6
+ST-058,Évreux — Centre,Normandie,ACT,2023-01-11,2
+ST-059,Vannes — Stade,Bretagne,ACT,2023-01-29,2
+ST-060,Le Mans — Aéroport,Pays de la Loire,ACT,2019-05-27,2
+ST-061,Le Havre — Port,Normandie,ACT,2023-01-12,2
+ST-062,La Roche — Hôpital,Pays de la Loire,ACT,2019-06-26,6
+ST-063,Pau — Stade,Nouvelle-Aquitaine,ACT,2021-02-23,4
+ST-064,Reims — Zone Nord,Grand Est,ACT,2023-08-29,2
+ST-065,Le Mans — Centre,Pays de la Loire,ACT,2019-08-17,6
+ST-066,Montpellier — Stade,Occitanie,ACT,2022-09-24,4
+ST-067,Rennes — Aéroport,Bretagne,ACT,2023-02-23,4
+ST-068,Strasbourg — Hôpital,Grand Est,ACT,2021-12-09,2
+ST-069,Perpignan — Aéroport,Occitanie,ACT,2019-08-01,6
+ST-070,Angoulême — Université,Nouvelle-Aquitaine,ACT,2024-02-20,6
+ST-071,Albi — Centre,Occitanie,ACT,2022-11-07,4
+ST-072,Rouen — Gare,Normandie,ACT,2020-04-14,8
+ST-073,Limoges — Stade,Nouvelle-Aquitaine,ACT,2021-12-11,4
+ST-074,Brest — Hôpital,Bretagne,ACT,2022-07-14,4
+ST-075,Quimper — Stade,Bretagne,ACT,2022-03-25,4
+ST-076,Cherbourg — Gare,Normandie,ACT,2021-12-10,2
+ST-077,Nancy — Gare,Grand Est,ACT,2023-02-07,6
+ST-078,Toulouse — Centre,Occitanie,ACT,2023-12-09,2
+ST-079,Nantes — Hôpital,Pays de la Loire,ACT,2020-05-28,4
+ST-080,Quimper — Université,Bretagne,ACT,2020-05-29,6
+ST-081,Nantes — Gare,Pays de la Loire,ACT,2019-04-01,4
+ST-082,Poitiers — Hôpital,Nouvelle-Aquitaine,ACT,2019-04-24,4
+ST-083,Toulouse — Université,Occitanie,ACT,2020-04-06,6
+ST-084,Angoulême — Port,Nouvelle-Aquitaine,ACT,2023-08-08,4
+ST-085,La Roche — Parc des Expos,Pays de la Loire,ACT,2019-09-09,2
+ST-086,Brest — Parc des Expos,Bretagne,ACT,2022-10-12,2
+ST-087,Vannes — Université,Bretagne,ACT,2021-09-13,2
+ST-088,Caen — Université,Normandie,ACT,2021-08-06,2
+ST-089,Bordeaux — Gare,Nouvelle-Aquitaine,ACT,2021-08-13,4
+ST-090,Nancy — Université,Grand Est,ACT,2022-09-06,2
+ST-091,Strasbourg — Port,Grand Est,ACT,2021-08-01,8
+ST-092,Metz — Port,Grand Est,ACT,2022-01-21,4
+ST-093,Angoulême — Aéroport,Nouvelle-Aquitaine,ACT,2021-06-02,6
+ST-094,Toulouse — Aéroport,Occitanie,ACT,2020-03-30,4
+ST-095,Cherbourg — Port,Normandie,ACT,2019-11-18,6
+ST-096,Perpignan — Université,Occitanie,ACT,2024-04-26,2
+ST-097,Cherbourg — Centre,Normandie,ACT,2019-04-27,4
+ST-098,Limoges — Aéroport,Nouvelle-Aquitaine,ACT,2019-12-16,2
+ST-099,Caen — Gare,Normandie,ACT,2023-11-19,2
+ST-100,Le Havre — Zone Nord,Normandie,ACT,2020-06-19,6
+ST-101,Nîmes — Marché,Occitanie,ACT,2023-10-18,4
+ST-102,Lorient — Parc des Expos,Bretagne,ACT,2021-03-26,6
+ST-103,Metz — Marché,Grand Est,ACT,2019-12-29,4
+ST-104,Vannes — Centre,Bretagne,ACT,2021-01-06,6
+ST-105,Le Mans — Stade,Pays de la Loire,ACT,2019-04-22,6
+ST-106,Colmar — Centre,Grand Est,ACT,2023-10-10,6
+ST-107,Metz — Parc des Expos,Grand Est,ACT,2023-10-15,2
+ST-108,Évreux — Marché,Normandie,ACT,2023-11-27,6
+ST-109,Strasbourg — Aéroport,Grand Est,ACT,2023-12-27,4
+ST-110,Montpellier — Hôpital,Occitanie,ACT,2020-08-08,8
+ST-111,Albi — Université,Occitanie,ACT,2019-09-14,6
+ST-112,Vannes — Port,Bretagne,ACT,2021-05-27,6
+ST-113,Toulouse — Gare,Occitanie,ACT,2023-03-10,4
+ST-114,Limoges — Université,Nouvelle-Aquitaine,ACT,2021-11-04,8
+ST-115,Lorient — Hôpital,Bretagne,ACT,2024-06-14,4
+ST-116,Nîmes — Centre,Occitanie,ACT,2020-12-01,2
+ST-117,Montpellier — Port,Occitanie,ACT,2023-11-19,4
+ST-118,Montpellier — Centre,Occitanie,ACT,2023-03-03,4
+ST-119,Perpignan — Gare,Occitanie,ACT,2019-09-28,2
+ST-120,Rouen — Stade,Normandie,ACT,2019-03-15,4
+ST-121,Poitiers — Zone Nord,Nouvelle-Aquitaine,RET,2023-11-25,4
+ST-122,Metz — Zone Nord,Grand Est,RET,2021-05-22,8
+ST-123,Laval — Université,Pays de la Loire,RET,2022-12-18,4
+ST-124,Cherbourg — Parc des Expos,Normandie,RET,2020-01-24,4
+ST-125,Le Havre — Aéroport,Normandie,RET,2021-09-18,2
+ST-126,Angoulême — Parc des Expos,Nouvelle-Aquitaine,RET,2019-10-04,2
+ST-127,Lorient — Université,Bretagne,RET,2023-09-09,4
+ST-128,Nancy — Stade,Grand Est,RET,2023-10-06,6
+ST-129,Rennes — Centre,Bretagne,RET,2021-11-16,2
+ST-130,Quimper — Marché,Bretagne,RET,2022-11-14,2
+ST-131,Cherbourg — Hôpital,Normandie,RET,2021-05-05,8
+ST-132,Reims — Stade,Grand Est,RET,2023-05-25,2
+ST-133,Rennes — Stade,Bretagne,RET,2022-07-30,4
+ST-134,Reims — Gare,Grand Est,RET,2020-12-23,8
+ST-135,Poitiers — Stade,Nouvelle-Aquitaine,RET,2020-03-06,4
+ST-136,Limoges — Zone Nord,Nouvelle-Aquitaine,RET,2023-05-13,8
+ST-137,Angers — Université,Pays de la Loire,RET,2023-11-28,4
+ST-138,Rennes — Parc des Expos,Bretagne,RET,2022-06-29,2
+ST-139,Angoulême — Stade,Nouvelle-Aquitaine,RET,2023-03-29,8
+ST-140,Vannes — Marché,Bretagne,RET,2019-01-16,4
+ST-141,Quimper — Zone Nord,Bretagne,RET,2019-07-25,4
+ST-142,Poitiers — Port,Nouvelle-Aquitaine,RET,2019-03-31,6
+ST-143,Rouen — Marché,Normandie,RET,2020-03-30,2
+ST-144,Reims — Marché,Grand Est,RET,2021-06-26,6
+ST-145,Nancy — Marché,Grand Est,RET,2022-05-30,4
+ST-146,La Roche — Université,Pays de la Loire,RET,2021-09-20,8
+ST-147,Colmar — Parc des Expos,Grand Est,RET,2021-04-05,6
+ST-148,Montpellier — Marché,Occitanie,RET,2019-07-01,2
+ST-149,Le Mans — Zone Nord,Pays de la Loire,RET,2021-04-19,4
+ST-150,Le Havre — Gare,Normandie,RET,2022-12-27,2
