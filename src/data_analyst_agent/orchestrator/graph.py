@@ -49,7 +49,7 @@ from data_analyst_agent.agents.retrieval.catalog import (
 from data_analyst_agent.agents.retrieval.faits import ReglagesDuReleve, RelevesDuCatalogue
 from data_analyst_agent.agents.retrieval.sql import QueryResult
 from data_analyst_agent.config import Settings, get_settings
-from data_analyst_agent.llm import build_model
+from data_analyst_agent.llm import modele_du_thread
 from data_analyst_agent.orchestrator import introspection
 from data_analyst_agent.orchestrator.context_budget import (
     CONTEXT_REFUSAL_ERROR,
@@ -288,7 +288,13 @@ class Orchestrator:
         sandbox: SandboxLike | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.model = model or build_model(self.settings)
+        # Le modèle n'est PAS figé ici. Un orchestrateur vit pour tout le
+        # processus et sert les requêtes depuis plusieurs threads, chacun avec sa
+        # boucle d'événements : un client HTTP unique verrait ses connexions
+        # reprises d'une boucle par une autre (cf. `llm.modele_du_thread`).
+        # Un modèle injecté, lui, reste partagé — c'est ce qu'un test demande en
+        # le passant, et un modèle scripté n'ouvre aucune connexion.
+        self._modele_injecte = model
         self.catalog = catalog if catalog is not None else load_catalog(self.settings.catalog_path)
         # Ce que les sources disent d'elles-mêmes quand on les LIT — tables,
         # lignes, période. Relevé au premier inventaire, pas au démarrage :
@@ -309,6 +315,13 @@ class Orchestrator:
         self.graph = self._build_graph()
 
     # -- API ----------------------------------------------------------------
+
+    @property
+    def model(self) -> Model:
+        """Le modèle à utiliser ICI : celui qu'on a injecté, sinon celui du thread."""
+        if self._modele_injecte is not None:
+            return self._modele_injecte
+        return modele_du_thread(self.settings)
 
     def ask(
         self,
