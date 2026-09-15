@@ -1,0 +1,901 @@
+intervention_id,station_libelle,date_signalement,date_resolution,nature,duree_indispo_min,technicien
+1,Rouen — Université,2025-01-23,2025-01-24,communication réseau perdue,-1,TECH-04
+2,Poitiers — Hôpital,2025-12-20,2026-01-01,câble endommagé,1895,TECH-08
+3,Angoulême — Stade,2025-08-05,2025-08-26,défaut de paiement carte,2474,TECH-04
+4,Angoulême — Aéroport,2025-01-17,2025-02-06,communication réseau perdue,1134,TECH-11
+5,Cherbourg — Centre,2025-10-31,2025-11-06,défaut de paiement carte,2376,TECH-14
+6,Rouen — Stade,2025-02-22,2025-02-27,maintenance préventive,117,TECH-05
+7,Metz — Zone Nord,2025-12-31,2026-01-03,borne hors service,2072,TECH-08
+8,Bordeaux — Zone Nord,2025-07-05,2025-07-17,borne hors service,1858,TECH-04
+9,Angoulême — Stade,2025-11-11,2025-11-13,défaut de paiement carte,376,TECH-07
+10,Bordeaux — Hôpital,2025-10-06,2025-10-09,câble endommagé,979,TECH-03
+11,Rennes — Université,2025-06-24,2025-07-03,câble endommagé,1360,TECH-09
+12,Quimper — Stade,2025-11-15,2025-11-16,maintenance préventive,1115,TECH-11
+13,Le Havre — Gare,2025-09-25,2025-10-01,câble endommagé,664,TECH-11
+14,Limoges — Hôpital,2025-09-12,2025-09-18,communication réseau perdue,1475,TECH-12
+15,Le Mans — Parc des Expos,2025-04-10,2025-04-16,borne hors service,2166,TECH-04
+16,Pau — Stade,2025-12-01,2025-12-13,défaut de paiement carte,1274,TECH-14
+17,Bordeaux — Aéroport,2025-12-25,2025-12-25,communication réseau perdue,451,TECH-15
+18,Nantes — Port,2025-11-09,2025-11-14,câble endommagé,-1,TECH-13
+19,Bordeaux — Marché,2025-06-14,2025-07-05,défaut de paiement carte,2601,TECH-16
+20,Strasbourg — Hôpital,2025-05-07,2025-05-12,écran illisible,2845,TECH-14
+21,Vannes — Zone Nord,2025-12-13,2025-12-25,borne hors service,-1,TECH-18
+22,Perpignan — Gare,2025-04-25,2025-05-05,écran illisible,610,TECH-18
+23,Strasbourg — Stade,2025-01-16,2025-01-29,borne hors service,2162,TECH-13
+24,Poitiers — Stade,2025-07-10,2025-07-27,défaut de paiement carte,2318,TECH-05
+25,Cherbourg — Port,2025-07-25,2025-08-14,borne hors service,1251,TECH-05
+26,Rouen — Aéroport,2025-06-18,2025-07-07,borne hors service,887,TECH-02
+27,Strasbourg — Stade,2025-10-09,2025-10-23,câble endommagé,1067,TECH-16
+28,Pau — Marché,2025-02-04,2025-02-18,câble endommagé,1265,TECH-13
+29,Vannes — Stade,2025-02-25,2025-03-17,borne hors service,559,TECH-15
+30,Rouen — Marché,2025-02-10,2025-02-25,écran illisible,1041,TECH-09
+31,Le Mans — Parc des Expos,2025-01-24,2025-01-28,câble endommagé,2748,TECH-02
+32,Le Havre — Zone Nord,2025-06-28,2025-06-29,maintenance préventive,2667,TECH-15
+33,Quimper — Stade,2025-01-24,2025-02-03,maintenance préventive,2383,TECH-09
+34,Le Havre — Zone Nord,2025-11-11,2025-11-12,maintenance préventive,972,TECH-15
+35,Metz — Port,2025-05-26,2025-05-26,communication réseau perdue,2413,TECH-04
+36,Angers — Marché,2025-11-18,2025-12-02,défaut de paiement carte,86,TECH-11
+37,Strasbourg — Hôpital,2025-02-15,2025-02-19,défaut de paiement carte,2700,TECH-05
+38,Pau — Marché,2025-06-15,2025-07-06,écran illisible,1977,TECH-07
+39,Nancy — Centre,2025-05-18,2025-05-28,borne hors service,1044,TECH-02
+40,Bordeaux — Marché,2025-09-16,2025-10-04,borne hors service,1141,TECH-12
+41,Toulouse — Centre,2025-09-29,2025-10-08,défaut de paiement carte,2340,TECH-18
+42,Rouen — Hôpital,2025-04-04,2025-04-15,borne hors service,810,TECH-02
+43,Bordeaux — Centre,2025-08-12,2025-08-19,câble endommagé,921,TECH-17
+44,Nantes — Port,2025-11-02,2025-11-12,défaut de paiement carte,170,TECH-01
+45,La Roche — Hôpital,2025-10-09,2025-10-12,borne hors service,-1,TECH-16
+46,Reims — Stade,2025-01-25,2025-01-28,borne hors service,2760,TECH-15
+47,Lorient — Marché,2025-07-28,2025-08-02,écran illisible,-1,TECH-06
+48,Laval — Hôpital,2025-06-03,2025-06-07,défaut de paiement carte,2121,TECH-11
+49,Quimper — Marché,2025-08-13,2025-08-30,maintenance préventive,-1,TECH-15
+50,Cherbourg — Port,2025-09-08,2025-09-29,maintenance préventive,2652,TECH-16
+51,Colmar — Parc des Expos,2025-02-13,2025-02-19,écran illisible,1095,TECH-07
+52,Angoulême — Parc des Expos,2025-10-08,2025-10-29,écran illisible,2355,TECH-04
+53,Vannes — Université,2025-10-05,2025-10-14,communication réseau perdue,1186,TECH-02
+54,Nîmes — Stade,2025-04-16,2025-05-03,écran illisible,-1,TECH-13
+55,Metz — Hôpital,2025-06-26,2025-06-27,écran illisible,83,TECH-11
+56,Angers — Marché,2025-10-08,2025-10-11,écran illisible,839,TECH-10
+57,Lorient — Université,2025-10-02,2025-10-08,écran illisible,2752,TECH-15
+58,Poitiers — Hôpital,2025-09-05,2025-09-23,câble endommagé,2010,TECH-03
+59,Montpellier — Marché,2025-11-07,2025-11-28,défaut de paiement carte,449,TECH-12
+60,Vannes — Centre,2025-03-29,2025-04-09,borne hors service,1529,TECH-11
+61,Poitiers — Port,2025-01-08,2025-01-22,communication réseau perdue,1171,TECH-01
+62,Le Mans — Aéroport,2025-05-04,2025-05-12,câble endommagé,311,TECH-15
+63,Angoulême — Port,2025-12-13,2025-12-31,communication réseau perdue,925,TECH-05
+64,Rouen — Marché,2025-12-01,2025-12-21,maintenance préventive,1390,TECH-15
+65,Reims — Marché,2025-01-31,2025-02-17,câble endommagé,1487,TECH-16
+66,Angoulême — Zone Nord,2025-09-04,2025-09-23,câble endommagé,1255,TECH-11
+67,Le Havre — Port,2025-08-31,2025-09-19,défaut de paiement carte,1750,TECH-18
+68,Reims — Zone Nord,2025-10-24,2025-10-27,maintenance préventive,1006,TECH-13
+69,Le Havre — Gare,2025-11-02,2025-11-09,maintenance préventive,737,TECH-05
+70,Montpellier — Marché,2025-02-14,2025-02-17,écran illisible,143,TECH-10
+71,Laval — Gare,2025-02-04,2025-02-13,communication réseau perdue,789,TECH-11
+72,Metz — Parc des Expos,2025-12-08,2025-12-12,écran illisible,755,TECH-06
+73,Le Havre — Aéroport,2025-12-14,2025-12-24,maintenance préventive,2136,TECH-11
+74,Pau — Marché,2025-04-07,2025-04-23,défaut de paiement carte,1294,TECH-15
+75,Angers — Université,2025-07-05,2025-07-23,défaut de paiement carte,-1,TECH-12
+76,Montpellier — Aéroport,2025-01-05,2025-01-05,câble endommagé,-1,TECH-09
+77,Lorient — Hôpital,2025-05-22,2025-06-01,écran illisible,1011,TECH-10
+78,Strasbourg — Port,2025-12-12,2025-12-22,écran illisible,1063,TECH-11
+79,Reims — Gare,2025-12-06,2025-12-06,maintenance préventive,1214,TECH-09
+80,Nantes — Zone Nord,2025-07-07,2025-07-09,câble endommagé,1622,TECH-10
+81,Nîmes — Stade,2025-08-24,2025-09-06,maintenance préventive,59,TECH-09
+82,Quimper — Zone Nord,2025-07-31,2025-08-14,borne hors service,118,TECH-14
+83,Perpignan — Marché,2025-06-01,2025-06-13,maintenance préventive,497,TECH-04
+84,Strasbourg — Gare,2025-05-24,2025-05-26,câble endommagé,290,TECH-15
+85,Quimper — Zone Nord,2025-07-08,2025-07-24,câble endommagé,1679,TECH-01
+86,Poitiers — Zone Nord,2025-06-18,2025-07-05,maintenance préventive,1682,TECH-12
+87,Metz — Port,2025-01-29,2025-02-01,borne hors service,2183,TECH-01
+88,Laval — Gare,2025-01-21,2025-01-29,communication réseau perdue,2740,TECH-18
+89,Angers — Gare,2025-03-03,2025-03-17,défaut de paiement carte,2300,TECH-06
+90,Angers — Marché,2025-07-17,2025-07-25,défaut de paiement carte,501,TECH-12
+91,Nantes — Zone Nord,2025-07-15,2025-07-26,borne hors service,551,TECH-03
+92,Quimper — Zone Nord,2025-05-10,2025-05-19,communication réseau perdue,891,TECH-16
+93,Angers — Port,2025-07-20,2025-08-09,écran illisible,-1,TECH-17
+94,Montpellier — Centre,2025-06-08,2025-06-16,borne hors service,331,TECH-02
+95,Nancy — Université,2025-03-12,2025-03-13,défaut de paiement carte,2242,TECH-09
+96,Cherbourg — Hôpital,2025-11-14,2025-12-04,défaut de paiement carte,2080,TECH-05
+97,Rennes — Parc des Expos,2025-04-10,2025-05-01,câble endommagé,511,TECH-12
+98,Quimper — Université,2025-08-17,2025-08-25,communication réseau perdue,695,TECH-03
+99,Nantes — Parc des Expos,2025-07-02,2025-07-12,câble endommagé,2292,TECH-18
+100,Le Havre — Marché,2025-11-10,2025-11-24,communication réseau perdue,912,TECH-16
+101,Strasbourg — Hôpital,2025-02-19,2025-02-25,communication réseau perdue,1616,TECH-14
+102,Montpellier — Marché,2025-08-06,2025-08-25,câble endommagé,2446,TECH-15
+103,Limoges — Université,2025-04-14,2025-05-03,communication réseau perdue,-1,TECH-07
+104,Perpignan — Parc des Expos,2025-04-26,2025-05-16,câble endommagé,1311,TECH-13
+105,Le Havre — Port,2025-10-08,2025-10-16,câble endommagé,2702,TECH-13
+106,Le Havre — Marché,2025-04-12,2025-05-03,câble endommagé,551,TECH-08
+107,Poitiers — Port,2025-03-27,2025-04-11,communication réseau perdue,-1,TECH-10
+108,Rouen — Hôpital,2025-06-24,2025-07-09,câble endommagé,2437,TECH-05
+109,Angoulême — Aéroport,2025-08-15,2025-08-27,maintenance préventive,38,TECH-02
+110,Angoulême — Stade,2025-06-12,2025-07-02,maintenance préventive,1809,TECH-02
+111,Poitiers — Centre,2025-06-24,2025-06-30,maintenance préventive,821,TECH-03
+112,Rennes — Parc des Expos,2025-03-16,2025-03-19,maintenance préventive,1588,TECH-04
+113,Montpellier — Marché,2025-05-02,2025-05-07,défaut de paiement carte,26,TECH-07
+114,Poitiers — Zone Nord,2025-02-09,2025-02-21,communication réseau perdue,2126,TECH-15
+115,Nancy — Centre,2025-03-17,2025-04-07,communication réseau perdue,2365,TECH-01
+116,Bordeaux — Marché,2025-10-07,2025-10-09,défaut de paiement carte,1783,TECH-02
+117,Angoulême — Port,2025-09-25,2025-09-28,maintenance préventive,-1,TECH-05
+118,Reims — Gare,2025-09-14,2025-09-23,écran illisible,-1,TECH-07
+119,Limoges — Centre,2025-09-12,2025-09-25,borne hors service,1985,TECH-01
+120,Poitiers — Port,2025-03-08,2025-03-28,défaut de paiement carte,-1,TECH-07
+121,Évreux — Marché,2025-02-08,2025-02-28,câble endommagé,1344,TECH-10
+122,Colmar — Centre,2025-12-13,2025-12-16,borne hors service,1577,TECH-12
+123,Strasbourg — Aéroport,2025-09-27,2025-09-29,écran illisible,2743,TECH-17
+124,Le Havre — Marché,2025-12-16,2025-12-31,écran illisible,136,TECH-16
+125,Brest — Hôpital,2025-08-08,2025-08-13,câble endommagé,460,TECH-12
+126,Colmar — Université,2025-12-14,2025-12-21,défaut de paiement carte,-1,TECH-11
+127,Quimper — Marché,2025-04-12,2025-05-02,communication réseau perdue,589,TECH-08
+128,Perpignan — Université,2025-11-16,2025-11-22,maintenance préventive,1311,TECH-10
+129,Limoges — Aéroport,2025-08-13,2025-08-26,défaut de paiement carte,2515,TECH-06
+130,Limoges — Hôpital,2025-08-11,2025-08-27,câble endommagé,1680,TECH-06
+131,Rennes — Université,2025-02-17,2025-02-26,défaut de paiement carte,2407,TECH-02
+132,Colmar — Parc des Expos,2025-01-02,2025-01-07,câble endommagé,2865,TECH-06
+133,Limoges — Aéroport,2025-05-21,2025-06-11,communication réseau perdue,2599,TECH-04
+134,Poitiers — Zone Nord,2025-04-20,2025-05-09,câble endommagé,807,TECH-08
+135,Le Havre — Gare,2025-10-30,2025-11-15,communication réseau perdue,321,TECH-05
+136,Évreux — Marché,2025-04-16,2025-04-19,défaut de paiement carte,413,TECH-13
+137,Le Mans — Stade,2025-02-27,2025-03-11,borne hors service,1730,TECH-12
+138,Poitiers — Stade,2025-01-26,2025-02-15,câble endommagé,1192,TECH-11
+139,La Roche — Université,2025-02-17,2025-03-07,écran illisible,-1,TECH-15
+140,Reims — Gare,2025-10-07,2025-10-21,défaut de paiement carte,1362,TECH-10
+141,Metz — Hôpital,2025-10-10,2025-10-13,borne hors service,1023,TECH-16
+142,Metz — Parc des Expos,2025-10-09,2025-10-23,maintenance préventive,-1,TECH-08
+143,Bordeaux — Marché,2025-10-20,2025-10-20,maintenance préventive,726,TECH-14
+144,Strasbourg — Gare,2025-06-12,2025-07-02,écran illisible,2097,TECH-14
+145,Le Havre — Zone Nord,2025-07-24,2025-08-07,câble endommagé,2588,TECH-16
+146,Le Mans — Parc des Expos,2025-12-17,2026-01-07,câble endommagé,1288,TECH-04
+147,Toulouse — Centre,2025-07-15,2025-07-31,communication réseau perdue,2337,TECH-09
+148,La Roche — Hôpital,2025-08-20,2025-09-04,borne hors service,2698,TECH-18
+149,Nantes — Hôpital,2025-07-23,2025-07-30,câble endommagé,-1,TECH-17
+150,Poitiers — Stade,2025-03-25,2025-04-13,maintenance préventive,909,TECH-18
+151,Bordeaux — Aéroport,2025-07-31,2025-08-13,câble endommagé,809,TECH-14
+152,Quimper — Zone Nord,2025-05-19,2025-06-05,communication réseau perdue,1220,TECH-03
+153,Limoges — Stade,2025-07-18,2025-07-19,câble endommagé,2562,TECH-02
+154,Cherbourg — Parc des Expos,2025-12-01,2025-12-15,maintenance préventive,1882,TECH-09
+155,Montpellier — Marché,2025-08-30,2025-09-12,communication réseau perdue,2556,TECH-17
+156,Cherbourg — Aéroport,2025-11-12,2025-12-01,communication réseau perdue,2385,TECH-16
+157,Caen — Université,2025-08-16,2025-09-02,maintenance préventive,1802,TECH-17
+158,Montpellier — Hôpital,2025-07-19,2025-07-27,borne hors service,2005,TECH-17
+159,Bordeaux — Marché,2025-03-08,2025-03-11,maintenance préventive,2262,TECH-08
+160,Metz — Port,2025-06-13,2025-06-13,borne hors service,1115,TECH-17
+161,Nantes — Gare,2025-12-17,2026-01-06,borne hors service,1450,TECH-11
+162,Cherbourg — Aéroport,2025-04-04,2025-04-13,communication réseau perdue,249,TECH-13
+163,Perpignan — Université,2025-04-09,2025-04-10,écran illisible,1265,TECH-06
+164,Toulouse — Aéroport,2025-07-16,2025-07-22,maintenance préventive,2736,TECH-16
+165,Le Havre — Stade,2025-07-27,2025-08-16,maintenance préventive,1300,TECH-10
+166,Le Mans — Parc des Expos,2025-08-24,2025-08-29,communication réseau perdue,-1,TECH-10
+167,Metz — Zone Nord,2025-01-05,2025-01-16,écran illisible,882,TECH-06
+168,Évreux — Centre,2025-12-21,2026-01-11,câble endommagé,-1,TECH-12
+169,Nantes — Parc des Expos,2025-07-12,2025-07-29,communication réseau perdue,2376,TECH-05
+170,Rennes — Université,2025-07-28,2025-08-08,défaut de paiement carte,1048,TECH-04
+171,Vannes — Université,2025-06-03,2025-06-23,maintenance préventive,1552,TECH-10
+172,Angoulême — Port,2025-07-18,2025-07-18,maintenance préventive,857,TECH-05
+173,Toulouse — Port,2025-02-01,2025-02-20,maintenance préventive,1792,TECH-03
+174,Montpellier — Aéroport,2025-03-08,2025-03-20,maintenance préventive,2789,TECH-08
+175,Perpignan — Parc des Expos,2025-02-11,2025-02-18,communication réseau perdue,2788,TECH-11
+176,Rennes — Marché,2025-02-13,2025-02-21,câble endommagé,1326,TECH-03
+177,Bordeaux — Université,2025-03-20,2025-04-09,maintenance préventive,1815,TECH-10
+178,Metz — Zone Nord,2025-11-26,2025-12-09,défaut de paiement carte,700,TECH-04
+179,Nantes — Gare,2025-04-04,2025-04-19,borne hors service,234,TECH-01
+180,Nîmes — Stade,2025-07-26,2025-08-12,écran illisible,2829,TECH-02
+181,La Roche — Parc des Expos,2025-05-03,2025-05-18,câble endommagé,-1,TECH-02
+182,Le Havre — Port,2025-07-22,2025-08-07,câble endommagé,494,TECH-05
+183,Cherbourg — Aéroport,2025-11-07,2025-11-14,maintenance préventive,2221,TECH-03
+184,Cherbourg — Port,2025-02-11,2025-02-13,défaut de paiement carte,2390,TECH-18
+185,Montpellier — Hôpital,2025-06-25,2025-07-14,communication réseau perdue,520,TECH-03
+186,Cherbourg — Aéroport,2025-07-27,2025-07-28,câble endommagé,1242,TECH-09
+187,Colmar — Stade,2025-10-31,2025-11-08,écran illisible,-1,TECH-10
+188,Rouen — Stade,2025-12-05,2025-12-08,écran illisible,22,TECH-12
+189,Vannes — Zone Nord,2025-09-08,2025-09-09,écran illisible,290,TECH-07
+190,Angoulême — Port,2025-02-10,2025-02-11,communication réseau perdue,1753,TECH-06
+191,Perpignan — Aéroport,2025-03-26,2025-03-30,communication réseau perdue,2084,TECH-09
+192,Angers — Gare,2025-09-03,2025-09-18,maintenance préventive,-1,TECH-04
+193,Cherbourg — Parc des Expos,2025-12-19,2025-12-21,écran illisible,974,TECH-18
+194,Bordeaux — Université,2025-11-20,2025-12-11,câble endommagé,106,TECH-05
+195,Rouen — Hôpital,2025-05-12,2025-05-21,défaut de paiement carte,-1,TECH-13
+196,Cherbourg — Gare,2025-09-19,2025-10-03,borne hors service,1274,TECH-01
+197,Strasbourg — Port,2025-10-10,2025-10-26,borne hors service,-1,TECH-05
+198,Nancy — Gare,2025-08-28,2025-09-04,communication réseau perdue,935,TECH-16
+199,Nancy — Port,2025-05-18,2025-06-04,communication réseau perdue,2673,TECH-01
+200,Cherbourg — Port,2025-10-27,2025-10-30,borne hors service,1213,TECH-13
+201,Limoges — Centre,2025-02-11,2025-02-23,maintenance préventive,-1,TECH-10
+202,Limoges — Aéroport,2025-02-15,2025-03-07,défaut de paiement carte,646,TECH-18
+203,Cherbourg — Aéroport,2025-11-03,2025-11-09,borne hors service,547,TECH-02
+204,La Roche — Parc des Expos,2025-02-14,2025-03-07,communication réseau perdue,535,TECH-08
+205,Nîmes — Stade,2025-09-13,2025-09-30,communication réseau perdue,1344,TECH-05
+206,Perpignan — Gare,2025-11-27,2025-11-29,maintenance préventive,-1,TECH-05
+207,Le Havre — Marché,2025-09-03,2025-09-10,écran illisible,2848,TECH-09
+208,Le Havre — Marché,2025-10-16,2025-10-28,écran illisible,-1,TECH-08
+209,Rouen — Stade,2025-11-06,2025-11-25,borne hors service,842,TECH-13
+210,Rouen — Université,2025-06-09,2025-06-19,communication réseau perdue,-1,TECH-13
+211,Poitiers — Stade,2025-11-16,2025-12-05,borne hors service,2285,TECH-13
+212,Rennes — Stade,2025-07-04,2025-07-13,défaut de paiement carte,1595,TECH-03
+213,Vannes — Centre,2025-07-14,2025-07-15,câble endommagé,2738,TECH-03
+214,Montpellier — Port,2025-06-08,2025-06-16,défaut de paiement carte,1257,TECH-06
+215,Laval — Hôpital,2025-03-20,2025-03-29,maintenance préventive,1003,TECH-05
+216,Pau — Stade,2025-04-11,2025-04-16,communication réseau perdue,201,TECH-06
+217,Albi — Université,2025-03-16,2025-03-24,borne hors service,2532,TECH-09
+218,Évreux — Marché,2025-05-04,2025-05-17,câble endommagé,597,TECH-17
+219,Limoges — Stade,2025-03-10,2025-03-23,écran illisible,163,TECH-16
+220,Rouen — Université,2025-01-14,2025-01-27,défaut de paiement carte,-1,TECH-13
+221,Vannes — Université,2025-04-12,2025-04-13,borne hors service,929,TECH-16
+222,Limoges — Hôpital,2025-10-21,2025-11-03,écran illisible,2532,TECH-07
+223,Cherbourg — Centre,2025-12-06,2025-12-08,défaut de paiement carte,1012,TECH-10
+224,Quimper — Centre,2025-07-29,2025-08-18,défaut de paiement carte,1918,TECH-15
+225,Poitiers — Stade,2025-08-13,2025-08-25,câble endommagé,2626,TECH-10
+226,Cherbourg — Gare,2025-03-26,2025-04-05,maintenance préventive,2339,TECH-18
+227,Limoges — Aéroport,2025-02-27,2025-03-13,communication réseau perdue,-1,TECH-12
+228,Caen — Gare,2025-02-08,2025-02-16,communication réseau perdue,1028,TECH-13
+229,Poitiers — Port,2025-01-10,2025-01-16,défaut de paiement carte,1058,TECH-10
+230,Cherbourg — Zone Nord,2025-06-02,2025-06-06,communication réseau perdue,662,TECH-10
+231,Quimper — Stade,2025-12-14,2025-12-26,borne hors service,2019,TECH-10
+232,Le Havre — Aéroport,2025-03-08,2025-03-24,communication réseau perdue,2264,TECH-04
+233,Perpignan — Aéroport,2025-10-25,2025-11-13,câble endommagé,916,TECH-06
+234,Cherbourg — Parc des Expos,2025-05-08,2025-05-27,borne hors service,897,TECH-17
+235,Perpignan — Gare,2025-06-28,2025-07-02,défaut de paiement carte,1902,TECH-09
+236,Limoges — Zone Nord,2025-05-18,2025-05-24,câble endommagé,1695,TECH-01
+237,Montpellier — Marché,2025-11-30,2025-12-02,défaut de paiement carte,367,TECH-14
+238,Nîmes — Centre,2025-02-20,2025-03-07,maintenance préventive,2270,TECH-01
+239,Nancy — Gare,2025-07-24,2025-08-09,communication réseau perdue,-1,TECH-16
+240,Quimper — Centre,2025-03-04,2025-03-04,écran illisible,1294,TECH-07
+241,Le Havre — Stade,2025-09-09,2025-09-18,borne hors service,1171,TECH-03
+242,Caen — Gare,2025-01-14,2025-01-25,borne hors service,581,TECH-04
+243,Strasbourg — Gare,2025-09-09,2025-09-28,borne hors service,233,TECH-03
+244,Colmar — Université,2025-02-02,2025-02-10,défaut de paiement carte,-1,TECH-07
+245,Vannes — Stade,2025-01-07,2025-01-10,communication réseau perdue,1860,TECH-18
+246,Cherbourg — Gare,2025-05-08,2025-05-26,câble endommagé,1237,TECH-11
+247,Le Havre — Zone Nord,2025-12-20,2026-01-03,écran illisible,797,TECH-06
+248,Laval — Hôpital,2025-02-04,2025-02-06,câble endommagé,833,TECH-03
+249,Angers — Port,2025-07-18,2025-07-19,défaut de paiement carte,-1,TECH-03
+250,Le Havre — Stade,2025-11-04,2025-11-05,défaut de paiement carte,2282,TECH-09
+251,Strasbourg — Stade,2025-03-14,2025-03-29,défaut de paiement carte,941,TECH-17
+252,Nancy — Port,2025-05-11,2025-05-21,écran illisible,806,TECH-06
+253,Perpignan — Parc des Expos,2025-05-23,2025-06-03,écran illisible,2286,TECH-14
+254,Rouen — Gare,2025-02-25,2025-03-12,défaut de paiement carte,2380,TECH-10
+255,Angers — Port,2025-09-08,2025-09-26,communication réseau perdue,1541,TECH-18
+256,Vannes — Marché,2025-04-29,2025-05-09,câble endommagé,1019,TECH-07
+257,Bordeaux — Aéroport,2025-03-04,2025-03-17,borne hors service,114,TECH-01
+258,Brest — Hôpital,2025-12-23,2026-01-12,borne hors service,2435,TECH-15
+259,Le Mans — Zone Nord,2025-11-13,2025-11-26,écran illisible,1182,TECH-09
+260,Laval — Zone Nord,2025-09-12,2025-09-26,écran illisible,568,TECH-10
+261,Montpellier — Stade,2025-12-13,2025-12-28,maintenance préventive,298,TECH-18
+262,Toulouse — Université,2025-08-31,2025-09-15,maintenance préventive,987,TECH-11
+263,Lorient — Hôpital,2025-10-22,2025-11-10,borne hors service,128,TECH-07
+264,Angers — Parc des Expos,2025-06-30,2025-07-04,écran illisible,2626,TECH-01
+265,Montpellier — Port,2025-05-01,2025-05-13,communication réseau perdue,153,TECH-11
+266,Strasbourg — Stade,2025-10-12,2025-10-17,borne hors service,373,TECH-16
+267,Perpignan — Aéroport,2025-04-06,2025-04-15,communication réseau perdue,2039,TECH-12
+268,Albi — Centre,2025-06-06,2025-06-16,borne hors service,1263,TECH-11
+269,Poitiers — Hôpital,2025-06-08,2025-06-15,écran illisible,700,TECH-09
+270,Quimper — Centre,2025-09-28,2025-10-19,câble endommagé,2234,TECH-16
+271,Montpellier — Aéroport,2025-08-08,2025-08-24,écran illisible,-1,TECH-12
+272,Laval — Gare,2025-02-06,2025-02-17,câble endommagé,2749,TECH-04
+273,Limoges — Université,2025-07-15,2025-07-21,défaut de paiement carte,2739,TECH-02
+274,Caen — Université,2025-06-27,2025-07-01,défaut de paiement carte,2411,TECH-08
+275,Brest — Parc des Expos,2025-10-22,2025-11-12,communication réseau perdue,1217,TECH-09
+276,Laval — Zone Nord,2025-05-25,2025-06-01,câble endommagé,1411,TECH-11
+277,Toulouse — Gare,2025-09-05,2025-09-07,défaut de paiement carte,1560,TECH-08
+278,Reims — Marché,2025-03-26,2025-04-14,borne hors service,1122,TECH-14
+279,Rennes — Stade,2025-02-07,2025-02-22,écran illisible,702,TECH-18
+280,Bordeaux — Université,2025-01-13,2025-01-31,écran illisible,246,TECH-12
+281,Laval — Université,2025-07-28,2025-07-29,écran illisible,-1,TECH-17
+282,Brest — Hôpital,2025-07-26,2025-08-08,câble endommagé,198,TECH-17
+283,Rouen — Stade,2025-08-21,2025-08-26,communication réseau perdue,190,TECH-13
+284,Le Mans — Stade,2025-06-30,2025-06-30,borne hors service,1746,TECH-02
+285,Le Havre — Port,2025-07-26,2025-07-31,défaut de paiement carte,-1,TECH-01
+286,Rouen — Stade,2025-06-29,2025-07-17,défaut de paiement carte,2670,TECH-12
+287,Cherbourg — Hôpital,2025-12-11,2025-12-16,écran illisible,1829,TECH-14
+288,Rouen — Gare,2025-12-02,2025-12-18,écran illisible,2138,TECH-10
+289,Nancy — Gare,2025-11-16,2025-11-21,maintenance préventive,-1,TECH-15
+290,Strasbourg — Port,2025-08-23,2025-08-26,borne hors service,-1,TECH-10
+291,Rennes — Centre,2025-09-26,2025-10-05,défaut de paiement carte,742,TECH-08
+292,Quimper — Zone Nord,2025-02-27,2025-03-18,écran illisible,405,TECH-03
+293,Montpellier — Marché,2025-10-26,2025-11-06,borne hors service,2436,TECH-01
+294,Cherbourg — Parc des Expos,2025-10-13,2025-10-20,câble endommagé,673,TECH-13
+295,Angoulême — Parc des Expos,2025-01-10,2025-01-13,défaut de paiement carte,882,TECH-10
+296,Metz — Marché,2025-06-27,2025-07-11,défaut de paiement carte,1672,TECH-07
+297,Nantes — Hôpital,2025-12-06,2025-12-15,écran illisible,-1,TECH-07
+298,Toulouse — Aéroport,2025-04-08,2025-04-23,borne hors service,2092,TECH-16
+299,Vannes — Université,2025-03-18,2025-03-26,borne hors service,-1,TECH-14
+300,Caen — Université,2025-04-20,2025-05-03,maintenance préventive,1803,TECH-08
+301,Lorient — Hôpital,2025-02-22,2025-02-28,câble endommagé,2110,TECH-18
+302,Évreux — Aéroport,2025-09-07,2025-09-08,borne hors service,984,TECH-03
+303,Toulouse — Aéroport,2025-10-27,2025-10-27,câble endommagé,2825,TECH-10
+304,Vannes — Zone Nord,2025-11-19,2025-12-08,défaut de paiement carte,1591,TECH-08
+305,Metz — Zone Nord,2025-06-01,2025-06-21,maintenance préventive,2400,TECH-16
+306,Vannes — Centre,2025-03-14,2025-03-31,écran illisible,2046,TECH-18
+307,Metz — Parc des Expos,2025-09-12,2025-09-17,maintenance préventive,575,TECH-07
+308,Laval — Université,2025-12-05,2025-12-14,écran illisible,1904,TECH-11
+309,Rennes — Port,2025-04-30,2025-05-19,écran illisible,415,TECH-11
+310,Perpignan — Marché,2025-05-26,2025-05-28,borne hors service,282,TECH-14
+311,Albi — Université,2025-11-25,2025-11-25,maintenance préventive,2610,TECH-15
+312,Rouen — Université,2025-09-15,2025-09-22,borne hors service,2382,TECH-09
+313,Rouen — Marché,2025-09-21,2025-10-02,borne hors service,1451,TECH-09
+314,Brest — Hôpital,2025-05-22,2025-06-02,borne hors service,-1,TECH-07
+315,Caen — Gare,2025-08-31,2025-09-12,défaut de paiement carte,693,TECH-04
+316,Nîmes — Stade,2025-04-13,2025-04-25,maintenance préventive,696,TECH-17
+317,Reims — Stade,2025-07-21,2025-08-07,écran illisible,86,TECH-07
+318,Angoulême — Zone Nord,2025-08-21,2025-08-31,borne hors service,1790,TECH-02
+319,Laval — Gare,2025-01-30,2025-02-05,maintenance préventive,1650,TECH-18
+320,Reims — Stade,2025-12-26,2026-01-01,maintenance préventive,628,TECH-18
+321,Reims — Zone Nord,2025-06-14,2025-06-29,écran illisible,968,TECH-12
+322,Rouen — Université,2025-11-24,2025-11-29,communication réseau perdue,2190,TECH-03
+323,Nancy — Université,2025-03-21,2025-03-25,défaut de paiement carte,704,TECH-14
+324,Nantes — Port,2025-01-12,2025-02-01,défaut de paiement carte,1490,TECH-16
+325,Limoges — Université,2025-03-26,2025-04-02,écran illisible,2753,TECH-13
+326,Cherbourg — Gare,2025-08-25,2025-08-30,écran illisible,2803,TECH-12
+327,Albi — Centre,2025-03-23,2025-04-08,câble endommagé,475,TECH-04
+328,Bordeaux — Zone Nord,2025-10-07,2025-10-28,écran illisible,239,TECH-07
+329,Brest — Port,2025-08-19,2025-08-19,maintenance préventive,1886,TECH-09
+330,Lorient — Parc des Expos,2025-11-11,2025-11-11,maintenance préventive,-1,TECH-10
+331,Vannes — Marché,2025-06-06,2025-06-08,communication réseau perdue,541,TECH-17
+332,Cherbourg — Port,2025-03-28,2025-04-10,défaut de paiement carte,2466,TECH-06
+333,Angers — Parc des Expos,2025-01-15,2025-02-04,communication réseau perdue,2500,TECH-10
+334,Le Havre — Marché,2025-12-11,2025-12-18,câble endommagé,60,TECH-07
+335,Strasbourg — Gare,2025-02-15,2025-02-22,défaut de paiement carte,1116,TECH-10
+336,Metz — Zone Nord,2025-07-23,2025-08-13,maintenance préventive,2699,TECH-18
+337,Lorient — Marché,2025-12-22,2026-01-11,défaut de paiement carte,578,TECH-08
+338,Quimper — Stade,2025-09-16,2025-10-02,câble endommagé,-1,TECH-06
+339,Vannes — Centre,2025-07-14,2025-07-23,communication réseau perdue,2145,TECH-17
+340,Évreux — Centre,2025-12-05,2025-12-07,communication réseau perdue,-1,TECH-01
+341,Vannes — Marché,2025-03-06,2025-03-21,communication réseau perdue,2547,TECH-10
+342,Nîmes — Centre,2025-04-12,2025-04-30,défaut de paiement carte,953,TECH-14
+343,Nantes — Parc des Expos,2025-12-27,2026-01-05,communication réseau perdue,1856,TECH-07
+344,Caen — Gare,2025-10-04,2025-10-20,communication réseau perdue,2833,TECH-09
+345,Caen — Gare,2025-08-07,2025-08-15,communication réseau perdue,610,TECH-13
+346,Toulouse — Centre,2025-09-22,2025-10-06,câble endommagé,-1,TECH-13
+347,Le Mans — Port,2025-03-06,2025-03-21,communication réseau perdue,2582,TECH-12
+348,Angers — Université,2025-11-21,2025-12-10,défaut de paiement carte,1049,TECH-16
+349,Le Havre — Port,2025-07-28,2025-08-06,maintenance préventive,2510,TECH-17
+350,Albi — Université,2025-08-21,2025-08-30,borne hors service,1971,TECH-03
+351,Le Mans — Marché,2025-09-01,2025-09-14,communication réseau perdue,263,TECH-18
+352,Angoulême — Parc des Expos,2025-07-20,2025-07-25,écran illisible,-1,TECH-04
+353,Le Mans — Stade,2025-06-23,2025-07-02,communication réseau perdue,1584,TECH-05
+354,Nîmes — Marché,2025-12-29,2026-01-03,communication réseau perdue,-1,TECH-03
+355,Vannes — Marché,2025-05-06,2025-05-21,maintenance préventive,-1,TECH-03
+356,Reims — Zone Nord,2025-08-14,2025-09-03,communication réseau perdue,1688,TECH-08
+357,Le Havre — Stade,2025-07-25,2025-07-29,écran illisible,2081,TECH-08
+358,La Roche — Parc des Expos,2025-02-22,2025-03-13,défaut de paiement carte,2656,TECH-05
+359,Le Havre — Zone Nord,2025-07-20,2025-07-28,maintenance préventive,2006,TECH-01
+360,Reims — Marché,2025-08-14,2025-08-31,maintenance préventive,1205,TECH-13
+361,Brest — Port,2025-06-18,2025-06-23,câble endommagé,1888,TECH-05
+362,Le Mans — Port,2025-12-16,2026-01-02,écran illisible,311,TECH-13
+363,La Roche — Université,2025-12-05,2025-12-24,écran illisible,616,TECH-15
+364,Angers — Université,2025-01-08,2025-01-21,câble endommagé,908,TECH-08
+365,Vannes — Université,2025-08-13,2025-08-15,écran illisible,2228,TECH-09
+366,Strasbourg — Gare,2025-11-17,2025-11-29,défaut de paiement carte,267,TECH-01
+367,Rouen — Gare,2025-12-26,2025-12-31,communication réseau perdue,893,TECH-07
+368,Metz — Port,2025-01-20,2025-02-04,défaut de paiement carte,-1,TECH-09
+369,Nantes — Parc des Expos,2025-07-04,2025-07-06,câble endommagé,1986,TECH-05
+370,Lorient — Marché,2025-08-17,2025-09-04,écran illisible,339,TECH-14
+371,Cherbourg — Zone Nord,2025-09-24,2025-10-09,communication réseau perdue,1793,TECH-02
+372,Strasbourg — Port,2025-04-10,2025-04-10,maintenance préventive,-1,TECH-05
+373,Poitiers — Port,2025-11-01,2025-11-05,borne hors service,2219,TECH-09
+374,Nîmes — Marché,2025-06-03,2025-06-09,maintenance préventive,261,TECH-08
+375,Cherbourg — Hôpital,2025-11-13,2025-11-26,borne hors service,613,TECH-11
+376,Metz — Zone Nord,2025-10-23,2025-10-29,borne hors service,161,TECH-07
+377,Reims — Université,2025-01-10,2025-01-22,écran illisible,896,TECH-05
+378,Poitiers — Stade,2025-11-25,2025-11-26,borne hors service,1827,TECH-13
+379,Bordeaux — Zone Nord,2025-10-27,2025-10-27,maintenance préventive,-1,TECH-07
+380,Angoulême — Aéroport,2025-11-27,2025-12-13,communication réseau perdue,2801,TECH-08
+381,Montpellier — Stade,2025-12-19,2025-12-26,maintenance préventive,-1,TECH-17
+382,Nancy — Université,2025-04-28,2025-05-13,borne hors service,265,TECH-18
+383,Rouen — Stade,2025-08-05,2025-08-21,maintenance préventive,510,TECH-07
+384,Rouen — Stade,2025-04-19,2025-05-07,communication réseau perdue,-1,TECH-09
+385,Nancy — Port,2025-09-13,2025-09-14,borne hors service,1778,TECH-17
+386,Perpignan — Parc des Expos,2025-11-14,2025-12-02,borne hors service,1081,TECH-06
+387,Vannes — Centre,2025-02-25,2025-02-25,communication réseau perdue,-1,TECH-08
+388,Vannes — Université,2025-09-22,2025-10-05,communication réseau perdue,1337,TECH-10
+389,Le Havre — Gare,2025-01-18,2025-01-28,câble endommagé,404,TECH-05
+390,Albi — Centre,2025-03-11,2025-03-13,borne hors service,1259,TECH-03
+391,Le Mans — Aéroport,2025-11-16,2025-11-26,câble endommagé,311,TECH-09
+392,Nantes — Parc des Expos,2025-02-23,2025-02-28,maintenance préventive,2168,TECH-18
+393,Le Mans — Aéroport,2025-05-13,2025-05-17,communication réseau perdue,2021,TECH-07
+394,Angoulême — Zone Nord,2025-02-28,2025-03-15,câble endommagé,654,TECH-01
+395,La Roche — Hôpital,2025-11-08,2025-11-12,maintenance préventive,1638,TECH-07
+396,Angoulême — Port,2025-12-24,2026-01-10,écran illisible,161,TECH-11
+397,Caen — Université,2025-12-15,2025-12-31,borne hors service,1863,TECH-17
+398,Caen — Université,2025-12-06,2025-12-24,borne hors service,1689,TECH-07
+399,Quimper — Stade,2025-03-01,2025-03-21,communication réseau perdue,2491,TECH-18
+400,Nantes — Hôpital,2025-08-12,2025-08-24,borne hors service,2120,TECH-12
+401,Colmar — Parc des Expos,2025-03-06,2025-03-08,communication réseau perdue,1693,TECH-05
+402,Rennes — Centre,2025-11-28,2025-12-03,câble endommagé,995,TECH-08
+403,Toulouse — Aéroport,2025-05-14,2025-06-04,borne hors service,2008,TECH-02
+404,Rennes — Marché,2025-10-13,2025-10-27,écran illisible,1591,TECH-01
+405,Angers — Port,2025-03-24,2025-03-26,borne hors service,58,TECH-02
+406,Poitiers — Hôpital,2025-11-25,2025-12-12,défaut de paiement carte,2569,TECH-03
+407,Rouen — Marché,2025-10-24,2025-11-09,défaut de paiement carte,1522,TECH-04
+408,Reims — Université,2025-12-04,2025-12-22,câble endommagé,528,TECH-05
+409,Le Havre — Port,2025-12-01,2025-12-19,communication réseau perdue,753,TECH-02
+410,Bordeaux — Université,2025-11-01,2025-11-07,communication réseau perdue,2251,TECH-14
+411,Quimper — Marché,2025-06-21,2025-07-12,borne hors service,-1,TECH-06
+412,Cherbourg — Centre,2025-09-07,2025-09-26,maintenance préventive,1306,TECH-08
+413,La Roche — Université,2025-04-27,2025-05-16,défaut de paiement carte,2508,TECH-18
+414,Montpellier — Centre,2025-07-11,2025-07-20,câble endommagé,2110,TECH-09
+415,Strasbourg — Hôpital,2025-01-20,2025-02-02,borne hors service,457,TECH-09
+416,Nîmes — Stade,2025-08-09,2025-08-26,maintenance préventive,2207,TECH-14
+417,Le Mans — Stade,2025-09-15,2025-10-05,borne hors service,2084,TECH-13
+418,Rennes — Marché,2025-03-09,2025-03-14,défaut de paiement carte,2479,TECH-02
+419,Quimper — Stade,2025-06-18,2025-06-26,communication réseau perdue,1418,TECH-12
+420,Lorient — Hôpital,2025-03-10,2025-03-31,borne hors service,1662,TECH-04
+421,La Roche — Hôpital,2025-04-09,2025-04-14,maintenance préventive,222,TECH-14
+422,Poitiers — Port,2025-03-19,2025-03-31,écran illisible,2644,TECH-15
+423,Vannes — Zone Nord,2025-03-18,2025-04-08,communication réseau perdue,239,TECH-18
+424,La Roche — Université,2025-05-08,2025-05-21,défaut de paiement carte,2708,TECH-15
+425,Strasbourg — Hôpital,2025-05-30,2025-05-30,câble endommagé,2392,TECH-14
+426,Évreux — Aéroport,2025-01-27,2025-02-16,défaut de paiement carte,1233,TECH-08
+427,Cherbourg — Port,2025-06-17,2025-07-02,communication réseau perdue,1039,TECH-01
+428,Rennes — Aéroport,2025-02-01,2025-02-08,maintenance préventive,1399,TECH-07
+429,Toulouse — Gare,2025-08-08,2025-08-29,maintenance préventive,739,TECH-08
+430,Nancy — Gare,2025-04-03,2025-04-23,câble endommagé,1645,TECH-12
+431,Montpellier — Hôpital,2025-03-07,2025-03-22,communication réseau perdue,2106,TECH-16
+432,Angers — Gare,2025-08-19,2025-08-31,écran illisible,1627,TECH-01
+433,Colmar — Centre,2025-12-05,2025-12-19,défaut de paiement carte,2621,TECH-11
+434,Pau — Stade,2025-05-13,2025-05-22,communication réseau perdue,1891,TECH-07
+435,Strasbourg — Parc des Expos,2025-02-07,2025-02-20,maintenance préventive,1898,TECH-18
+436,Bordeaux — Université,2025-03-30,2025-04-07,défaut de paiement carte,2676,TECH-17
+437,La Roche — Parc des Expos,2025-12-14,2026-01-03,écran illisible,2401,TECH-13
+438,Colmar — Centre,2025-11-07,2025-11-19,écran illisible,1049,TECH-04
+439,Nantes — Port,2025-07-11,2025-07-20,maintenance préventive,2221,TECH-04
+440,Rennes — Aéroport,2025-12-29,2026-01-06,défaut de paiement carte,1471,TECH-09
+441,Laval — Hôpital,2025-02-06,2025-02-23,maintenance préventive,796,TECH-14
+442,Reims — Zone Nord,2025-06-03,2025-06-04,écran illisible,-1,TECH-08
+443,Limoges — Zone Nord,2025-11-23,2025-12-04,câble endommagé,2792,TECH-05
+444,Limoges — Stade,2025-02-08,2025-03-01,écran illisible,193,TECH-07
+445,Limoges — Hôpital,2025-08-11,2025-08-18,câble endommagé,2759,TECH-17
+446,Perpignan — Aéroport,2025-12-21,2026-01-05,câble endommagé,676,TECH-13
+447,Albi — Université,2025-12-26,2026-01-12,écran illisible,480,TECH-12
+448,Montpellier — Hôpital,2025-11-30,2025-12-07,borne hors service,965,TECH-02
+449,Lorient — Gare,2025-10-26,2025-11-12,câble endommagé,-1,TECH-14
+450,Colmar — Université,2025-02-27,2025-03-08,écran illisible,2032,TECH-10
+451,Lorient — Université,2025-06-02,2025-06-19,défaut de paiement carte,755,TECH-11
+452,Cherbourg — Port,2025-05-04,2025-05-17,écran illisible,268,TECH-18
+453,Caen — Gare,2025-01-10,2025-01-14,borne hors service,-1,TECH-09
+454,Montpellier — Centre,2025-03-29,2025-04-15,câble endommagé,2016,TECH-15
+455,Brest — Port,2025-04-08,2025-04-23,câble endommagé,2668,TECH-18
+456,Colmar — Université,2025-04-18,2025-05-09,communication réseau perdue,2283,TECH-06
+457,Le Havre — Port,2025-12-11,2025-12-25,câble endommagé,299,TECH-16
+458,Cherbourg — Gare,2025-05-26,2025-05-28,défaut de paiement carte,1624,TECH-14
+459,Rennes — Centre,2025-04-12,2025-04-30,maintenance préventive,1204,TECH-03
+460,Quimper — Université,2025-06-25,2025-06-26,borne hors service,614,TECH-03
+461,Poitiers — Centre,2025-05-16,2025-05-17,borne hors service,1773,TECH-18
+462,Le Mans — Marché,2025-12-22,2025-12-22,borne hors service,170,TECH-10
+463,Perpignan — Parc des Expos,2025-06-09,2025-06-13,défaut de paiement carte,2380,TECH-02
+464,Angoulême — Université,2025-10-24,2025-10-27,borne hors service,1699,TECH-17
+465,Perpignan — Aéroport,2025-02-23,2025-03-07,écran illisible,537,TECH-09
+466,La Roche — Stade,2025-01-08,2025-01-15,communication réseau perdue,2699,TECH-11
+467,Bordeaux — Marché,2025-10-13,2025-11-03,communication réseau perdue,1164,TECH-02
+468,Brest — Parc des Expos,2025-02-27,2025-03-03,maintenance préventive,2227,TECH-08
+469,Nancy — Port,2025-10-30,2025-11-05,communication réseau perdue,1889,TECH-11
+470,Lorient — Université,2025-11-23,2025-12-06,défaut de paiement carte,1382,TECH-03
+471,Le Havre — Port,2025-09-27,2025-10-14,écran illisible,2373,TECH-16
+472,Toulouse — Université,2025-01-30,2025-02-07,écran illisible,843,TECH-04
+473,Rennes — Parc des Expos,2025-04-01,2025-04-21,défaut de paiement carte,313,TECH-01
+474,Montpellier — Port,2025-03-23,2025-04-05,défaut de paiement carte,1233,TECH-16
+475,Nancy — Centre,2025-02-07,2025-02-23,défaut de paiement carte,1323,TECH-12
+476,Laval — Université,2025-11-09,2025-11-17,défaut de paiement carte,2648,TECH-05
+477,Caen — Gare,2025-03-11,2025-03-12,maintenance préventive,124,TECH-12
+478,Angoulême — Stade,2025-04-17,2025-05-08,écran illisible,592,TECH-07
+479,Reims — Stade,2025-08-25,2025-09-03,maintenance préventive,-1,TECH-18
+480,Rouen — Marché,2025-07-31,2025-08-19,défaut de paiement carte,-1,TECH-08
+481,Évreux — Centre,2025-01-15,2025-01-18,communication réseau perdue,2844,TECH-10
+482,Poitiers — Centre,2025-08-20,2025-08-29,borne hors service,923,TECH-03
+483,Nîmes — Stade,2025-08-03,2025-08-16,câble endommagé,570,TECH-07
+484,Strasbourg — Parc des Expos,2025-10-17,2025-10-31,borne hors service,1461,TECH-02
+485,Nancy — Université,2025-02-02,2025-02-08,câble endommagé,-1,TECH-16
+486,Reims — Université,2025-06-18,2025-06-28,écran illisible,1548,TECH-06
+487,Rennes — Aéroport,2025-06-20,2025-07-04,communication réseau perdue,2775,TECH-11
+488,Le Havre — Port,2025-05-21,2025-05-22,écran illisible,148,TECH-08
+489,Rennes — Stade,2025-04-01,2025-04-21,maintenance préventive,834,TECH-18
+490,Colmar — Centre,2025-04-18,2025-05-04,défaut de paiement carte,352,TECH-07
+491,Montpellier — Stade,2025-11-25,2025-12-11,défaut de paiement carte,566,TECH-17
+492,Nancy — Université,2025-11-30,2025-12-13,câble endommagé,2459,TECH-10
+493,Le Havre — Port,2025-12-07,2025-12-13,maintenance préventive,-1,TECH-11
+494,Angers — Port,2025-11-22,2025-11-26,défaut de paiement carte,2242,TECH-12
+495,Toulouse — Aéroport,2025-07-17,2025-07-27,câble endommagé,1526,TECH-02
+496,Cherbourg — Aéroport,2025-11-16,2025-11-20,borne hors service,1159,TECH-05
+497,Bordeaux — Marché,2025-03-14,2025-04-01,défaut de paiement carte,-1,TECH-14
+498,Nancy — Université,2025-01-18,2025-01-26,défaut de paiement carte,1494,TECH-17
+499,Le Havre — Zone Nord,2025-02-27,2025-03-20,câble endommagé,2841,TECH-12
+500,Bordeaux — Université,2025-09-02,2025-09-19,câble endommagé,2370,TECH-10
+501,Bordeaux — Hôpital,2025-07-13,2025-08-03,écran illisible,735,TECH-05
+502,Rouen — Gare,2025-07-30,2025-08-07,écran illisible,1673,TECH-08
+503,Le Mans — Port,2025-07-22,2025-08-11,câble endommagé,1523,TECH-08
+504,Perpignan — Aéroport,2025-03-29,2025-04-01,écran illisible,1236,TECH-12
+505,Perpignan — Gare,2025-09-10,2025-09-13,borne hors service,1552,TECH-08
+506,Le Havre — Stade,2025-06-07,2025-06-24,maintenance préventive,2639,TECH-04
+507,Lorient — Université,2025-08-03,2025-08-10,défaut de paiement carte,2202,TECH-13
+508,Le Havre — Marché,2025-01-05,2025-01-11,écran illisible,2837,TECH-10
+509,Rouen — Aéroport,2025-08-14,2025-09-04,écran illisible,2085,TECH-04
+510,Lorient — Parc des Expos,2025-08-17,2025-08-23,défaut de paiement carte,2713,TECH-14
+511,Le Havre — Gare,2025-03-12,2025-04-02,défaut de paiement carte,572,TECH-01
+512,Le Mans — Aéroport,2025-02-20,2025-03-05,communication réseau perdue,2426,TECH-11
+513,Rennes — Marché,2025-11-13,2025-11-21,communication réseau perdue,2087,TECH-16
+514,Reims — Stade,2025-10-27,2025-10-30,défaut de paiement carte,1223,TECH-09
+515,Rennes — Parc des Expos,2025-03-28,2025-03-29,communication réseau perdue,692,TECH-09
+516,Cherbourg — Zone Nord,2025-05-21,2025-06-03,câble endommagé,2589,TECH-15
+517,Angers — Parc des Expos,2025-11-24,2025-12-01,borne hors service,1434,TECH-03
+518,Vannes — Port,2025-07-30,2025-08-05,écran illisible,1591,TECH-09
+519,Cherbourg — Zone Nord,2025-05-25,2025-05-29,maintenance préventive,208,TECH-14
+520,Rennes — Parc des Expos,2025-03-10,2025-03-26,communication réseau perdue,1088,TECH-07
+521,Quimper — Centre,2025-09-12,2025-09-27,communication réseau perdue,699,TECH-14
+522,Toulouse — Port,2025-03-07,2025-03-12,maintenance préventive,1673,TECH-13
+523,Cherbourg — Port,2025-09-28,2025-10-07,écran illisible,2481,TECH-02
+524,Poitiers — Centre,2025-10-30,2025-11-07,écran illisible,1743,TECH-14
+525,Bordeaux — Hôpital,2025-07-16,2025-07-18,borne hors service,2614,TECH-12
+526,Toulouse — Gare,2025-09-16,2025-09-28,borne hors service,2169,TECH-05
+527,Angers — Marché,2025-11-01,2025-11-07,défaut de paiement carte,2798,TECH-08
+528,Reims — Stade,2025-06-09,2025-06-12,défaut de paiement carte,2876,TECH-07
+529,Nîmes — Stade,2025-09-01,2025-09-05,câble endommagé,2418,TECH-06
+530,Reims — Gare,2025-08-06,2025-08-19,borne hors service,1694,TECH-10
+531,Angoulême — Parc des Expos,2025-09-24,2025-09-26,borne hors service,2440,TECH-18
+532,Évreux — Aéroport,2025-01-11,2025-01-17,borne hors service,2326,TECH-03
+533,La Roche — Stade,2025-03-31,2025-04-18,défaut de paiement carte,-1,TECH-09
+534,La Roche — Université,2025-03-15,2025-04-03,câble endommagé,-1,TECH-02
+535,Vannes — Port,2025-07-14,2025-07-23,défaut de paiement carte,2842,TECH-06
+536,Albi — Université,2025-03-29,2025-04-08,écran illisible,869,TECH-11
+537,Cherbourg — Zone Nord,2025-10-14,2025-10-24,borne hors service,710,TECH-17
+538,Angers — Université,2025-09-17,2025-10-05,câble endommagé,2068,TECH-13
+539,Lorient — Université,2025-04-02,2025-04-06,borne hors service,2737,TECH-16
+540,Caen — Gare,2025-04-04,2025-04-09,communication réseau perdue,1491,TECH-09
+541,Metz — Port,2025-11-20,2025-12-08,écran illisible,-1,TECH-01
+542,Nancy — Université,2025-09-28,2025-10-18,câble endommagé,1721,TECH-03
+543,Cherbourg — Hôpital,2025-03-12,2025-03-21,défaut de paiement carte,1448,TECH-15
+544,Nancy — Gare,2025-01-10,2025-01-24,borne hors service,-1,TECH-13
+545,Bordeaux — Port,2025-03-17,2025-04-01,communication réseau perdue,889,TECH-12
+546,Poitiers — Zone Nord,2025-06-20,2025-07-03,écran illisible,1711,TECH-18
+547,Le Havre — Stade,2025-10-31,2025-11-06,communication réseau perdue,329,TECH-16
+548,Montpellier — Stade,2025-04-05,2025-04-16,câble endommagé,2168,TECH-12
+549,Laval — Hôpital,2025-01-19,2025-02-07,défaut de paiement carte,1783,TECH-12
+550,Albi — Université,2025-12-10,2025-12-31,maintenance préventive,1671,TECH-07
+551,Limoges — Centre,2025-07-11,2025-07-19,défaut de paiement carte,-1,TECH-10
+552,Rennes — Centre,2025-04-21,2025-05-09,communication réseau perdue,2216,TECH-10
+553,Angoulême — Stade,2025-05-22,2025-05-29,écran illisible,456,TECH-13
+554,Nantes — Parc des Expos,2025-09-08,2025-09-20,communication réseau perdue,2695,TECH-04
+555,Limoges — Hôpital,2025-10-27,2025-11-04,communication réseau perdue,2349,TECH-14
+556,Cherbourg — Hôpital,2025-04-27,2025-05-14,écran illisible,2340,TECH-10
+557,La Roche — Hôpital,2025-09-20,2025-09-23,communication réseau perdue,1035,TECH-01
+558,Colmar — Stade,2025-10-28,2025-11-14,maintenance préventive,1546,TECH-04
+559,Bordeaux — Aéroport,2025-09-19,2025-09-23,maintenance préventive,1103,TECH-07
+560,Angoulême — Aéroport,2025-05-03,2025-05-11,borne hors service,1672,TECH-07
+561,Montpellier — Centre,2025-12-07,2025-12-28,câble endommagé,1396,TECH-08
+562,Montpellier — Port,2025-01-08,2025-01-25,câble endommagé,2664,TECH-09
+563,Rouen — Marché,2025-04-07,2025-04-09,défaut de paiement carte,2416,TECH-04
+564,Metz — Parc des Expos,2025-11-12,2025-11-24,maintenance préventive,2713,TECH-13
+565,Angers — Parc des Expos,2025-06-17,2025-06-29,maintenance préventive,2627,TECH-01
+566,Poitiers — Centre,2025-07-04,2025-07-20,communication réseau perdue,747,TECH-11
+567,Bordeaux — Université,2025-10-18,2025-10-21,communication réseau perdue,-1,TECH-11
+568,Quimper — Zone Nord,2025-01-11,2025-01-28,maintenance préventive,-1,TECH-15
+569,Perpignan — Gare,2025-04-11,2025-05-01,communication réseau perdue,406,TECH-04
+570,Toulouse — Université,2025-06-15,2025-06-17,câble endommagé,1240,TECH-05
+571,Cherbourg — Gare,2025-08-14,2025-08-29,maintenance préventive,762,TECH-13
+572,Limoges — Université,2025-01-13,2025-01-24,communication réseau perdue,2193,TECH-07
+573,Perpignan — Marché,2025-11-30,2025-12-05,défaut de paiement carte,630,TECH-10
+574,Lorient — Marché,2025-10-27,2025-10-28,maintenance préventive,977,TECH-18
+575,Limoges — Hôpital,2025-07-29,2025-08-07,câble endommagé,1670,TECH-03
+576,Strasbourg — Parc des Expos,2025-01-21,2025-01-28,câble endommagé,1659,TECH-06
+577,Quimper — Marché,2025-08-04,2025-08-17,communication réseau perdue,573,TECH-11
+578,Montpellier — Port,2025-07-26,2025-07-28,écran illisible,1333,TECH-03
+579,Toulouse — Aéroport,2025-01-01,2025-01-10,défaut de paiement carte,2665,TECH-14
+580,Le Mans — Centre,2025-11-15,2025-11-28,défaut de paiement carte,1958,TECH-07
+581,Le Mans — Parc des Expos,2025-01-18,2025-01-26,communication réseau perdue,932,TECH-03
+582,Rouen — Gare,2025-12-09,2025-12-09,communication réseau perdue,2248,TECH-06
+583,Le Mans — Parc des Expos,2025-02-10,2025-02-11,borne hors service,1341,TECH-16
+584,Caen — Université,2025-10-13,2025-10-28,maintenance préventive,-1,TECH-18
+585,Le Mans — Zone Nord,2025-04-15,2025-04-26,borne hors service,2613,TECH-13
+586,Cherbourg — Gare,2025-05-24,2025-06-07,communication réseau perdue,2722,TECH-16
+587,Strasbourg — Gare,2025-12-04,2025-12-13,communication réseau perdue,218,TECH-09
+588,Strasbourg — Aéroport,2025-10-29,2025-11-01,câble endommagé,683,TECH-09
+589,Cherbourg — Hôpital,2025-04-25,2025-05-09,maintenance préventive,1658,TECH-16
+590,Rouen — Université,2025-12-15,2025-12-17,écran illisible,865,TECH-03
+591,Le Mans — Parc des Expos,2025-06-08,2025-06-12,communication réseau perdue,677,TECH-06
+592,Rennes — Port,2025-05-12,2025-05-22,écran illisible,1234,TECH-17
+593,Le Havre — Stade,2025-04-12,2025-04-23,communication réseau perdue,586,TECH-13
+594,La Roche — Hôpital,2025-03-24,2025-04-07,borne hors service,2821,TECH-08
+595,Rennes — Marché,2025-09-12,2025-09-16,câble endommagé,692,TECH-15
+596,Rennes — Parc des Expos,2025-07-07,2025-07-17,câble endommagé,1004,TECH-10
+597,Albi — Centre,2025-12-01,2025-12-13,borne hors service,962,TECH-06
+598,Bordeaux — Université,2025-09-20,2025-10-05,câble endommagé,509,TECH-05
+599,Bordeaux — Université,2025-03-20,2025-03-31,écran illisible,-1,TECH-13
+600,Albi — Université,2025-08-05,2025-08-16,défaut de paiement carte,1834,TECH-12
+601,Évreux — Aéroport,2025-10-20,2025-10-26,communication réseau perdue,1854,TECH-14
+602,Nantes — Gare,2025-04-27,2025-05-15,câble endommagé,78,TECH-17
+603,Bordeaux — Université,2025-06-17,2025-07-04,communication réseau perdue,48,TECH-13
+604,Angoulême — Université,2025-11-21,2025-11-27,borne hors service,486,TECH-08
+605,Le Mans — Stade,2025-05-18,2025-06-08,écran illisible,871,TECH-10
+606,Le Havre — Zone Nord,2025-03-12,2025-03-22,défaut de paiement carte,430,TECH-04
+607,Rennes — Centre,2025-08-29,2025-09-11,communication réseau perdue,2273,TECH-01
+608,Le Havre — Stade,2025-06-30,2025-07-06,maintenance préventive,1538,TECH-03
+609,Cherbourg — Hôpital,2025-01-31,2025-02-19,écran illisible,903,TECH-10
+610,Vannes — Port,2025-11-17,2025-12-01,maintenance préventive,1011,TECH-17
+611,Vannes — Centre,2025-04-01,2025-04-07,défaut de paiement carte,892,TECH-10
+612,Caen — Université,2025-12-31,2026-01-09,maintenance préventive,-1,TECH-14
+613,Colmar — Centre,2025-06-04,2025-06-22,maintenance préventive,1256,TECH-12
+614,Strasbourg — Aéroport,2025-10-13,2025-10-23,maintenance préventive,1262,TECH-15
+615,La Roche — Stade,2025-12-14,2025-12-28,écran illisible,505,TECH-10
+616,Nantes — Gare,2025-12-31,2026-01-06,défaut de paiement carte,153,TECH-14
+617,Lorient — Gare,2025-02-13,2025-02-25,borne hors service,2507,TECH-11
+618,Toulouse — Université,2025-03-26,2025-04-03,communication réseau perdue,682,TECH-10
+619,Albi — Université,2025-02-26,2025-03-12,défaut de paiement carte,23,TECH-15
+620,Perpignan — Gare,2025-08-17,2025-08-28,communication réseau perdue,981,TECH-17
+621,Nancy — Port,2025-11-13,2025-11-25,câble endommagé,2079,TECH-02
+622,Perpignan — Université,2025-09-03,2025-09-03,écran illisible,558,TECH-09
+623,La Roche — Hôpital,2025-10-15,2025-10-24,écran illisible,834,TECH-08
+624,Toulouse — Aéroport,2025-03-19,2025-03-29,communication réseau perdue,1073,TECH-07
+625,Pau — Stade,2025-06-20,2025-07-08,écran illisible,2613,TECH-10
+626,Quimper — Marché,2025-08-01,2025-08-11,câble endommagé,1581,TECH-03
+627,Caen — Université,2025-02-12,2025-02-17,communication réseau perdue,2089,TECH-05
+628,Rennes — Aéroport,2025-09-08,2025-09-14,écran illisible,-1,TECH-07
+629,Bordeaux — Centre,2025-04-27,2025-05-03,maintenance préventive,1220,TECH-14
+630,Lorient — Marché,2025-01-10,2025-01-25,écran illisible,2777,TECH-18
+631,Bordeaux — Centre,2025-07-06,2025-07-10,maintenance préventive,-1,TECH-14
+632,La Roche — Hôpital,2025-04-28,2025-05-19,défaut de paiement carte,1517,TECH-04
+633,Le Mans — Marché,2025-04-02,2025-04-12,borne hors service,706,TECH-11
+634,Angoulême — Parc des Expos,2025-07-11,2025-08-01,écran illisible,2180,TECH-07
+635,Metz — Zone Nord,2025-01-10,2025-01-26,communication réseau perdue,-1,TECH-15
+636,Perpignan — Parc des Expos,2025-11-20,2025-12-09,maintenance préventive,535,TECH-09
+637,Laval — Université,2025-08-11,2025-08-11,maintenance préventive,2536,TECH-04
+638,Limoges — Aéroport,2025-04-23,2025-05-10,défaut de paiement carte,827,TECH-01
+639,Angers — Gare,2025-02-14,2025-03-04,maintenance préventive,2280,TECH-17
+640,Angoulême — Port,2025-12-30,2025-12-31,écran illisible,-1,TECH-15
+641,Quimper — Zone Nord,2025-07-25,2025-07-27,défaut de paiement carte,779,TECH-04
+642,Angoulême — Aéroport,2025-02-18,2025-02-25,écran illisible,459,TECH-14
+643,Strasbourg — Stade,2025-01-14,2025-01-25,écran illisible,1658,TECH-14
+644,Reims — Université,2025-09-01,2025-09-03,défaut de paiement carte,-1,TECH-18
+645,Lorient — Hôpital,2025-08-25,2025-09-01,maintenance préventive,1945,TECH-01
+646,Vannes — Zone Nord,2025-09-16,2025-09-29,maintenance préventive,1880,TECH-03
+647,Rennes — Stade,2025-02-11,2025-03-01,câble endommagé,2608,TECH-11
+648,Montpellier — Centre,2025-03-12,2025-03-31,câble endommagé,699,TECH-07
+649,Perpignan — Gare,2025-11-03,2025-11-03,communication réseau perdue,381,TECH-08
+650,Perpignan — Aéroport,2025-03-23,2025-03-31,câble endommagé,1784,TECH-14
+651,Pau — Stade,2025-06-20,2025-06-27,écran illisible,1200,TECH-01
+652,Le Mans — Aéroport,2025-07-23,2025-07-24,écran illisible,585,TECH-09
+653,Nantes — Hôpital,2025-10-12,2025-10-28,câble endommagé,1845,TECH-18
+654,Perpignan — Marché,2025-02-06,2025-02-06,maintenance préventive,1125,TECH-02
+655,Le Mans — Aéroport,2025-05-22,2025-05-23,écran illisible,152,TECH-06
+656,Nancy — Université,2025-01-02,2025-01-07,câble endommagé,863,TECH-04
+657,Angoulême — Zone Nord,2025-10-23,2025-10-23,maintenance préventive,900,TECH-08
+658,La Roche — Hôpital,2025-11-21,2025-12-10,communication réseau perdue,253,TECH-01
+659,Perpignan — Parc des Expos,2025-07-05,2025-07-20,communication réseau perdue,1680,TECH-03
+660,Lorient — Université,2025-05-28,2025-06-13,borne hors service,1731,TECH-01
+661,Rennes — Stade,2025-03-22,2025-03-25,câble endommagé,2828,TECH-03
+662,Le Havre — Zone Nord,2025-11-09,2025-11-21,écran illisible,1237,TECH-13
+663,Rennes — Aéroport,2025-01-08,2025-01-25,borne hors service,257,TECH-09
+664,Le Mans — Marché,2025-03-10,2025-03-17,défaut de paiement carte,2684,TECH-14
+665,Le Mans — Zone Nord,2025-11-24,2025-11-28,communication réseau perdue,803,TECH-04
+666,Angoulême — Stade,2025-10-29,2025-10-30,défaut de paiement carte,2022,TECH-02
+667,Strasbourg — Port,2025-07-07,2025-07-19,câble endommagé,1195,TECH-06
+668,Colmar — Université,2025-01-19,2025-01-21,défaut de paiement carte,-1,TECH-18
+669,Limoges — Stade,2025-08-30,2025-09-04,défaut de paiement carte,2618,TECH-07
+670,Toulouse — Centre,2025-08-28,2025-09-15,écran illisible,1927,TECH-03
+671,Pau — Stade,2025-02-16,2025-03-01,communication réseau perdue,1533,TECH-01
+672,Angoulême — Port,2025-11-07,2025-11-20,câble endommagé,-1,TECH-17
+673,Quimper — Université,2025-11-29,2025-11-30,communication réseau perdue,2796,TECH-13
+674,Limoges — Zone Nord,2025-02-24,2025-03-16,défaut de paiement carte,1411,TECH-03
+675,Le Havre — Marché,2025-04-15,2025-05-02,communication réseau perdue,1924,TECH-18
+676,Montpellier — Aéroport,2025-06-13,2025-06-26,écran illisible,2708,TECH-07
+677,Nantes — Hôpital,2025-07-07,2025-07-21,maintenance préventive,125,TECH-09
+678,Bordeaux — Hôpital,2025-06-08,2025-06-11,communication réseau perdue,1724,TECH-18
+679,Limoges — Stade,2025-01-10,2025-01-24,borne hors service,-1,TECH-06
+680,Cherbourg — Hôpital,2025-02-27,2025-03-04,défaut de paiement carte,2473,TECH-04
+681,Limoges — Centre,2025-02-13,2025-02-18,communication réseau perdue,655,TECH-03
+682,Metz — Marché,2025-08-05,2025-08-11,maintenance préventive,1751,TECH-11
+683,Angers — Port,2025-12-14,2025-12-18,écran illisible,1011,TECH-08
+684,Laval — Gare,2025-03-20,2025-03-26,maintenance préventive,592,TECH-07
+685,Strasbourg — Gare,2025-07-21,2025-08-08,câble endommagé,189,TECH-05
+686,Angers — Port,2025-03-09,2025-03-10,écran illisible,2493,TECH-08
+687,Brest — Port,2025-02-09,2025-02-28,communication réseau perdue,615,TECH-17
+688,Rouen — Stade,2025-08-04,2025-08-21,défaut de paiement carte,448,TECH-04
+689,Reims — Stade,2025-09-20,2025-09-21,maintenance préventive,1940,TECH-18
+690,Rouen — Stade,2025-01-28,2025-02-17,défaut de paiement carte,146,TECH-05
+691,Albi — Centre,2025-09-16,2025-09-29,maintenance préventive,609,TECH-16
+692,Colmar — Université,2025-03-05,2025-03-13,écran illisible,655,TECH-09
+693,Nantes — Hôpital,2025-01-28,2025-01-29,câble endommagé,1251,TECH-12
+694,Nantes — Marché,2025-04-27,2025-05-14,borne hors service,1906,TECH-11
+695,Poitiers — Hôpital,2025-10-02,2025-10-14,maintenance préventive,1034,TECH-17
+696,Cherbourg — Zone Nord,2025-02-07,2025-02-14,borne hors service,625,TECH-08
+697,Le Havre — Stade,2025-03-03,2025-03-20,maintenance préventive,712,TECH-07
+698,Toulouse — Université,2025-01-04,2025-01-14,communication réseau perdue,2093,TECH-09
+699,Bordeaux — Centre,2025-12-16,2026-01-04,défaut de paiement carte,2553,TECH-17
+700,Bordeaux — Université,2025-12-16,2025-12-16,borne hors service,2552,TECH-08
+701,Le Mans — Aéroport,2025-12-13,2025-12-29,communication réseau perdue,2183,TECH-14
+702,Strasbourg — Parc des Expos,2025-07-30,2025-07-31,écran illisible,-1,TECH-08
+703,Rennes — Université,2025-11-10,2025-12-01,défaut de paiement carte,1787,TECH-14
+704,Cherbourg — Parc des Expos,2025-06-02,2025-06-19,écran illisible,-1,TECH-08
+705,Rouen — Gare,2025-09-24,2025-09-26,borne hors service,1579,TECH-10
+706,Strasbourg — Stade,2025-11-12,2025-11-12,câble endommagé,1406,TECH-16
+707,Lorient — Gare,2025-08-06,2025-08-19,borne hors service,2572,TECH-12
+708,Poitiers — Stade,2025-05-24,2025-05-25,borne hors service,49,TECH-10
+709,Nantes — Parc des Expos,2025-08-28,2025-09-06,communication réseau perdue,226,TECH-04
+710,Nancy — Gare,2025-05-17,2025-05-25,communication réseau perdue,2194,TECH-05
+711,Colmar — Stade,2025-07-16,2025-07-29,écran illisible,1249,TECH-09
+712,Colmar — Université,2025-06-28,2025-06-30,écran illisible,449,TECH-04
+713,Rennes — Parc des Expos,2025-11-22,2025-11-30,maintenance préventive,160,TECH-17
+714,Rouen — Université,2025-11-25,2025-12-07,borne hors service,1665,TECH-14
+715,Vannes — Université,2025-12-09,2025-12-28,câble endommagé,1463,TECH-03
+716,Le Havre — Gare,2025-12-15,2025-12-16,communication réseau perdue,759,TECH-18
+717,Perpignan — Parc des Expos,2025-03-04,2025-03-06,défaut de paiement carte,132,TECH-09
+718,Montpellier — Port,2025-01-30,2025-02-18,défaut de paiement carte,2323,TECH-02
+719,Vannes — Centre,2025-07-25,2025-08-09,borne hors service,1046,TECH-11
+720,Rennes — Port,2025-02-16,2025-03-09,câble endommagé,1811,TECH-16
+721,Nantes — Parc des Expos,2025-01-30,2025-02-16,câble endommagé,962,TECH-08
+722,Colmar — Centre,2025-08-05,2025-08-26,écran illisible,1003,TECH-07
+723,Strasbourg — Stade,2025-11-12,2025-11-18,écran illisible,94,TECH-01
+724,La Roche — Stade,2025-11-17,2025-11-20,communication réseau perdue,2809,TECH-13
+725,Colmar — Université,2025-03-14,2025-03-19,maintenance préventive,1634,TECH-01
+726,Le Mans — Parc des Expos,2025-01-31,2025-02-17,communication réseau perdue,2295,TECH-13
+727,Angoulême — Port,2025-07-30,2025-08-05,maintenance préventive,2571,TECH-09
+728,Bordeaux — Zone Nord,2025-03-26,2025-03-30,écran illisible,98,TECH-12
+729,Nancy — Université,2025-08-29,2025-08-29,câble endommagé,1757,TECH-07
+730,Nancy — Marché,2025-03-17,2025-04-04,borne hors service,1007,TECH-13
+731,Rouen — Université,2025-09-12,2025-09-15,écran illisible,286,TECH-17
+732,Vannes — Université,2025-12-14,2026-01-04,maintenance préventive,473,TECH-12
+733,Toulouse — Port,2025-10-22,2025-11-09,câble endommagé,58,TECH-11
+734,Quimper — Université,2025-09-05,2025-09-26,défaut de paiement carte,1658,TECH-09
+735,Le Havre — Aéroport,2025-02-04,2025-02-06,câble endommagé,-1,TECH-14
+736,Perpignan — Gare,2025-03-29,2025-04-18,écran illisible,2213,TECH-12
+737,Rouen — Stade,2025-01-17,2025-01-26,écran illisible,2437,TECH-05
+738,Colmar — Centre,2025-04-19,2025-05-01,maintenance préventive,2238,TECH-03
+739,Bordeaux — Aéroport,2025-01-30,2025-02-05,communication réseau perdue,2023,TECH-02
+740,Caen — Gare,2025-08-31,2025-09-01,communication réseau perdue,2321,TECH-14
+741,Le Mans — Stade,2025-03-15,2025-04-03,borne hors service,2450,TECH-13
+742,Bordeaux — Port,2025-05-08,2025-05-13,borne hors service,-1,TECH-14
+743,Cherbourg — Aéroport,2025-11-11,2025-11-17,câble endommagé,2504,TECH-04
+744,Reims — Gare,2025-08-08,2025-08-22,maintenance préventive,-1,TECH-15
+745,Angoulême — Zone Nord,2025-04-05,2025-04-18,maintenance préventive,63,TECH-17
+746,Nancy — Port,2025-05-27,2025-06-13,borne hors service,-1,TECH-09
+747,Évreux — Aéroport,2025-09-19,2025-09-22,borne hors service,1299,TECH-05
+748,Rennes — Marché,2025-01-18,2025-01-25,maintenance préventive,1103,TECH-15
+749,Nîmes — Stade,2025-11-16,2025-11-18,maintenance préventive,2260,TECH-04
+750,Limoges — Aéroport,2025-06-02,2025-06-18,défaut de paiement carte,1916,TECH-01
+751,Nancy — Port,2025-10-22,2025-11-03,maintenance préventive,2516,TECH-16
+752,Quimper — Marché,2025-08-25,2025-09-02,maintenance préventive,961,TECH-08
+753,Lorient — Hôpital,2025-12-24,2026-01-07,borne hors service,254,TECH-18
+754,Nancy — Marché,2025-12-16,2025-12-20,défaut de paiement carte,-1,TECH-18
+755,Rennes — Port,2025-05-11,2025-05-22,défaut de paiement carte,1346,TECH-05
+756,Bordeaux — Gare,2025-08-17,2025-08-20,défaut de paiement carte,1664,TECH-16
+757,Vannes — Port,2025-11-29,2025-12-04,écran illisible,-1,TECH-14
+758,Quimper — Stade,2025-07-05,2025-07-06,borne hors service,1739,TECH-01
+759,Perpignan — Gare,2025-11-13,2025-11-24,câble endommagé,120,TECH-16
+760,Bordeaux — Centre,2025-09-27,2025-10-17,borne hors service,-1,TECH-15
+761,Angoulême — Université,2025-06-21,2025-07-01,défaut de paiement carte,1659,TECH-16
+762,La Roche — Stade,2025-08-11,2025-08-16,écran illisible,1171,TECH-11
+763,Cherbourg — Parc des Expos,2025-01-05,2025-01-24,maintenance préventive,2636,TECH-12
+764,Angers — Marché,2025-06-24,2025-06-26,borne hors service,-1,TECH-09
+765,Le Havre — Aéroport,2025-11-10,2025-11-28,défaut de paiement carte,76,TECH-07
+766,Strasbourg — Hôpital,2025-04-12,2025-04-13,câble endommagé,1483,TECH-09
+767,Vannes — Stade,2025-06-28,2025-07-13,maintenance préventive,1830,TECH-14
+768,Angers — Marché,2025-12-18,2026-01-02,borne hors service,53,TECH-15
+769,Le Mans — Stade,2025-08-27,2025-08-27,borne hors service,1985,TECH-03
+770,Bordeaux — Port,2025-08-31,2025-09-13,maintenance préventive,1381,TECH-01
+771,Strasbourg — Aéroport,2025-03-07,2025-03-13,borne hors service,677,TECH-07
+772,Albi — Université,2025-06-08,2025-06-26,câble endommagé,1316,TECH-07
+773,Reims — Zone Nord,2025-10-31,2025-11-08,maintenance préventive,2692,TECH-13
+774,Cherbourg — Centre,2025-07-22,2025-08-09,maintenance préventive,979,TECH-17
+775,Albi — Université,2025-06-10,2025-07-01,écran illisible,2698,TECH-11
+776,Toulouse — Gare,2025-09-27,2025-10-14,borne hors service,2732,TECH-06
+777,Nancy — Université,2025-11-07,2025-11-28,câble endommagé,240,TECH-08
+778,Montpellier — Stade,2025-02-21,2025-03-04,communication réseau perdue,787,TECH-06
+779,Montpellier — Port,2025-12-29,2025-12-30,communication réseau perdue,1424,TECH-15
+780,Limoges — Université,2025-02-06,2025-02-06,défaut de paiement carte,236,TECH-02
+781,Brest — Port,2025-06-13,2025-06-13,maintenance préventive,625,TECH-14
+782,Évreux — Centre,2025-01-06,2025-01-11,défaut de paiement carte,-1,TECH-03
+783,Le Havre — Stade,2025-09-28,2025-10-10,maintenance préventive,2674,TECH-17
+784,Quimper — Centre,2025-02-24,2025-03-14,défaut de paiement carte,1653,TECH-09
+785,Vannes — Zone Nord,2025-09-11,2025-09-18,défaut de paiement carte,1139,TECH-05
+786,Nancy — Marché,2025-06-18,2025-07-06,communication réseau perdue,792,TECH-12
+787,Strasbourg — Gare,2025-04-29,2025-04-30,câble endommagé,-1,TECH-10
+788,Nantes — Port,2025-01-05,2025-01-06,défaut de paiement carte,2725,TECH-10
+789,Laval — Université,2025-04-25,2025-05-01,défaut de paiement carte,786,TECH-18
+790,Laval — Zone Nord,2025-03-21,2025-03-26,écran illisible,2811,TECH-02
+791,Rouen — Marché,2025-06-25,2025-06-30,maintenance préventive,216,TECH-16
+792,Le Havre — Aéroport,2025-08-04,2025-08-09,maintenance préventive,-1,TECH-06
+793,Caen — Gare,2025-03-29,2025-04-18,communication réseau perdue,1608,TECH-16
+794,Rouen — Gare,2025-11-16,2025-12-06,défaut de paiement carte,2047,TECH-13
+795,Lorient — Parc des Expos,2025-04-23,2025-05-13,défaut de paiement carte,272,TECH-01
+796,Évreux — Marché,2025-06-15,2025-06-30,maintenance préventive,2057,TECH-11
+797,Nantes — Marché,2025-07-09,2025-07-27,écran illisible,1904,TECH-12
+798,Poitiers — Zone Nord,2025-06-28,2025-07-01,câble endommagé,1828,TECH-05
+799,Colmar — Parc des Expos,2025-09-24,2025-10-14,communication réseau perdue,-1,TECH-01
+800,Vannes — Port,2025-03-20,2025-04-06,maintenance préventive,25,TECH-16
+801,Angoulême — Université,2025-03-21,2025-03-24,borne hors service,2317,TECH-09
+802,Reims — Stade,2025-02-01,2025-02-01,câble endommagé,2603,TECH-15
+803,Laval — Hôpital,2025-10-14,2025-11-04,borne hors service,1372,TECH-16
+804,Toulouse — Gare,2025-09-02,2025-09-23,maintenance préventive,-1,TECH-16
+805,Perpignan — Gare,2025-12-01,2025-12-05,écran illisible,1699,TECH-02
+806,Toulouse — Centre,2025-02-01,2025-02-22,communication réseau perdue,1074,TECH-11
+807,Metz — Parc des Expos,2025-05-31,2025-06-07,câble endommagé,242,TECH-14
+808,Le Havre — Zone Nord,2025-05-17,2025-05-20,communication réseau perdue,188,TECH-13
+809,Nancy — Marché,2025-07-12,2025-07-20,communication réseau perdue,-1,TECH-03
+810,Le Havre — Marché,2025-02-25,2025-03-05,borne hors service,2874,TECH-08
+811,Quimper — Marché,2025-02-14,2025-02-19,défaut de paiement carte,2146,TECH-03
+812,Nancy — Centre,2025-01-15,2025-01-21,communication réseau perdue,2486,TECH-05
+813,Albi — Centre,2025-04-27,2025-05-10,communication réseau perdue,-1,TECH-04
+814,Poitiers — Zone Nord,2025-02-25,2025-03-08,écran illisible,1985,TECH-13
+815,Angers — Port,2025-05-31,2025-06-06,câble endommagé,2615,TECH-12
+816,Toulouse — Université,2025-11-09,2025-11-22,borne hors service,1372,TECH-16
+817,Colmar — Parc des Expos,2025-05-16,2025-05-22,défaut de paiement carte,-1,TECH-07
+818,Colmar — Centre,2025-10-01,2025-10-04,borne hors service,275,TECH-17
+819,Bordeaux — Gare,2025-07-21,2025-08-06,maintenance préventive,1542,TECH-11
+820,Montpellier — Centre,2025-01-20,2025-01-24,câble endommagé,90,TECH-10
+821,La Roche — Université,2025-08-03,2025-08-15,maintenance préventive,569,TECH-11
+822,Metz — Marché,2025-09-14,2025-09-29,câble endommagé,2394,TECH-03
+823,Reims — Zone Nord,2025-08-09,2025-08-14,écran illisible,2709,TECH-07
+824,Poitiers — Zone Nord,2025-06-16,2025-06-23,câble endommagé,1862,TECH-04
+825,Angers — Parc des Expos,2025-01-05,2025-01-12,borne hors service,2558,TECH-04
+826,Montpellier — Port,2025-11-15,2025-11-26,maintenance préventive,2880,TECH-14
+827,Angoulême — Stade,2025-06-18,2025-06-20,maintenance préventive,1577,TECH-16
+828,Le Mans — Aéroport,2025-03-26,2025-03-29,câble endommagé,373,TECH-04
+829,Strasbourg — Parc des Expos,2025-09-21,2025-10-02,défaut de paiement carte,1632,TECH-18
+830,Vannes — Port,2025-01-10,2025-01-14,défaut de paiement carte,574,TECH-17
+831,Montpellier — Aéroport,2025-07-15,2025-07-15,borne hors service,134,TECH-03
+832,Nantes — Hôpital,2025-08-25,2025-09-13,borne hors service,378,TECH-14
+833,Bordeaux — Gare,2025-07-11,2025-07-17,écran illisible,-1,TECH-11
+834,Caen — Gare,2025-12-11,2025-12-27,écran illisible,-1,TECH-08
+835,Strasbourg — Aéroport,2025-05-31,2025-06-08,communication réseau perdue,1070,TECH-05
+836,Limoges — Université,2025-07-25,2025-08-06,câble endommagé,523,TECH-17
+837,Angoulême — Port,2025-10-25,2025-11-07,maintenance préventive,-1,TECH-10
+838,Rouen — Stade,2025-12-08,2025-12-24,défaut de paiement carte,822,TECH-17
+839,Lorient — Marché,2025-02-17,2025-03-02,défaut de paiement carte,1507,TECH-17
+840,Perpignan — Gare,2025-07-25,2025-08-10,borne hors service,1696,TECH-05
+841,Reims — Université,2025-09-27,2025-10-01,écran illisible,1666,TECH-06
+842,Metz — Port,2025-01-22,2025-02-01,maintenance préventive,234,TECH-11
+843,Poitiers — Port,2025-04-18,2025-04-20,borne hors service,2432,TECH-17
+844,La Roche — Stade,2025-12-08,2025-12-27,communication réseau perdue,2131,TECH-13
+845,Nîmes — Centre,2025-06-15,2025-06-29,communication réseau perdue,2182,TECH-03
+846,Nancy — Centre,2025-10-05,2025-10-11,défaut de paiement carte,-1,TECH-02
+847,Quimper — Centre,2025-10-13,2025-10-29,écran illisible,2462,TECH-05
+848,Metz — Zone Nord,2025-09-18,2025-10-04,écran illisible,2550,TECH-09
+849,Colmar — Centre,2025-06-14,2025-06-26,communication réseau perdue,1212,TECH-05
+850,Nancy — Gare,2025-11-04,2025-11-16,défaut de paiement carte,496,TECH-15
+851,Angers — Université,2025-01-02,2025-01-09,communication réseau perdue,2756,TECH-14
+852,Le Mans — Port,2025-04-26,2025-05-11,borne hors service,1281,TECH-17
+853,Bordeaux — Port,2025-03-16,2025-04-06,défaut de paiement carte,2464,TECH-08
+854,Metz — Marché,2025-01-20,2025-01-27,maintenance préventive,2481,TECH-04
+855,Nancy — Stade,2025-09-08,2025-09-13,maintenance préventive,2434,TECH-04
+856,Laval — Zone Nord,2025-07-05,2025-07-09,défaut de paiement carte,-1,TECH-14
+857,Metz — Zone Nord,2025-10-31,2025-11-01,défaut de paiement carte,1767,TECH-08
+858,Vannes — Centre,2025-10-31,2025-11-20,maintenance préventive,2406,TECH-17
+859,Limoges — Université,2025-11-02,2025-11-05,maintenance préventive,1035,TECH-18
+860,Nancy — Université,2025-12-15,2026-01-03,maintenance préventive,586,TECH-08
+861,La Roche — Parc des Expos,2025-02-19,2025-02-22,communication réseau perdue,1569,TECH-08
+862,Rouen — Stade,2025-05-14,2025-06-04,maintenance préventive,2214,TECH-07
+863,Le Havre — Port,2025-05-15,2025-05-31,défaut de paiement carte,1941,TECH-02
+864,Perpignan — Aéroport,2025-12-31,2026-01-10,câble endommagé,1702,TECH-07
+865,Vannes — Stade,2025-12-05,2025-12-23,communication réseau perdue,2464,TECH-12
+866,Angoulême — Université,2025-06-17,2025-06-19,câble endommagé,2563,TECH-13
+867,Rennes — Port,2025-12-27,2025-12-30,communication réseau perdue,581,TECH-07
+868,Angers — Gare,2025-02-15,2025-02-16,communication réseau perdue,2458,TECH-02
+869,Strasbourg — Aéroport,2025-10-22,2025-11-08,écran illisible,868,TECH-16
+870,Metz — Zone Nord,2025-06-11,2025-06-12,écran illisible,1519,TECH-11
+871,Limoges — Université,2025-03-29,2025-04-02,maintenance préventive,2075,TECH-17
+872,Quimper — Marché,2025-08-04,2025-08-06,borne hors service,1522,TECH-04
+873,Bordeaux — Université,2025-08-31,2025-09-19,écran illisible,1174,TECH-07
+874,Toulouse — Port,2025-01-28,2025-02-17,câble endommagé,2477,TECH-08
+875,Cherbourg — Parc des Expos,2025-02-05,2025-02-21,maintenance préventive,847,TECH-09
+876,Cherbourg — Hôpital,2025-08-18,2025-09-03,maintenance préventive,1519,TECH-13
+877,Perpignan — Aéroport,2025-08-15,2025-09-05,maintenance préventive,147,TECH-16
+878,Évreux — Centre,2025-05-20,2025-05-21,câble endommagé,1205,TECH-18
+879,Évreux — Centre,2025-10-23,2025-11-07,écran illisible,2401,TECH-02
+880,Nancy — Université,2025-07-05,2025-07-07,écran illisible,2423,TECH-05
+881,Montpellier — Aéroport,2025-10-12,2025-10-13,communication réseau perdue,-1,TECH-02
+882,Metz — Zone Nord,2025-09-24,2025-10-11,borne hors service,2008,TECH-11
+883,Poitiers — Port,2025-09-09,2025-09-17,défaut de paiement carte,344,TECH-04
+884,Perpignan — Parc des Expos,2025-06-13,2025-06-29,écran illisible,2757,TECH-14
+885,Poitiers — Zone Nord,2025-10-30,2025-11-10,écran illisible,2601,TECH-03
+886,Caen — Gare,2025-10-28,2025-11-02,câble endommagé,677,TECH-14
+887,Rouen — Stade,2025-07-08,2025-07-11,maintenance préventive,2641,TECH-16
+888,Metz — Marché,2025-06-07,2025-06-26,maintenance préventive,-1,TECH-01
+889,Évreux — Marché,2025-11-14,2025-11-19,écran illisible,2289,TECH-15
+890,Cherbourg — Gare,2025-04-12,2025-04-21,écran illisible,2020,TECH-13
+891,Reims — Zone Nord,2025-06-19,2025-06-22,écran illisible,2112,TECH-13
+892,Évreux — Aéroport,2025-09-28,2025-09-28,borne hors service,1383,TECH-03
+893,Pau — Stade,2025-06-28,2025-07-08,défaut de paiement carte,200,TECH-15
+894,Toulouse — Centre,2025-10-08,2025-10-09,défaut de paiement carte,1038,TECH-11
+895,Toulouse — Aéroport,2025-05-19,2025-06-03,écran illisible,1870,TECH-13
+896,Bordeaux — Marché,2025-06-24,2025-07-15,maintenance préventive,127,TECH-10
+897,Colmar — Stade,2025-05-20,2025-05-20,maintenance préventive,1292,TECH-16
+898,Nancy — Port,2025-03-03,2025-03-22,défaut de paiement carte,1120,TECH-16
+899,Angoulême — Université,2025-11-05,2025-11-19,maintenance préventive,1361,TECH-13
+900,Limoges — Stade,2025-07-23,2025-07-28,borne hors service,687,TECH-04
