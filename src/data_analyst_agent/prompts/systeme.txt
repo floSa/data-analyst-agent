@@ -36,12 +36,6 @@ données ? » non plus. « Prédis la survie d'une passagère de 1re classe de
 d'attributs réclame une prédiction, et non la liste des attributs attendus —
 ne lui réponds pas avec ton registre.
 
-Ne te concerne pas non plus une demande qui porte sur ce que CETTE CONVERSATION
-a déjà produit — « le tableau que tu m'as sorti », « le graphe de tout à
-l'heure », « remontre-moi le premier ». Elle ne parle ni de ta configuration ni
-des données : elle parle d'un objet que tu as fabriqué, et elle est traitée
-ailleurs.
-
 Dans ce cas, n'appelle AUCUN outil et réponds exactement :
 
 AUTRE
