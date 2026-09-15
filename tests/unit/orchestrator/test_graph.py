@@ -1189,14 +1189,23 @@ def test_chainage_colonnes_capitalisees(tmp_path: Path, registry: Registry):
     assert "a survécu" in answer.answer
 
 
-def test_chainage_indice_de_colonnes_dans_le_prompt(passager_csv: Path, registry: Registry):
+def test_chainage_indice_de_colonnes_dans_le_prompt(tmp_path: Path, registry: Registry):
     """L'agent SQL reçoit les colonnes DÉCLARÉES de la source, et leurs alias.
 
     Nommer les features suffisait tant qu'une colonne les portait sous leur nom.
-    Dès que la source modélise autrement — `classes.level` pour `pclass` — la
-    liste des features laisse choisir, et le choix observé dépendait du moteur.
-    La consigne nomme donc la colonne source ET son alias.
+    Dès que la source modélise autrement — `niveau` pour `pclass` — la liste des
+    features laisse choisir, et le choix observé dépendait du moteur. La consigne
+    nomme donc la colonne source ET son alias.
+
+    La source porte réellement la colonne déclarée : depuis que la déclaration
+    est relue contre le schéma, un `classes.level` écrit sur un CSV à plat serait
+    refusé avant la requête, et ce test ne mesurerait plus rien de la consigne.
     """
+    passager_csv = tmp_path / "passagers.csv"
+    passager_csv.write_text(
+        "passenger_id,sex,niveau,age,sibsp,parch,fare,embarked\n1,female,1,28,0,0,80.0,S\n",
+        encoding="utf-8",
+    )
     llm = (
         ScriptedLLM()
         .script(
@@ -1228,14 +1237,14 @@ def test_chainage_indice_de_colonnes_dans_le_prompt(passager_csv: Path, registry
             ],
         )
     )
-    declaration = {**identite("titanic")["titanic"], "pclass": "classes.level"}
+    declaration = {**identite("titanic")["titanic"], "pclass": "passagers.niveau"}
     catalog = Catalog(
         sources=[FileSource(name="passagers", path=passager_csv, features={"titanic": declaration})]
     )
     orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
     orchestrator.ask("Prédis la survie du passager 1")
     retrieval_prompt = llm.prompts_for(RETRIEVAL)[0]
-    assert "classes.level AS pclass" in retrieval_prompt
+    assert "passagers.niveau AS pclass" in retrieval_prompt
     for field in ("sex", "age", "sibsp", "parch", "fare", "embarked"):
         assert f"{field} AS {field}" in retrieval_prompt
     # la consigne porte sur les colonnes, et le dit : sans cette phrase, mesuré
@@ -1367,6 +1376,49 @@ def test_une_source_sans_correspondance_declaree_refuse_sans_interroger(
     assert llm.prompts_for(RETRIEVAL) == []
     etape = next(s for s in answer.trace if s.node == "fetch_predict")
     assert etape.detail == "correspondance non déclarée"
+
+
+def test_une_colonne_declaree_absente_refuse_avant_la_requete(
+    passager_csv: Path, registry: Registry
+):
+    """La déclaration existe, elle est complète, et elle nomme une colonne fausse.
+
+    C'est le défaut du §19.11 : rien ne relisait la déclaration contre la source.
+    `pclas` partait en SQL, la requête échouait sur une colonne inconnue, l'agent
+    se corrigeait au jugé, et la feature finissait absente du payload — un
+    symptôme à trois pas de sa cause. La faute est désormais nommée là où elle
+    est écrite, et la source n'est pas interrogée.
+    """
+    declaration = identite("titanic")
+    declaration["titanic"]["pclass"] = "pclas"
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(
+                Plan(
+                    capability="fetch_then_predict",
+                    source="passagers",
+                    dataset="titanic",
+                    data_question="Le passager 1",
+                )
+            )
+        ],
+    )
+    catalog = Catalog(
+        sources=[FileSource(name="passagers", path=passager_csv, features=declaration)]
+    )
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Prédis la survie du passager 1")
+
+    assert answer.error is not None
+    assert "pclas" in answer.error  # la colonne écrite dans le catalogue
+    assert "peut-être passagers.pclass ?" in answer.error  # celle qu'on voulait
+    assert "embarked" in answer.error  # les colonnes réelles de la source
+    assert answer.answer.startswith("Je n'ai pas pu répondre")
+    # aucune requête n'a été envoyée : l'agent SQL n'a même pas été sollicité
+    assert llm.prompts_for(RETRIEVAL) == []
+    etape = next(s for s in answer.trace if s.node == "fetch_predict")
+    assert etape.detail == "colonne déclarée absente"
 
 
 # --- chemins d'erreur -----------------------------------------------------------

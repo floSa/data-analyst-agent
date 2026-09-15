@@ -220,9 +220,18 @@ def test_ligne_recuperee_incomplete_retient_l_acquis(tmp_path: Path, registry: R
 
     Sans ce ``pending``, le tour suivant repartirait de zéro et redemanderait
     l'attribut que la source venait de fournir.
+
+    La source porte bien toutes les colonnes déclarées — c'est la REQUÊTE qui
+    n'en ramène qu'une. Les deux cas se ressemblaient tant que rien ne relisait
+    la déclaration ; ils sont désormais distincts, et c'est celui-ci qui laisse
+    un acquis à garder. Une déclaration qui nommerait une colonne absente serait
+    refusée avant la requête, sans rien à retenir.
     """
     csv = tmp_path / "partiel.csv"
-    csv.write_text("passenger_id,sex\n1,female\n", encoding="utf-8")
+    csv.write_text(
+        "passenger_id,sex,pclass,age,sibsp,parch,fare,embarked\n1,female,1,28,0,0,80.0,S\n",
+        encoding="utf-8",
+    )
     llm = (
         ScriptedLLM()
         .script(
@@ -241,7 +250,11 @@ def test_ligne_recuperee_incomplete_retient_l_acquis(tmp_path: Path, registry: R
         .script(
             RETRIEVAL,
             [
-                tool_call("run_sql", {"query": "SELECT * FROM partiel WHERE passenger_id = 1"}),
+                # l'agent ne ramène qu'une colonne des sept demandées
+                tool_call(
+                    "run_sql",
+                    {"query": "SELECT sex FROM partiel WHERE passenger_id = 1"},
+                ),
                 text("Une ligne."),
             ],
         )

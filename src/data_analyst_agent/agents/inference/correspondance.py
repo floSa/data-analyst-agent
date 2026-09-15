@@ -36,6 +36,16 @@ Ce que cette déclaration donne, et que la prose ne donne pas :
    écrire et où — là où l'absence de déclaration ne produisait qu'un silence,
    ou une prédiction sur la mauvaise colonne.
 
+**Et la déclaration est relue contre la source.** Une déclaration est du texte
+dans un YAML : rien n'empêche d'y écrire ``classes.levelx``. Ce qui suivait
+était lisible, et tard — l'agent SQL partait, la requête échouait sur une
+colonne inconnue, il se corrigeait comme il pouvait, et la feature finissait
+absente du payload, réclamée par le schéma sous un nom qui ne disait rien de la
+faute de frappe. ``confronter`` lit le schéma de la source et refuse AVANT la
+requête, en nommant la colonne introuvable et en donnant celles qui existent.
+C'est le même principe qu'au-dessus, d'un cran plus loin : une déclaration
+incomplète était déjà refusée, une déclaration FAUSSE ne l'était pas.
+
 Ce n'est pas un relâchement de la garde. Une valeur qu'aucune traduction
 déclarée ne couvre est laissée TELLE QUELLE : le schéma la refuse en citant ce
 qu'il a lu — ``'3e classe'`` reste une erreur de validation lisible, et une
@@ -44,11 +54,13 @@ valeur hors bornes venue de la base est refusée comme celle d'un utilisateur.
 
 from __future__ import annotations
 
+import difflib
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from data_analyst_agent.agents.inference.schemas import get_schema
+from data_analyst_agent.agents.retrieval.sql import SchemaInfo
 
 
 class FeatureDeclaration(BaseModel):
@@ -182,6 +194,46 @@ class Correspondance:
             },
         )
 
+    def confronter(self, schema: SchemaInfo) -> None:
+        """Relit la déclaration contre le schéma réel. Lève si une colonne manque.
+
+        Appelée AVANT la requête, et c'est tout l'intérêt : une déclaration
+        fausse partait jusqu'ici en SQL, revenait en erreur de colonne inconnue,
+        laissait l'agent se corriger au jugé, et finissait en feature absente du
+        payload — un symptôme à trois pas de sa cause. La faute est ici nommée
+        là où elle est écrite, avec les colonnes que la source porte réellement.
+
+        Pas de traduction de valeurs ici : ``values`` se vérifie sur les données,
+        pas sur le schéma, et une valeur non couverte est déjà refusée par le
+        schéma de features en citant ce qui a été lu.
+        """
+        connues = {
+            f"{table.name}.{colonne.name}".lower(): f"{table.name}.{colonne.name}"
+            for table in schema.tables
+            for colonne in table.columns
+        }
+        # Les noms nus, pour la source à une table qui ne se qualifie pas. Un nom
+        # porté par deux tables reste accepté : la déclaration désigne alors une
+        # colonne qui existe, et c'est tout ce que cette relecture prétend dire.
+        nus = {qualifie.rsplit(".", 1)[-1].lower() for qualifie in connues.values()}
+        introuvables = [
+            (feature, decl.column)
+            for feature, decl in self.par_feature.items()
+            if decl.column.lower() not in connues and decl.nom_de_colonne.lower() not in nus
+        ]
+        if not introuvables:
+            return
+        detail = "; ".join(
+            f"{feature} -> {colonne}{_peut_etre(colonne, sorted(connues.values()))}"
+            for feature, colonne in introuvables
+        )
+        raise CorrespondanceIndisponible(
+            f"la source {self.source!r} déclare pour le modèle {self.dataset!r} des "
+            f"colonnes que la source ne porte pas : {detail}. Colonnes de la source : "
+            f"{', '.join(sorted(connues.values()))}. Corrigez le bloc "
+            f"`features.{self.dataset}` du catalogue — rien n'a été interrogé."
+        )
+
     def consigne_sql(self) -> str:
         """Ce qu'on ajoute à la question posée à l'agent SQL : les colonnes, nommées.
 
@@ -228,6 +280,27 @@ class Correspondance:
                     payload[feature] = decl.traduire(par_nom[cle])
                     break
         return payload
+
+
+def _peut_etre(declaree: str, connues: list[str]) -> str:
+    """« (peut-être classes.level ?) », quand une colonne réelle en est proche.
+
+    Une faute de frappe est le cas fréquent, et la liste complète des colonnes ne
+    la pointe pas du doigt. Muet quand rien ne ressemble : proposer au hasard
+    coûterait la confiance qu'on gagne à ne rien deviner.
+
+    Comparé sous les DEUX écritures, qualifiée et nue. Une déclaration qui ne se
+    qualifie pas (`pclas`) ne ressemble à aucun `table.colonne` — la distance
+    d'édition est mangée par le préfixe — et c'est justement la source à une
+    table, celle qui n'a aucune raison de se qualifier.
+    """
+    for candidates in (connues, [c.rsplit(".", 1)[-1] for c in connues]):
+        cible = declaree if candidates is connues else declaree.rsplit(".", 1)[-1]
+        proches = difflib.get_close_matches(cible.lower(), [c.lower() for c in candidates], n=1)
+        if proches:
+            indice = next(i for i, c in enumerate(candidates) if c.lower() == proches[0])
+            return f" (peut-être {connues[indice]} ?)"
+    return ""
 
 
 __all__ = [

@@ -13,6 +13,7 @@ from data_analyst_agent.agents.inference.correspondance import (
 from data_analyst_agent.agents.inference.schemas import TitanicFeatures
 from data_analyst_agent.agents.inference.validation import validate_features
 from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
+from data_analyst_agent.agents.retrieval.sql import ColumnInfo, SchemaInfo, TableInfo
 
 # La base Postgres du catalogue : `pclass` y est porté par `classes.level`.
 PAR_LE_NIVEAU = {
@@ -221,3 +222,124 @@ def test_par_le_nom_est_l_identite():
         feature: feature for feature in COLONNES
     }
     assert correspondance.payload(COLONNES, LIGNE_NIVEAU)["pclass"] == 3
+
+
+# --- la déclaration relue CONTRE la source ----------------------------------
+#
+# Une déclaration est du texte dans un YAML : rien n'empêche d'y écrire
+# `classes.levelx`. Ce qui suivait était lisible et tard — SQL en erreur sur une
+# colonne inconnue, correction au jugé de l'agent, feature absente du payload.
+# `confronter` lit le schéma et refuse avant la requête.
+
+
+def schema_titanic() -> SchemaInfo:
+    """Le schéma de la base Postgres du catalogue, réduit à ce qui compte ici."""
+    return SchemaInfo(
+        dialect="postgresql",
+        tables=[
+            TableInfo(
+                name="passengers",
+                columns=[
+                    ColumnInfo(name=nom, type=type_)
+                    for nom, type_ in (
+                        ("passenger_id", "INTEGER"),
+                        ("sex", "VARCHAR"),
+                        ("age", "DOUBLE PRECISION"),
+                        ("sibsp", "INTEGER"),
+                        ("parch", "INTEGER"),
+                        ("fare", "DOUBLE PRECISION"),
+                        ("embarked", "VARCHAR"),
+                        ("class_id", "INTEGER"),
+                    )
+                ],
+            ),
+            TableInfo(
+                name="classes",
+                columns=[
+                    ColumnInfo(name="id", type="INTEGER"),
+                    ColumnInfo(name="level", type="INTEGER"),
+                    ColumnInfo(name="label", type="VARCHAR"),
+                ],
+            ),
+        ],
+    )
+
+
+def test_une_declaration_juste_passe_la_confrontation():
+    titanic(PAR_LE_NIVEAU).confronter(schema_titanic())
+    titanic(PAR_LE_LIBELLE).confronter(schema_titanic())
+
+
+def test_une_colonne_declaree_qui_n_existe_pas_est_refusee_avec_les_vraies():
+    """Le cas du §19.11 : `classes.levelx` au lieu de `classes.level`.
+
+    Le message doit suffire à corriger le YAML sans ouvrir la base : la colonne
+    introuvable, la colonne réelle qui lui ressemble, et la liste de ce que la
+    source porte.
+    """
+    fautive = {**PAR_LE_NIVEAU, "pclass": "classes.levelx"}
+
+    with pytest.raises(CorrespondanceIndisponible) as refus:
+        titanic(fautive).confronter(schema_titanic())
+
+    message = str(refus.value)
+    assert "classes.levelx" in message  # ce qui est écrit dans le catalogue
+    assert "peut-être classes.level ?" in message  # ce qu'on voulait sûrement
+    assert "classes.label" in message  # les colonnes réelles, proposées
+    assert "passengers.fare" in message
+    assert "rien n'a été interrogé" in message
+
+
+def test_toutes_les_colonnes_absentes_sont_dites_d_un_coup():
+    """Corriger un YAML trois fois de suite parce qu'il rend une faute à la fois
+    est une perte de temps qu'aucune contrainte n'impose."""
+    fautive = {**PAR_LE_NIVEAU, "pclass": "classes.levelx", "fare": "passengers.prix"}
+
+    with pytest.raises(CorrespondanceIndisponible) as refus:
+        titanic(fautive).confronter(schema_titanic())
+
+    assert "classes.levelx" in str(refus.value)
+    assert "passengers.prix" in str(refus.value)
+
+
+def test_une_colonne_declaree_sans_sa_table_est_reconnue():
+    """La source à une table ne se qualifie pas, et n'a pas à le faire."""
+    plat = {feature: feature for feature in PAR_LE_NIVEAU}
+    schema = SchemaInfo(
+        dialect="duckdb",
+        tables=[
+            TableInfo(
+                name="titanic",
+                columns=[ColumnInfo(name=f, type="VARCHAR") for f in plat],
+            )
+        ],
+    )
+
+    titanic(plat).confronter(schema)
+
+
+def test_la_confrontation_ignore_la_casse():
+    """Un en-tête de CSV garde ses majuscules (`Pclass`), Postgres non."""
+    schema = SchemaInfo(
+        dialect="duckdb",
+        tables=[
+            TableInfo(
+                name="titanic",
+                columns=[ColumnInfo(name=f.capitalize(), type="VARCHAR") for f in PAR_LE_NIVEAU],
+            )
+        ],
+    )
+
+    titanic({feature: feature for feature in PAR_LE_NIVEAU}).confronter(schema)
+
+
+def test_une_colonne_sans_ressemblance_est_refusee_sans_proposition_au_hasard():
+    """Muet quand rien ne ressemble : une suggestion tirée au sort coûterait la
+    confiance qu'on gagne à ne rien deviner. La liste réelle, elle, reste là."""
+    fautive = {**PAR_LE_NIVEAU, "pclass": "zzzzzzzz"}
+
+    with pytest.raises(CorrespondanceIndisponible) as refus:
+        titanic(fautive).confronter(schema_titanic())
+
+    assert "peut-être" not in str(refus.value)
+    assert "classes.level" in str(refus.value)
