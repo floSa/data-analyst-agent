@@ -72,7 +72,7 @@ flowchart LR
     SYS -->|"aucun outil appelé"| RAP["rappel<br/>« parle-t-on de ce que j'ai produit ? »<br/>2 outils, le modèle décide<br/><i>sauté si le fil n'a rien produit</i>"]
     RAP -->|"lecture d'un artefact"| SYN
     RAP -->|"rejeu d'un code"| ANAL
-    RAP -->|"aucun outil appelé"| PLAN["plan<br/>LLM → objet Plan<br/>puis les règles nommées"]
+    RAP -->|"aucun outil appelé<br/>(+ l'absence dite si le message désignait)"| PLAN["plan<br/>LLM → objet Plan<br/>puis les règles nommées"]
     PLAN -->|"query"| RETR["retrieval<br/>SQL lecture seule"]
     PLAN -->|"analyze"| ANAL["analysis<br/>code en sandbox"]
     PLAN -->|"predict"| INFE["inference<br/>valide → prédit"]
@@ -99,7 +99,9 @@ mécanique — deux outils, et l'appel d'un outil est le signal. Ce nœud-ci se
 **retire sans appeler le modèle** quand le fil n'a encore rien produit : le
 catalogue est vide, les outils ne pourraient que refuser, et l'appel serait payé
 pour apprendre ce que le disque dit déjà. Une conversation neuve ne le paie donc
-jamais (§4.12).
+jamais (§4.12). Quand il décline alors que le message désignait bel et
+bien un artefact passé, il le **dit** avant de laisser le planificateur produire —
+déterministe, hors du modèle (§4.12).
 
 Le planificateur classe la demande dans une capacité et en extrait les paramètres
 (source, dataset, features). Le plan qu'il rend est ensuite passé dans une suite de
@@ -240,6 +242,8 @@ les CSV, sans laisser de données orphelines.
   modifié : deux outils PydanticAI, sur le modèle des cinq de `systeme.py`. Il
   n'exécute rien lui-même — le rejeu passe par un rappel que le graphe lui
   fournit, qui remonte le décor de données et repasse par le bac à sable (§4.12).
+  Il porte aussi la part **déterministe** du même sujet : reconnaître qu'un message
+  DÉSIGNE un artefact passé, et dire l'absence quand il n'y en a pas.
 - `context_budget.py` — ce qui entre dans le contexte : la fenêtre glissante et
   le budget de tokens (§7), le compteur approché, et la détection d'un
   débordement — plafonnement constaté sur `prompt_eval_count`, ou refus HTTP
@@ -821,6 +825,21 @@ tout premier graphique » avec un catalogue qui n'en portait qu'un — le plus r
 il l'a rejoué. L'utilisateur a reçu un histogramme des âges repeint en vert, présenté
 comme son graphique par classe. Ça ressemblait à un rappel et ce n'en était pas un.
 L'avis d'éviction dans le prompt a fait disparaître ce cas (§20).
+
+**Et quand aucun nom n'est prononcé ?** Les trois refus ci-dessus supposent qu'un
+outil ait été appelé avec un nom. « Reprends le camembert des ports que tu m'avais
+fait », dans un fil qui n'en porte aucun, n'en appelle aucun : l'agent décline, le
+planificateur fabrique un camembert neuf — correct — et rien ne dit qu'il n'existait
+pas. Mesuré sur les deux moteurs. Le nœud tranche donc **sans le modèle** : la
+désignation d'un artefact passé se lit dans le MESSAGE, par sa grammaire
+(`designation_dun_artefact_passe` — un passé attribué à l'agent, un déictique du
+passé ou un verbe de reprise, plus une cible), et l'absence se lit dans le CATALOGUE.
+Quand les deux se rencontrent, l'aveu est mis en tête de la réponse — *« Ce qui suit
+est neuf, pas un rappel »* — et **le tour continue** : la figure est produite. Le
+défaut n'est pas de produire, c'est de laisser croire qu'on a retrouvé. Trois phrases
+distinctes selon que le fil est vide, qu'il ne porte pas ça, ou qu'il a des artefacts
+évincés — on ne peut pas affirmer l'absence de ce qu'on ne voit plus (§21 de
+`surface-conversationnelle.md`).
 
 **Récupérer le code sans passer par la conversation.** `GET
 /conversations/{id}/artefacts` rend le catalogue — tout ce que porte le disque, avec

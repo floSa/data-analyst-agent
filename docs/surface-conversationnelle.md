@@ -34,6 +34,7 @@ formulation à laquelle personne n'avait pensé.
 | **18** | un témoin qui **bouclait** : une question sur les colonnes, dans un prompt qui n'en connaissait pas | **oui** |
 | **19** | la correspondance source → features **devinée** : trois requêtes pour une même question, et la déclaration qui les remplace | **oui** |
 | **20** | un artefact **se nomme, se désigne et se rejoue** : le catalogue injecté sans son contenu, le rejeu mesuré au tour +2 et au tour +5, et la ligne de prompt qui en coûtait deux | **oui** |
+| **21** | **dire qu'on ne l'a pas fait** : la désignation d'un artefact absent reconnue dans le message, l'absence affirmée par le catalogue, et les deux moitiés mesurées | **oui** |
 
 ## 1. Le défaut constaté, et sa cause
 
@@ -2806,4 +2807,300 @@ mesuré : 1 tour sur 8, sous Ollama seulement.
   code échoue dans le bac à sable avec un message. C'est un choix — mieux vaut un
   échec lisible qu'un refus prématuré — mais rien ne compare le schéma d'alors à
   celui de maintenant ;
+- **`sources-premiere-personne` sous Ollama**, inchangé depuis le §18.7.
+
+## 21. Dire qu'on ne l'a pas fait
+
+Le [§20.10](#2010-ce-qui-reste-ouvert-après-le-20) laissait un trou et le nommait :
+la demande **au passé** d'un artefact qui n'existe pas. C'est la dernière poche de
+la famille `acfd8f5` — *répondre avec ce qu'on peut produire, au lieu de dire ce qui
+manque* — et c'est la plus discrète, parce qu'elle ne produit **rien de faux**.
+
+### 21.1 Le défaut, reproduit sur les deux moteurs
+
+Deux tours, une conversation, contre le vrai système. Le premier produit un
+diagramme en barres ; le second demande un camembert qui n'a jamais existé.
+
+> **Tour 1.** *Fais-moi un graphique en barres du nombre de passagers par classe.*
+>
+> **Tour 2.** *Reprends le camembert des ports d'embarquement que tu m'avais fait.*
+
+| | vLLM | Ollama |
+|---|---|---|
+| trace du tour 2 | `rappel : aucun outil appelé — passe au planificateur`<br>`plan : analyze sur titanic`<br>`analysis : 1 figure(s), statut ok` | identique |
+| réponse | *« Voici le camembert des ports d'embarquement. Les données montrent que le port de S a accueilli 644 passagers, suivi de C avec 168, puis Q avec 77… »* | *« Voici le camembert des ports d'embarquement **que vous avez demandé**. La visualisation est ci-jointe… »* |
+
+Les chiffres sont justes, la figure est correcte, aucun nom d'artefact n'est inventé.
+Et pour s'assurer qu'il ne s'agit pas d'un hasard de formulation, le tour 3 pose la
+**même demande sans rien désigner** — *« Fais-moi un camembert des ports
+d'embarquement »* — et rend, sous vLLM, une réponse **mot pour mot identique** à
+celle du tour 2. C'est exactement le problème : rien, dans ce que lit l'utilisateur,
+ne distingue une figure retrouvée d'une figure refaite. Il repart en croyant qu'on a
+récupéré son travail.
+
+Le nœud de rappel n'a pas tort de décliner : rien au catalogue ne ressemble à un
+camembert des ports. Il n'a simplement **aucun outil qui refuse**, donc aucun refus
+à servir — les deux refus du [§20.7](#207-le-refus-et-le-cloisonnement) supposent
+qu'un NOM ait été prononcé.
+
+### 21.2 Le signal qui sépare les deux demandes
+
+Ces deux messages n'appellent pas la même réponse, et le catalogue ne peut pas les
+distinguer — il dit ce qui **existe**, pas ce que la phrase **prétend** :
+
+| message | ce qu'il présuppose | ce qu'il faut faire |
+|---|---|---|
+| « Reprends le camembert des ports **que tu m'avais fait** » | que la chose existe **et que c'est moi qui l'ai faite** | le dire avant de produire autre chose |
+| « **Fais-moi** un camembert des ports » | rien | la produire, sans commentaire |
+
+Le signal est donc dans le **message**, et il est **grammatical** : une
+présupposition d'antériorité attribuée à l'agent. Il se compose de deux moitiés, et
+`designation_dun_artefact_passe` exige **les deux** :
+
+1. un **marqueur d'antériorité**, sous l'une de trois formes :
+   - le **passé attribué à l'agent** — `tu` + un clitique optionnel + un auxiliaire +
+     un **participe de production** : « tu m'avais **fait** », « que tu as **tracée** ».
+     L'auxiliaire seul ne suffit pas, et c'est le point qui décide de tout : « de
+     quand datent les données que tu as ? » porte `tu as` et ne désigne aucun
+     artefact ;
+   - un **déictique du passé** — « de tout à l'heure », « d'avant », « le précédent »,
+     « tantôt », « plus tôt », « la dernière fois », « le même » ;
+   - un **verbe de reprise** — « reprends », « remontre », « reviens au », « repasse ».
+     `refais` en est exclu : « refais-moi un camembert » se lit aussi bien comme une
+     demande neuve, et l'ambiguïté se règle du côté du silence ;
+2. une **cible** — un objet produisible (graphique, camembert, tableau, courbe…), un
+   anaphorique qui en tient lieu (« celui », « ce que »), ou un nom d'artefact.
+   Sans cible, un marqueur de passé ne désigne pas un artefact : « tu m'as dit que »
+   parle d'une phrase.
+
+**Ce n'est pas le lexique disqualifié au [§9](#9-le-lexique-avait-un-plafond-et-il-a-été-mesuré).**
+Celui-là décidait de la **route** — quel agent traite la demande — et plafonnait à 3
+formulations sur 10 parce qu'il fallait reconnaître *ce qu'on veut*. Ici on ne
+reconnaît qu'une **construction**, et elle décide seulement d'**ajouter une phrase**
+à une réponse qui part de toute façon. Se tromper ne fait perdre ni une réponse ni un
+tour : au pire une phrase de trop, au pire une phrase de moins.
+
+### 21.3 Ce qui a été bâti : déterministe, côté nœud
+
+Le §20.10 disait « à reprendre autrement — peut-être en déterministe, du côté du
+nœud, plutôt que par le prompt ». C'est ce qui a été fait, et **le prompt n'a pas été
+touché** : trois reformulations avaient déjà échoué, et la raison en est structurelle
+— on demandait à un modèle d'**affirmer une absence**, et un modèle n'affirme pas une
+absence : il produit ce qu'il peut. Le catalogue, lui, SAIT ce qui existe.
+
+Le nœud de rappel avait un seul cas « aucun outil appelé » ; il en recouvrait deux.
+Il en a maintenant deux :
+
+```
+rappel : aucun outil appelé — passe au planificateur
+rappel : aucun outil appelé, désignation sans artefact (« tu m avais fait »)
+         — absence dite, puis passe au planificateur
+```
+
+La phrase est mise **en tête de la réponse** par la synthèse, comme l'avis de source
+du [§12](#12-la-source-de-travail-dune-conversation-mesurée-de-bout-en-bout) et pour
+la même raison : la trace n'est pas dépliée par défaut, et ce qu'on veut éviter n'est
+pas de produire une figure — c'est de la faire passer pour un rappel.
+
+**On ne bloque personne.** La figure est produite, elle est juste, elle est servie.
+Ce qui change tient en une phrase, et c'est elle qui porte tout le mécanisme :
+
+> **Ce qui suit est neuf, pas un rappel.**
+
+Le tour 2 du §21.1 se lit maintenant, sur les deux moteurs :
+
+> Je n'ai pas produit dans cette conversation ce que tu me demandes de reprendre.
+> **Ce qui suit est neuf, pas un rappel.** Ce que j'ai produit ici : `graphique_1`.
+>
+> Voici le camembert des ports d'embarquement. Les données montrent que le port de S
+> a accueilli 644 passagers…
+
+Trois cas, trois phrases, et les confondre serait mentir :
+
+| le fil… | ce qui est dit |
+|---|---|
+| n'a **rien** produit | *Je n'ai encore rien produit dans cette conversation : il n'y a rien à reprendre.* |
+| a produit, mais pas ça | *Je n'ai pas produit dans cette conversation ce que tu me demandes de reprendre. […] Ce que j'ai produit ici : …* |
+| a des artefacts **ÉVINCÉS** | *Je ne peux pas affirmer ne l'avoir jamais produit : N objet(s) […] ont été ÉVINCÉS du contexte de ce tour (…)* |
+
+Le troisième est le piège, et c'est le même que celui du
+[§20.7](#207-le-refus-et-le-cloisonnement) par une autre porte : on ne **peut pas**
+affirmer l'absence de ce qu'on ne voit plus. Le dire absent reviendrait à dire à
+quelqu'un qu'il n'a jamais demandé ce graphique.
+
+Un fil **vide** est le seul cas où l'aveu ne coûte **aucun appel** : le nœud se retire
+avant de solliciter le modèle, puisqu'il n'a pas de catalogue à lui soumettre — et
+l'absence y est pourtant la plus certaine de toutes.
+
+### 21.4 Le signal mesuré : rappel et faux positifs
+
+Le détecteur est déterministe : sa précision se **vérifie**, elle ne s'échantillonne
+pas. `scripts/mesure_artefact_absent.py` le passe sur un corpus étiqueté, sans le
+moindre appel au modèle.
+
+**12/12 désignations reconnues, 0/18 faux positifs.**
+
+| tournure | marqueur trouvé |
+|---|---|
+| Reprends le camembert des ports d'embarquement **que tu m'avais fait**. | `tu m avais fait` |
+| Tu peux me remontrer le camembert **que tu avais fait** ? | `tu avais fait` |
+| Reprends le graphe **de tout à l'heure** et mets les barres en bleu. | `tout a l heure` |
+| **Reviens** au tout premier graphique, celui par classe, et repasse-le en vert. | `reviens` |
+| Le premier tableau **que tu m'as sorti**, redis-moi ce qu'il y avait dedans. | `tu m as sorti` |
+| Le graphique **de tantôt**, en vert. | `tantot` |
+| Refais **le même** graphique mais en bleu. | `le meme` |
+| Je voudrais revoir la courbe **que tu as tracée** plus tôt. | `tu as tracee` |
+| Le nuage de points âge/tarif **que tu m'avais sorti**, remets-le-moi. | `tu m avais sorti` |
+| **Remontre**-moi **celui d'avant**. | `d avant` |
+| Affiche **le précédent**. | `precedent` |
+| **Ce que tu m'avais sorti**, tu peux me le remettre ? | `tu m avais sorti` |
+
+**Les trois dernières ne portent aucun mot du catalogue** — pas de « graphique », pas
+de « camembert », rien qu'un anaphorique. C'est là qu'un lexique d'objets n'aurait
+rien eu à quoi s'accrocher, et c'est pour elles que le signal a dû être grammatical.
+
+Le défaut **symétrique** pèse autant : une tournure innocente prise pour une
+désignation ferait payer une phrase de repentir à une demande neuve. Les 18
+innocentes du corpus passent, et les six premières sont des questions **réelles** de
+la batterie de ce document — celles qui portent `tu as`, c'est-à-dire le piège :
+
+| tournure innocente | pourquoi elle ne déclenche pas |
+|---|---|
+| De quand datent les données **que tu as** ? | `tu as` sans participe de production |
+| **qu'est-ce que tu as** comme données ? | idem — et `données` a dû être retiré des participes, c'est le faux positif le plus coûteux qu'on ait trouvé |
+| À quelles bases de données **as-tu** accès ? | l'inversion n'est pas `tu as` |
+| **montre-moi ce que tu as** | cible présente, marqueur absent |
+| Fais-moi un camembert des ports d'embarquement. | aucun marqueur |
+| Ajoute une légende au graphique. | aucun marqueur |
+
+### 21.5 Le parcours, sur les deux moteurs
+
+Neuf tours contre le vrai système — serveur LLM en place, `titanic` en Postgres, bac
+à sable Docker. Les six premiers dans **une** conversation ; les trois derniers sont
+des anaphores pures posées chacune dans un fil **neuf**, le seul décor où « celui
+d'avant » ne peut désigner que du vide, donc le seul où l'oracle soit mécanique.
+
+L'oracle ne lit qu'un fait : la phrase d'aveu est-elle là où elle doit être, et
+absente là où elle n'a rien à faire ?
+
+| # | tour | aveu | vLLM | Ollama |
+|---|---|---|---|---|
+| 1 | *Fais-moi un graphique en barres du nombre de passagers par classe.* | interdit | ✅ | ✅ |
+| **2** | ***Reprends le camembert des ports d'embarquement que tu m'avais fait.*** | **exigé** | ✅ **+ figure produite** | ✅ **+ figure produite** |
+| 3 | *Fais-moi un histogramme des âges des passagers.* | interdit | ✅ | ✅ |
+| **4** | ***Reprends le graphe de tout à l'heure, celui par classe, et mets les barres en bleu.*** | **interdit** | ✅ **`rejeu de graphique_1`** | ✅ **`rejeu de graphique_1`** |
+| **5** | ***Le nuage de points âge/tarif que tu m'avais sorti, remets-le-moi.*** | **exigé** | ✅ | ✅ |
+| 6 | *Combien de passagers ont survécu ?* | interdit | ✅ | ✅ |
+| **7** | ***Remontre-moi celui d'avant.*** (fil neuf) | **exigé** | ✅ **0 appel de rappel** | ✅ |
+| **8** | ***Affiche le précédent.*** (fil neuf) | **exigé** | ✅ | ✅ |
+| **9** | ***Ce que tu m'avais sorti, tu peux me le remettre ?*** (fil neuf) | **exigé** | ✅ | ✅ |
+| | | | **9/9** | **9/9** |
+
+**Le tour 4 est celui qui prouve que le mécanisme n'est pas un bavardage.** Il DÉSIGNE
+autant que le tour 2 — « reprends le graphe de tout à l'heure » — mais l'artefact
+existe, le rappel aboutit, et **pas un mot** n'est ajouté. L'aveu ne se déclenche que
+sur une désignation restée **sans réponse**.
+
+Les tours 3 et 6 sont les témoins du défaut symétrique : une figure neuve et une
+requête ordinaire, aucune ne reçoit de commentaire.
+
+### 21.6 Le parcours du §20 rejoué : rien de perdu, un tour gagné
+
+Même parcours qu'au [§20.4](#204-la-mesure-sur-les-deux-moteurs), mêmes huit tours,
+même oracle mécanique — seul le tour 8 a changé d'attendu, puisque ce qu'on y exige
+n'est plus un refus mais l'absence **dite**.
+
+| # | Tour | vLLM | Ollama |
+|---|---|---|---|
+| 1 | une figure | ✅ | ✅ |
+| 2–3 | deux digressions | ✅ | ✅ |
+| **4** | **reprise au tour +2** | ✅ **`rejeu de graphique_1` → `graphique_2`** | ✅ |
+| 5 | un tableau désigné sans son nom | ✅ | ✅ |
+| 6 | une seconde figure | ✅ | ✅ |
+| **7** | **reprise au tour +5, deux figures plus loin** | ✅ **`rejeu de graphique_1` → `graphique_4`** | ✅ |
+| **8** | **l'artefact absent** | ✅ **l'absence dite** *(était ❌)* | ✅ **l'absence dite** *(était ❌)* |
+| | | **8/8** *(était 7/8)* | **7/8** *(était 6/8)* |
+
+**Le poids du prompt est inchangé**, au token près : 1 439 au premier tour (magasin
+vide), 1 911 au dernier (sept artefacts), soit les **+472** du
+[§20.5](#205-le-poids-du-prompt--ce-que-le-catalogue-coûte-vraiment). L'aveu ne coûte
+rien parce qu'il n'entre dans aucun prompt : il est calculé après coup, à partir du
+catalogue qu'on avait déjà.
+
+### 21.7 L'artefact ÉVINCÉ, qui n'est pas l'artefact absent
+
+Le même parcours, fenêtre de code resserrée à un (`DAA_CONTEXT_CODE_WINDOW=1`). Au
+tour 7, la première figure a été **évincée** du contexte : elle a bel et bien été
+produite, elle n'est simplement plus là.
+
+Le [§20.6 ③](#206-trois-défauts-que-la-mesure-a-trouvés) avait supprimé le rejeu du
+mauvais artefact en disant l'éviction **au modèle** ; il restait que l'agent se
+**retire** au lieu de l'annoncer, et que l'utilisateur ne reçoive qu'un avis de
+troncature générique qui ne nomme pas ce qu'il demandait. C'est précisément ce que
+l'aveu comble, avec sa troisième phrase — celle qui ne dit **pas** l'absence :
+
+> Je ne peux pas affirmer ne l'avoir jamais produit : 1 objet(s) plus ancien(s) de
+> cette conversation ont été ÉVINCÉS du contexte de ce tour (…), et je ne peux ni les
+> relire ni les rejouer. Ce qui suit est neuf, pas un rappel. Artefacts encore
+> disponibles : …
+
+### 21.8 Pas de régression : la batterie sur les deux moteurs
+
+| Moteur | Questions méta | Témoins | Coût |
+|---|---|---|---|
+| vLLM (`google/gemma-4-E4B-it-qat-w4a16-ct`, port 8100) | **36/36** | **4/4** | 78 + 17 appels LLM |
+| Ollama (`gemma4:e4b`, port 11434) | **35/36** | **4/4** | 83 + 17 appels LLM |
+
+**Identiques au [§20.8](#208-pas-de-régression--la-batterie-sur-les-deux-moteurs),
+appels compris.** C'est la preuve qui compte ici, parce que le [§20.9](#209-une-ligne-de-prompt-qui-en-coûtait-deux)
+a montré ce que coûte un paragraphe ajouté à un prompt qui tient : cinq lignes de
+frontière valaient **deux questions** de cette batterie, sous vLLM, reproduit dans les
+deux sens. Ce chantier-ci n'a touché **aucun prompt** — le mécanisme est entièrement
+en aval du modèle — et le compte d'appels identique au dernier près est ce qui le
+prouve.
+
+Deux raisons pour que cette identité tienne, et il fallait les deux :
+
+- la batterie pose chaque question dans une conversation **neuve**, donc sans
+  artefact ;
+- et surtout, **aucune des 40 questions ne déclenche le détecteur** (§21.4). Ce n'est
+  pas acquis d'avance : six d'entre elles portent `tu as`, et c'est bien pour elles
+  que le participe de production a été exigé. Le mot `rappel` n'apparaît dans **aucune**
+  trace de la batterie.
+
+Le seul écart reste `sources-premiere-personne` sous Ollama, et c'est le même depuis
+le [§18.7](#187-pas-de-régression--la-batterie-complète-sur-les-deux-moteurs) :
+`systeme_request_limit = 4`, le *fail-open* joue son rôle. Il n'est pas traité ici.
+
+Suite complète : **957 passés, 99,54 %** (922 et 99,54 % avant ce chantier). Les 35
+nouveaux sont tous sur le rappel d'artefact : 29 sont le corpus étiqueté du §21.4,
+posé en test et non seulement en runner — un signal déterministe se verrouille.
+
+### 21.9 Ce qui reste ouvert après le §21
+
+Le §20.10 laissait cinq points ouverts. Deux sont fermés ici :
+
+- ~~la demande au passé d'un artefact qui n'existe pas~~ — c'est l'objet de ce § ;
+- ~~l'éviction n'est pas DITE quand le modèle décline~~ — c'est le §21.7 : elle l'est
+  maintenant, et par la même voie.
+
+Restent :
+
+- **le nœud système capte encore « le tableau que tu m'as sorti » sous Ollama**
+  (§20.9), et c'est le seul tour manqué du parcours du §20 sur ce moteur. La
+  correction par le prompt est disqualifiée, mesures à l'appui ; la frontière reste à
+  poser ailleurs. Il faut noter qu'elle passerait par un détecteur du même genre que
+  celui-ci, appliqué au nœud d'avant — mais cette fois pour **router**, et c'est
+  exactement ce que le §9 a disqualifié. À instruire pour lui-même ;
+- **l'aveu dans un fil vide se colle parfois à un repli.** Mesuré : « Remontre-moi
+  celui d'avant » dans une conversation neuve rend *« Je n'ai encore rien produit
+  dans cette conversation : il n'y a rien à reprendre. Ce qui suit est neuf, pas un
+  rappel. Je n'ai pas bien compris ta demande. »* La première phrase est juste et
+  utile, la seconde annonce une suite qui n'en est pas une. Défaut de couture, pas de
+  fond ;
+- **la désignation exige une cible**, donc « ajoute une légende au graphique » dans un
+  fil qui n'en porte aucun ne dit rien. C'est délibéré — sans marqueur d'antériorité,
+  la phrase ne prétend pas que la chose existe — mais c'est une frontière posée là et
+  non ailleurs, et elle n'a pas été mesurée sur un corpus de tournures implicites ;
+- **le rejeu ne vérifie pas que le décor est le même** (§20.10), inchangé ;
 - **`sources-premiere-personne` sous Ollama**, inchangé depuis le §18.7.
