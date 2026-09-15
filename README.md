@@ -24,6 +24,7 @@ Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM 
 - [API / Endpoints](#api--endpoints)
 - [Le début d'une conversation : choisir la source](#le-début-dune-conversation--choisir-la-source)
 - [Ce que l'agent sait dire de lui-même](#ce-que-lagent-sait-dire-de-lui-même)
+- [Ce que l'agent a produit, et sait reprendre](#ce-que-lagent-a-produit-et-sait-reprendre)
 - [Mémoire de conversation](#mémoire-de-conversation)
 - [Observabilité](#observabilité)
 - [Qualité](#qualité)
@@ -35,13 +36,15 @@ Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM 
 ```mermaid
 flowchart LR
     U(["Utilisateur"]) --> API["API FastAPI<br/>+ page de chat"]
-    API --> O["Orchestrateur LangGraph<br/>plan → route → capacité → synthèse"]
+    API --> O["Orchestrateur LangGraph<br/>système → rappel → plan →<br/>route → capacité → synthèse"]
     O -.-> L["LLM mutualisé<br/>endpoint OpenAI-compatible"]
     O --> R["① Récupération<br/>text-to-SQL à tools"]
     O --> A["② Analyse<br/>code stats/viz"]
     O --> I["③ Inférence gardée<br/>validation → predict"]
     O --> Y["④ Répondre sur soi-même<br/>outils de faits, jamais de mémoire"]
+    O --> W["⑤ Rappeler ce qu'on a produit<br/>relire un artefact, rejouer un code"]
     Y --> C[("Catalogue · registre ·<br/>schémas · ontologies")]
+    W --> Z[("Magasin d'artefacts du fil<br/>tableaux · code · figures")]
     R --> D[("Postgres ·<br/>CSV/Excel via DuckDB")]
     A --> S["Sandbox Docker<br/>réseau coupé"]
     I --> M[("Modèles ML<br/>registry joblib")]
@@ -126,7 +129,7 @@ docker build -t data-analyst-agent-sandbox:0.1 src/data_analyst_agent/sandbox/im
 
 ## Configuration
 
-Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`). Une quarantaine de réglages, groupés par domaine dans **[docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-configuration-daa_)** : LLM, sources et capacités, mémoire de conversation et contexte, authentification et sessions, surface HTTP et débit, sandbox. Les plus souvent touchés :
+Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`). 49 réglages, groupés par domaine dans **[docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-configuration-daa_)** : LLM, sources et capacités, mémoire de conversation et contexte, authentification et sessions, surface HTTP et débit, sandbox. Les plus souvent touchés :
 
 | Réglage | Défaut | Quand y toucher |
 |---|---|---|
@@ -137,7 +140,13 @@ Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`). Une qu
 | `DAA_API_DOCS_ENABLED` | `false` | `true` pour développer contre l'OpenAPI |
 | `DAA_SANDBOX_MAX_SESSIONS` | `4` | régler sur la RAM réellement disponible |
 
-Les sources de données se déclarent dans `sources/catalogue.yaml` (livré avec deux sources : `titanic` et `iris`).
+Les sources de données se déclarent dans `sources/catalogue.yaml` (livré avec deux sources : `titanic` et `iris`). Outre son type et son accès, une source peut déclarer trois blocs **facultatifs**, et chacun répond à une question que le schéma seul ne répond pas :
+
+| Bloc | À qui il s'adresse | Ce qu'il dit |
+|---|---|---|
+| `dictionary` | au **modèle de langage** | ce que les données *veulent dire*, là où le DDL ne dit que des types |
+| `features` | au **code** | quelle colonne de CETTE source alimente quelle feature de quel modèle — le même modèle `titanic` est alimenté par `classes.level` dans la base Postgres et par `Pclass` dans le CSV. Relu contre le schéma réel **avant toute requête** : une colonne déclarée qui n'existe pas est nommée, avec celles qui existent, au lieu de finir en SQL en erreur puis en feature absente |
+| `date_reference` | au **relevé** | la colonne sur laquelle se lit la période couverte. Sans elle, c'est la première colonne de date du schéma — juste, mais choisie par l'ordre du DDL. Une source qui porte une date de commande *et* une date de livraison a une colonne qui compte, et elle seule le sait |
 
 ### Sources livrées
 
@@ -176,7 +185,10 @@ cookie posé à la connexion.
 l'utilisateur de la session, et il n'existe pas de vue plus large : le fil d'un
 autre compte répond **`404`, jamais `403`** — un `403` confirmerait son
 existence. Reprendre l'identifiant du fil de quelqu'un d'autre dans `POST /chat`
-n'y écrit rien : cela ouvre un fil neuf et vide chez soi.
+n'y écrit rien : cela ouvre un fil neuf et vide chez soi. Les deux routes
+d'artefacts suivent la même règle et rendent **le même `404`** dans les trois cas
+qui doivent rester indiscernables : le fil d'un autre, un fil inventé, un nom
+d'artefact qui n'existe pas chez soi.
 
 | Méthode | Route | Session | Rôle |
 |---|---|---|---|
@@ -192,6 +204,8 @@ n'y écrit rien : cela ouvre un fil neuf et vide chez soi.
 | `POST` | `/conversations` | oui | Ouvre un fil vide, pour choisir sa source avant de poser la première question |
 | `PUT` | `/conversations/{id}/source` | oui | Fixe la source de travail du fil sans avoir à la taper ; seule une source **déclarée** est acceptée |
 | `GET` | `/conversations/{id}` | oui | Le fil complet (messages + artefacts) pour le reprendre ; `404` s'il est à quelqu'un d'autre |
+| `GET` | `/conversations/{id}/artefacts` | oui | Le **catalogue** des artefacts du fil — nom, nature, description, question d'origine, et `retenu` (encore dans le contexte, ou évincé). Jamais leur contenu |
+| `GET` | `/conversations/{id}/artefacts/{nom}` | oui | Le **contenu** d'un artefact : le code Python d'une figure, la tête d'un tableau. Récupérer un code sans repasser par la conversation |
 | `POST` | `/conversations/{id}/duplicate` | oui | Duplique une de ses conversations |
 | `DELETE` | `/conversations/{id}` | oui | Supprime une de ses conversations et sa mémoire |
 
@@ -258,7 +272,7 @@ Ce qu'il faut savoir de ce mécanisme :
 
 « Quelles données as-tu ? », « c'est quoi ton périmètre ? », « quelles colonnes dans `passengers` ? », « de quels attributs as-tu besoin pour prédire ? », « que sais-tu faire ? » — ces questions ne portent pas *sur* les données mais **sur l'agent**, et elles sont le premier tour d'une conversation sur deux.
 
-Le premier nœud du graphe leur est consacré, et c'est le **modèle** qui décide : il reçoit la question avec cinq outils qui rendent les faits du dépôt — catalogue, registre des modèles, schémas d'attributs, schéma réel des sources — puis il les formule. S'il n'appelle aucun outil, la question repart au planificateur comme n'importe quelle question sur les données.
+Le premier nœud du graphe leur est consacré, et c'est le **modèle** qui décide : il reçoit la question avec cinq outils qui rendent les faits du dépôt — ses capacités, le catalogue des sources, le schéma réel d'une source, le registre des modèles, les attributs qu'un modèle attend — puis il les formule. S'il n'appelle aucun outil, la question repart au planificateur comme n'importe quelle question sur les données. Le plafond d'allers-retours de ce nœud est `DAA_SYSTEME_REQUEST_LIMIT` (`6`) : un appel par outil ouvert, un dernier pour formuler.
 
 **Rien ne vient de la mémoire du modèle**, et ce n'est pas une intention mais une vérification : une formulation qui cite un nom qu'aucun outil n'a rendu, ou qui oublie un nom qu'un outil a rendu, est **écartée** — ce sont alors les faits eux-mêmes qui partent à l'utilisateur. Un nom de table inventé est plus nocif qu'une réponse absente : il a l'air d'une lecture de la source.
 
@@ -266,22 +280,91 @@ La frontière : l'agent répond sur ce qu'il **EST**, jamais sur ce que les donn
 
 La mesure de cette surface — quarante formulations posées au vrai serveur, avant et après, avec le coût en appels LLM — est dans **[docs/surface-conversationnelle.md](docs/surface-conversationnelle.md)**.
 
+## Ce que l'agent a produit, et sait reprendre
+
+« Reprends le graphe de tout à l'heure et mets les barres en bleu », « remontre-moi
+le tableau des survivants ». Ces demandes ne portent ni sur les données ni sur
+l'agent : elles portent sur **ce que la conversation a déjà produit**.
+
+Chaque conversation tient un **magasin d'artefacts nommés**, de trois natures :
+
+| Nature | Ce que c'est | Nom | Fichier |
+|---|---|---|---|
+| `table` | un résultat de requête ou un lot de prédiction | `resultat_1`, `resultat_2`… | `.csv` |
+| `figure` | le **code Python** d'une analyse qui a rendu une image | `graphique_1`… | `.py` |
+| `code` | le code Python d'une analyse sans image | `analyse_1`… | `.py` |
+
+`figure` n'est pas l'image, c'est le code qui l'a produite : repeindre un PNG ne
+rend rien, rejouer son code rend une image neuve. Seul le code d'une analyse **qui
+a abouti** entre au magasin — un code qui n'a pas tourné est une tentative, pas un
+artefact.
+
+Le **deuxième** nœud du graphe leur est consacré, juste après celui des questions
+sur l'agent et avant le planificateur. Même mécanique : c'est le modèle qui décide,
+avec deux outils — `lire_un_artefact(nom)` rend le contenu (le code tel quel, la
+tête d'un tableau), `rejouer_un_code(nom, modification)` reprend le code, y applique
+la modification et le **réexécute**. Un rejeu **est** une analyse : il repasse par le
+même bac à sable, sans un garde-fou de moins, et son résultat est lui-même un
+artefact nommé — on peut rejouer un rejeu.
+
+Ce qu'il faut savoir de ce mécanisme :
+
+- **Un fil qui n'a rien produit ne paie pas ce nœud** : le catalogue est vide, les
+  deux outils ne pourraient que refuser, et le nœud se retire **sans appeler le
+  modèle**. Ce n'est pas une optimisation, c'est une précondition.
+- **Ce qui entre dans le prompt est le catalogue, jamais le contenu** — une ligne par
+  artefact. Mesuré sur `scripts/mesure_rappel_dartefact.py`, tokens rendus par le
+  serveur : le prompt du planificateur passe de **1 439 tokens** au premier tour,
+  magasin vide, à **1 911 au huitième** avec sept artefacts — *+472 tokens pour sept
+  objets*, là où leur contenu en pèserait des dizaines de milliers. On injecte
+  l'index, on ouvre à la demande.
+- **Un refus dit lequel des deux cas c'est** : « il n'existe pas » et « il a été
+  évincé du contexte » sont deux refus distincts, et les confondre reviendrait à dire
+  à quelqu'un qu'il n'a jamais demandé ce graphique. Les deux énumèrent ce qui reste.
+- **Une désignation sans artefact est avouée, et le tour continue.** « Reprends le
+  camembert des ports que tu m'avais fait », dans un fil qui n'en porte aucun,
+  n'appelle aucun outil : rien ne dirait qu'il n'a jamais existé. La désignation d'un
+  artefact passé se lit donc **dans le message**, par sa grammaire, et l'absence
+  **dans le catalogue** — hors du modèle. Quand les deux se rencontrent, la réponse
+  s'ouvre sur *« ce qui suit est neuf, pas un rappel »* et la figure est tout de même
+  produite. Le défaut n'est pas de produire, c'est de laisser croire qu'on a retrouvé.
+- **Le catalogue dit aussi ce qui a été évincé.** Un catalogue qui montre ce qui reste
+  sans dire ce qui est sorti fait croire au modèle qu'il voit tout : mesuré, fenêtre
+  de code resserrée à un, « reviens au tout premier graphique » a rejoué le plus
+  récent et l'a présenté comme le premier.
+- Le plafond d'allers-retours du nœud est `DAA_RAPPEL_REQUEST_LIMIT` (`5`).
+
+Le détail — les trois façons de ne pas servir la formulation du modèle, le décor de
+données remonté au rejeu, la compatibilité des anciens manifestes — est dans
+**[ARCHITECTURE §4.12](docs/ARCHITECTURE.md#412-les-artefacts-nommés-dune-conversation--relire-rejouer)**.
+
 ## Mémoire de conversation
 
-Chaque conversation (`conversation_id`) dispose d'un espace de travail qui **persiste les tableaux intermédiaires en CSV** (`DAA_WORKSPACE_DIR`). Aux tours suivants, ces objets sont réexposés : interrogeables comme des sources (« et pour les femmes ? »), réutilisables pour une prédiction (« prédis **ces** lignes ») et **montés dans la sandbox** pour que le code d'analyse généré les relise (`pd.read_csv('/data/resultat_1.csv')`).
+Chaque conversation (`conversation_id`) dispose d'un espace de travail qui **persiste ce qu'elle produit** (`DAA_WORKSPACE_DIR`) — les tableaux en CSV, le code des analyses et des figures en `.py` (section précédente). Aux tours suivants, les tableaux sont réexposés : interrogeables comme des sources (« et pour les femmes ? »), réutilisables pour une prédiction (« prédis **ces** lignes ») et **montés dans la sandbox** pour que le code d'analyse généré les relise (`pd.read_csv('/data/resultat_1.csv')`).
 
 Le **fil lui-même est persisté** au même endroit (`transcript.json`) : la barre latérale de la page de chat liste les conversations précédentes, on en rouvre une pour reprendre où on en était (figures et tableaux compris), on la duplique ou on la supprime. Comme une conversation est un simple dossier, la duplication emporte la mémoire ci-dessus — la copie sait encore « prédire ces lignes » — et la suppression ne laisse aucun CSV orphelin.
 
 ### Ce que l'agent se rappelle vraiment
 
-Moins que ce que la persistance laisse croire, et il vaut mieux le savoir :
+Trois mémoires distinctes, qui ne portent pas à la même distance — et il vaut
+mieux savoir laquelle répond :
 
-- **le transcript n'est jamais renvoyé au modèle** — il sert l'affichage ;
+- **le transcript n'est jamais renvoyé au modèle** (`transcript.json`) — il sert
+  l'affichage, et rien d'autre ;
 - **le contexte conversationnel ne retient qu'UN tour** (`context.json`) : la
-  question précédente, l'action, la source, le code de figure, les features de
-  la dernière prédiction réussie. Deux tours en arrière est déjà oublié ;
-- ce qui remonte vraiment au modèle, c'est **la liste des tableaux
-  intermédiaires** — et c'est elle, et elle seule, qui grossissait sans fin.
+  question précédente, l'action, la source, le dernier code d'analyse, les
+  features de la dernière prédiction réussie. C'est lui qui résout « et pour les
+  femmes ? » ; deux tours en arrière, il a déjà oublié ;
+- **le magasin d'artefacts, lui, porte aussi loin que le fil** (`manifest.json`) :
+  tableaux, code et figures y sont nommés, persistés et **désignables** au tour
+  +10 comme au tour +1, par les deux outils de rappel. C'est la mémoire qui
+  répond à « reprends le graphe de tout à l'heure », et c'est ce que le contexte
+  d'un tour ne savait pas faire — le code d'analyse vivait dans un unique champ
+  écrasé à chaque tour, et seulement réutilisable si la source n'avait pas changé.
+
+Ce qui remonte au modèle, à chaque tour, c'est donc **le catalogue du magasin** —
+une ligne par artefact, jamais son contenu — et c'est lui qui grossissait sans
+fin ; les deux mémoires ci-dessus ne pèsent rien.
 
 ### Ce qui entre dans le contexte est plafonné
 
@@ -293,11 +376,18 @@ envoyés pour 32 768 servis, et l'agent répond « je n'ai pas bien compris ».
 
 Deux plafonds, appliqués **aux trois axes à la fois** (prompt du planificateur,
 montages de la sandbox, catalogue des sources éphémères) — les désaccorder
-donnerait un tableau décrit au modèle mais introuvable à l'exécution :
+donnerait un tableau décrit au modèle mais introuvable à l'exécution. La fenêtre
+se dédouble par nature, et c'est délibéré : un tableau retenu coûte un montage
+`--volume`, une source éphémère et la liste de ses colonnes ; un code retenu coûte
+**une ligne** de catalogue. Les faire partager une fenêtre de huit ferait évincer
+la figure du tour 1 au bout de quatre tours qui produisent chacun un tableau —
+exactement ce qu'on corrige. Le budget de tokens, lui, reste commun et ignore les
+natures : il coupe dans ce qui pèse, les plus anciens d'abord.
 
 | Réglage | Défaut | Ce qu'il borne |
 |---|---|---|
-| `DAA_CONTEXT_ARTIFACT_WINDOW` | `8` | nombre de tableaux réinjectés, les plus récents (`0` = pas de fenêtre) |
+| `DAA_CONTEXT_ARTIFACT_WINDOW` | `8` | nombre de **tableaux** réinjectés, les plus récents (`0` = pas de fenêtre) |
+| `DAA_CONTEXT_CODE_WINDOW` | `8` | nombre de **codes** d'analyse et de figure réinjectés au catalogue (`0` = pas de fenêtre) |
 | `DAA_CONTEXT_TOKEN_BUDGET` | `8000` | taille du prompt du planificateur, décomptée **avant** l'appel (`0` = pas de budget) |
 
 **On plafonne ce qu'on injecte, pas ce qu'on conserve** : les tableaux évincés
@@ -360,9 +450,11 @@ $DAA_WORKSPACE_DIR/
     ├── .locks/               # verrous de CET utilisateur
     └── <conversation_id>/
         ├── transcript.json   # le fil : messages, titre, propriétaire, prédiction en attente
-        ├── manifest.json     # les tableaux intermédiaires mémorisés
+        ├── manifest.json     # le magasin d'artefacts : nom, nature, description, origine
         ├── context.json      # le tour précédent (pour résoudre un ajustement)
-        └── resultat_*.csv    # les tableaux eux-mêmes
+        ├── resultat_*.csv    # les tableaux eux-mêmes
+        ├── graphique_*.py    # le code des analyses qui ont rendu une image
+        └── analyse_*.py      # le code des analyses sans image
 ```
 
 Les deux segments variables passent par le même encodage : tout octet hors
@@ -408,18 +500,21 @@ Les tests marqués `live` (LLM local requis) sont exclus par défaut : `uv run p
 ```
 src/data_analyst_agent/   # package
 ├── orchestrator/         # graphe, plan et ses règles, budget de contexte, mémoire des fils
+│                         #   systeme.py + introspection.py → ④ répondre sur soi-même
+│                         #   rappel.py → ⑤ relire et rejouer un artefact du fil
+│                         #   workspace.py → le magasin d'artefacts ; conversations.py → les fils
 ├── agents/               # ① retrieval  ② analysis  ③ inference
-│                         #   (④ « répondre sur soi-même » vit dans orchestrator/)
 ├── auth/                 # comptes argon2id, sessions côté serveur, anti-force brute
-├── prompts/              # les 5 prompts système, hors du code (.txt)
+├── prompts/              # les 6 prompts système, hors du code (.txt)
 ├── sandbox/              # client durci + image/ (Dockerfile, bridge Jupyter)
 └── api/                  # app.py (HTTP seul) + templates/ (chat, connexion)
-docs/                     # ARCHITECTURE, CADRAGE, AUDIT, VLLM, spike-vanna, surface-conversationnelle
+docs/                     # ARCHITECTURE, CADRAGE, AUDIT, VLLM, spike-vanna,
+                          #   surface-conversationnelle, axes-amelioration
 models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
 sources/                  # catalogue des sources + datasets vendorisés
 scripts/                  # comptes, migration du workspace, seed Postgres, runners de mesure, bancs
 notebooks/                # entraînement des modèles jouets (jupytext .md + .ipynb)
-tests/                    # unit / integration / e2e golden / helpers / fakes / fixtures
+tests/                    # unit / integration / e2e golden / helpers / fakes / catalogues
 var/                      # NON versionné : comptes, sessions, conversations (0o700)
 ```
 

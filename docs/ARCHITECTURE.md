@@ -30,15 +30,16 @@ flowchart TB
     end
 
     subgraph app["data-analyst-agent"]
-        API["API FastAPI (session exigée sauf /health)<br/>/login · /logout · /me · POST /chat<br/>/conversations · GET / · GET /health"]
-        ORCH["Orchestrateur LangGraph<br/>plan → route → capacité → synthèse"]
+        API["API FastAPI (session exigée sauf /health)<br/>/login · /logout · /me · POST /chat<br/>/sources · /conversations · /conversations/…/artefacts<br/>GET / · GET /health"]
+        ORCH["Orchestrateur LangGraph<br/>système → rappel → plan →<br/>route → capacité → synthèse"]
         LLM["Client LLM mutualisé<br/>PydanticAI → OpenAI-compatible"]
 
         subgraph caps["Capacités"]
             RET["① Récupération<br/>catalogue + text-to-SQL à tools"]
             ANA["② Analyse<br/>génération de code stats/viz"]
             INF["③ Inférence gardée<br/>validation → predict déterministe"]
-            SYS["④ Répondre sur soi-même<br/>catalogue · registre · schémas<br/>(zéro LLM)"]
+            SYS["④ Répondre sur soi-même<br/>5 outils de faits<br/>(le modèle décide, les faits tranchent)"]
+            RAP["⑤ Rappeler un artefact du fil<br/>2 outils : relire, rejouer"]
         end
     end
 
@@ -48,15 +49,18 @@ flowchart TB
         PG[("Postgres<br/>multi-tables")]
         FILES[("Fichiers<br/>CSV / Excel via DuckDB")]
         REG[("Registry modèles ML<br/>YAML + joblib")]
+        WS[("Magasin d'artefacts du fil<br/>tableaux · code · figures")]
     end
 
     UI -->|JSON| API --> ORCH
-    ORCH --> RET & ANA & INF & SYS
+    ORCH --> RET & ANA & INF & SYS & RAP
     ORCH -.->|prompts| LLM -.-> OLLAMA
     RET --> PG & FILES
     ANA -->|code Python| SBX
     INF --> REG
     SYS --> REG
+    RAP --> WS
+    RAP -->|rejeu| SBX
 ```
 
 Réponse renvoyée au client : `{answer, artifacts[{mime,data}], plan, error, trace}` —
@@ -183,6 +187,9 @@ taille du corps (`DAA_API_MAX_BODY_BYTES`).
 | `GET` | `/me` | oui | le compte de la session en cours (`{"login": …}`) |
 | `POST` | `/chat` | oui | question → `ChatAnswer` complet (réponse, artefacts, plan, trace, `pending`). Longueur bornée (`DAA_CHAT_MESSAGE_MAX_CHARS`) et débit limité par compte (`DAA_CHAT_RATE_LIMIT_*`) |
 | `GET` | `/` | oui | page de chat (rendu des PNG base64 et des tables JSON, zéro asset externe) |
+| `GET` | `/sources` | oui | le catalogue déclaré, **augmenté de ce qu'on lit dans chaque source** (tables, lignes, période) — alimente le menu de la page de chat (§4.11) |
+| `POST` | `/conversations` | oui | ouvre un fil vide, pour choisir sa source avant la première question |
+| `PUT` | `/conversations/{id}/source` | oui | fixe la source de travail du fil sans avoir à la taper ; seule une source **déclarée** est acceptée (§4.11) |
 | `GET` | `/conversations` | oui | **ses** résumés (id, titre, horodatages, nb de messages), du plus récent au plus ancien |
 | `GET` | `/conversations/{id}` | oui | le fil complet — messages, artefacts et `pending` : de quoi reprendre où on en était |
 | `GET` | `/conversations/{id}/artefacts` | oui | le **catalogue** des artefacts du fil — nom, nature, description, question d'origine, et `retenu` (dans le contexte, ou évincé). Jamais leur contenu |
@@ -287,6 +294,22 @@ est la seule chose à lire pour connaître leur ordre, qui est significatif. Une
 rend soit rien (le plan continue), soit la question à poser, qui court-circuite les
 suivantes.
 
+**Ce que le planificateur n'a pas le droit de faire, et qui n'est pas une règle.**
+Pour une feature à valeurs autorisées, son prompt lui impose deux temps :
+*traduire* d'abord ce que l'utilisateur a dit vers la valeur autorisée qui le
+désigne (« 1re classe » → `pclass=1`, « embarquée à Southampton » →
+`embarked='S'`) ; et, si **aucune** valeur autorisée ne désigne ce qu'il a dit
+(« 4e classe », « embarquée à Marseille »), transmettre la sienne **telle qu'il
+l'a écrite** — `pclass=4`, `embarked='Marseille'`. Jamais la valeur autorisée la
+plus proche, jamais un champ vide ou omis. Substituer une valeur *légale* à une
+valeur *impossible* rendrait une prédiction plausible sur un individu que
+l'utilisateur n'a pas décrit, et rien dans la réponse ne le dirait ; l'omettre la
+ferait redemander comme si elle n'avait pas été donnée. C'est le système qui
+refuse, en citant ce que l'utilisateur a écrit — même interdit que celui que
+`coerce_values` respecte à l'autre bout (§4.6). La consigne vit dans
+`prompts/planner.txt` et non dans une règle, parce qu'elle porte sur ce que le
+modèle **extrait**, pas sur le plan une fois rendu.
+
 Ces règles ajustent un plan que le LLM a **déjà** rendu : l'aller-retour est derrière
 elles. C'est pourquoi le cas « question sur le système » ne pouvait pas y être traité
 — il fallait une étape *avant*, et non une règle de plus
@@ -355,6 +378,15 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   l'adaptateur Postgres via **pg8000** (BSD — psycopg est LGPL, écarté par la règle
   licences) ; les résultats normalisés (`Decimal`→float, dates→ISO) et tronqués à
   `retrieval_max_rows`.
+  `to_markdown()` est ce que le **modèle lit** (le retour de `run_sql`), et une
+  **ligne unique y est rendue verticalement**, un couple par ligne. Ce n'est pas une
+  préférence d'écriture : un tableau d'une seule ligne oblige à aligner de tête six
+  en-têtes et six valeurs, et c'est une lecture que le modèle en service rate.
+  Mesuré sur « quelles colonnes de `passengers` ont des valeurs manquantes ? » — le
+  SQL était devenu juste, `0 | 177 | 0 | 0 | 0 | 2` sous six en-têtes, et le modèle
+  nommait `name`, mesuré à 0. Deux reformulations du prompt n'y avaient rien changé :
+  le défaut était dans ce qu'on donnait à lire. C'est le seul consommateur de
+  `to_markdown` — ce que voit l'utilisateur est un artefact à part, il ne bouge pas.
 - `duckdb_excel.py` — ce que DuckDB requête, par deux portes. `from_file` : CSV
   nativement (`read_csv_auto`), Excel lu par pandas/openpyxl puis chaque feuille
   enregistrée comme table DuckDB (une feuille = une table, jointures inter-feuilles
@@ -373,6 +405,15 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   `run_sql`). Une erreur SQL revient au modèle en texte pour self-correction ;
   `UsageLimits` borne les allers-retours. Renvoie le SQL exécuté, le résultat, le
   résumé en français et la trace des tentatives.
+  Son prompt nomme **trois** familles de question, et non deux : lister des lignes,
+  calculer un agrégat, et *décrire une table sans la lire ligne à ligne* — compter
+  les trous, les distincts, les extrêmes de **chaque** colonne. La troisième
+  manquait, et une question qui y tombait partait soit en `SELECT *` (179 lignes
+  rendues au lieu d'une liste de colonnes, sous vLLM), soit en une requête **par
+  colonne** — six requêtes dont quatre en erreur, dix allers-retours, 73,4 s et le
+  plafond épuisé sous Ollama, puis une réponse tirée du schéma au lieu de la mesure.
+  La consigne est donc *UNE requête, UNE ligne, TOUTES les colonnes*, avec le rappel
+  que le schéma dit ce qui est **possible** quand seule la mesure dit ce qui **est**.
 
 ### 4.5 `agents/analysis/` — capacité ② Analyse
 
@@ -396,7 +437,23 @@ agrégat calculé dessus étant faux sans en avoir l'air. Les figures reviennent
   partiel comme formulaire complet) et renvoie des anomalies **structurées** :
   `manquant`, `hors_bornes`, `valeur_non_autorisee`, `type_invalide`,
   `champ_inconnu` — plus la question de relance en français. **Pas de predict tant
-  que ça ne valide pas.**
+  que ça ne valide pas.** Deux passes précèdent le schéma : `align_keys()` rapproche
+  les noms, et `coerce_values()` convertit les valeurs **textuelles** vers le type
+  attendu. Cette seconde passe répare un écart entre moteurs : sur la même question,
+  Ollama rend `pclass=1` et vLLM `pclass='1'`, et la prédiction aboutissait chez
+  l'un, était refusée chez l'autre. La cause n'est pas que vLLM rendrait ses
+  arguments en chaînes — sur un tool dont le JSON Schema **déclare** un type, les
+  deux serveurs s'accordent (mesuré, [VLLM.md](VLLM.md) §8.4) ; c'est que
+  `Plan.features` est un `dict[str, Any]`, soit `additionalProperties: true`, **le
+  seul argument d'outil du système qui arrive sans type annoncé**. Pydantic rattrape
+  déjà `int`/`float` en mode souple, mais pas un `Literal[1, 2, 3]`, qui compare des
+  valeurs. La conversion vit donc ici, à la frontière, devant les trois schémas —
+  aucun n'a à s'en soucier, ni le prochain ; et elle ne peut pas vivre plus tôt,
+  puisque le type attendu d'une feature n'existe nulle part avant ce module. Ce
+  n'est pas un relâchement : on ne convertit que des chaînes, que vers un type sans
+  ambiguïté, et une chaîne illisible est laissée **telle quelle** pour que le schéma
+  refuse en citant ce qui a été écrit — `pclass='4'` devient `4` et reste refusé,
+  `pclass='abc'` reste `'abc'` et reste refusé aussi.
 - `correspondance.py` — **quelle colonne d'une source porte quelle feature**, lu
   dans le bloc `features` que la source déclare au catalogue (§4.4). Trois usages,
   et c'est ce qui distingue une déclaration d'un paragraphe de documentation : la
@@ -495,8 +552,11 @@ docker build -t data-analyst-agent-sandbox:0.1 src/data_analyst_agent/sandbox/im
 
 ### 4.9 `prompts/` — les prompts système, hors du code
 
-Les quatre prompts (planificateur, agent SQL, agent d'analyse, synthèse) sont des
-fichiers `.txt` servis par un chargeur de trente lignes, sur le modèle d'`api/pages.py`.
+Les six prompts — planificateur, agent SQL, agent d'analyse, synthèse, agent
+système (§4.10) et agent de rappel (§4.12) — sont des fichiers `.txt` servis par un
+chargeur de trente lignes, sur le modèle d'`api/pages.py`. Les deux derniers sont
+arrivés avec leurs nœuds : un nœud à outils reconnaît son sujet par son prompt, et
+c'est donc là qu'on ajuste ce qu'il attrape.
 Ce dépôt est un socle : le prompt est le premier endroit qu'on voudra adapter par cas
 d'usage, et il ne doit pas demander une modification de source.
 
@@ -931,9 +991,11 @@ d'avant.
    dont le nombre de conteneurs simultanés est plafonné.
 4. **Prédiction** : features validées par schéma strict (`extra="forbid"`), aucune
    valeur inventée, relance sinon.
-5. **LLM** : boucles bornées partout (`retrieval_request_limit`,
-   `analysis_max_attempts`) ; le planificateur ne choisit que dans les listes
-   fournies ; le contexte injecté est plafonné et la coupe s'annonce (§8).
+5. **LLM** : boucles bornées partout — `retrieval_request_limit`,
+   `analysis_max_attempts`, et les deux nœuds à outils placés en tête de **chaque**
+   question, `systeme_request_limit` (§4.10) et `rappel_request_limit` (§4.12) ;
+   le planificateur ne choisit que dans les listes fournies ; le contexte injecté
+   est plafonné et la coupe s'annonce (§8).
 6. **Surface HTTP** : documentation interactive éteinte, corps de requête borné,
    longueur de question bornée, débit de `/chat` limité par compte (§7).
 7. **Erreurs** : l'utilisateur reçoit une phrase et une référence d'incident ; le
@@ -951,7 +1013,9 @@ tests/
 ├── integration/   # Docker : sandbox réelle, Postgres testcontainers, artefacts ML réels
 ├── e2e/           # les scénarios golden, du message à la réponse (LLM scripté)
 ├── fakes/         # faux bridge de sandbox (protocole, sans conteneur)
-└── helpers/       # ScriptedLLM (réponses par agent), doublures, seed + oracle Titanic
+├── helpers/       # ScriptedLLM (réponses par agent), doublures, seed + oracle Titanic
+└── catalogues/    # catalogues et oracles des runners hors suite : ambiguite/,
+                   #   deux-dates/, realiste/, trois-types/
 ```
 
 - Le **LLM est scripté** dans toute la suite (déterminisme, zéro réseau en CI) : le
@@ -969,8 +1033,14 @@ tests/
   `scripts/mesure_surface_conversationnelle.py` (la batterie de questions **sur le
   système**, oracle tiré des sources de vérité et compteur d'appels LLM —
   [surface-conversationnelle.md](surface-conversationnelle.md)),
-  `scripts/mesure_choix_de_source.py` (le parcours multi-tours du choix de source) et
-  `scripts/mesure_trois_types_de_source.py` (**les trois types de source à la fois** —
+  `scripts/mesure_choix_de_source.py` (le parcours multi-tours du choix de source),
+  `scripts/mesure_rappel_dartefact.py` (la profondeur d'un rappel : rejouer une
+  figure au tour +2 et au tour +5, §4.12) et `scripts/mesure_artefact_absent.py`
+  (l'aveu d'un artefact désigné et jamais produit),
+  `scripts/mesure_ambiguite_de_source.py`, `scripts/mesure_releve_des_sources.py`,
+  `scripts/mesure_typage_des_arguments_d_outil.py` (l'écart de typage entre moteurs,
+  §4.6), `scripts/mesure_contexte.py` (ce qu'une conversation injecte, tour après
+  tour) et `scripts/mesure_trois_types_de_source.py` (**les trois types de source à la fois** —
   `postgres`, `file` et `duckdb` dans le même catalogue et la même conversation,
   oracle porté par des volumétries franchement distinctes : 837 / 111 / 40 052, si
   bien qu'une réponse qui prend le chiffre d'une autre source est *fausse* et non
@@ -983,10 +1053,10 @@ tests/
 ## 7. Configuration (`DAA_*`)
 
 Tout se règle par variable d'environnement ou par `.env` ; `Settings`
-(pydantic-settings) est la source de vérité, ce tableau la reflète. Les tables
-sont découpées par domaine parce qu'il y en a désormais une quarantaine — le
-tableau plat en avait ignoré seize (authentification, surface HTTP, débit,
-plafonds de la sandbox).
+(pydantic-settings) est la source de vérité, ce tableau la reflète : **49 champs**,
+tous présents ci-dessous. Les tables sont découpées par domaine parce qu'ils sont
+devenus trop nombreux pour un tableau plat — celui-ci en avait ignoré seize
+(authentification, surface HTTP, débit, plafonds de la sandbox).
 
 ### LLM mutualisé
 
@@ -1048,7 +1118,7 @@ plafonds de la sandbox).
 |---|---|---|
 | `DAA_API_DOCS_ENABLED` | `false` | `/docs`, `/redoc`, `/openapi.json`. **Éteints par défaut** : ils décrivent la surface d'attaque à qui atteint le port, et chargent Swagger/ReDoc depuis un CDN — qu'un déploiement au réseau coupé ne peut de toute façon pas servir |
 | `DAA_API_MAX_BODY_BYTES` | `65536` | taille maximale du corps d'une requête, tous chemins confondus |
-| `DAA_CHAT_MESSAGE_MAX_CHARS` | `4000` | longueur maximale d'une question : `POST /chat` déclenche jusqu'à 11 appels LLM et un conteneur Docker |
+| `DAA_CHAT_MESSAGE_MAX_CHARS` | `4000` | longueur maximale d'une question : un seul `POST /chat` peut déclencher **jusqu'à 23 appels LLM** et un conteneur Docker. Le chemin le plus long additionne les plafonds des nœuds traversés — système `6` + rappel `5` + plan `1` + récupération `10` + synthèse `1` ; le commentaire de `config.py` en annonce encore 11, chiffre d'avant les deux nœuds à outils |
 | `DAA_CHAT_RATE_LIMIT_REQUESTS` | `20` | requêtes `POST /chat` par fenêtre et **par compte** |
 | `DAA_CHAT_RATE_LIMIT_WINDOW` | `60.0` s | largeur de la fenêtre glissante de débit |
 
@@ -1069,9 +1139,9 @@ l'environnement du process par `export_env_file()`. Modèle dans `.env.example`.
 
 ## 8. Limites connues et pistes V2
 
-- **Mémoire conversationnelle limitée à UN tour**, et non « au slot-filling »
-  comme l'annonçait cette section : `ConversationContext` est reconstruit à
-  chaque `record_turn`, il n'accumule pas. Ce qui remonte au modèle, c'est le
+- **Le CONTEXTE conversationnel est limité à UN tour** — le magasin d'artefacts,
+  lui, porte aussi loin que le fil (§4.12), et c'est la distinction à tenir :
+  `ConversationContext` est reconstruit à chaque `record_turn`, il n'accumule pas. Ce qui remonte au modèle, c'est le
   tour précédent (question, capacité, source, code de figure, features de la
   dernière prédiction réussie) — deux tours en arrière est déjà oublié. Le
   transcript, lui, n'est jamais renvoyé au modèle. Les références anaphoriques
@@ -1081,8 +1151,10 @@ l'environnement du process par `export_env_file()`. Modèle dans `.env.example`.
   tableaux intermédiaires sont réinjectés sur trois axes (prompt du
   planificateur, montages de la sandbox, catalogue effectif) et le même
   plafond s'applique aux trois — fenêtre glissante
-  (`DAA_CONTEXT_ARTIFACT_WINDOW`) puis budget de tokens décompté avant l'appel
-  (`DAA_CONTEXT_TOKEN_BUDGET`), les plus anciens évincés en premier. Les
+  (`DAA_CONTEXT_ARTIFACT_WINDOW` pour les tableaux, `DAA_CONTEXT_CODE_WINDOW`
+  pour le code d'analyse et de figure, §4.12) puis budget de tokens décompté
+  avant l'appel (`DAA_CONTEXT_TOKEN_BUDGET`), les plus anciens évincés en
+  premier. Le budget, lui, est commun et ignore les natures. Les
   tableaux évincés restent sur le disque. La coupe est portée par la trace
   (`prompt_tokens`, `server_prompt_tokens`, `truncated`, `truncation`) et
   ajoutée à la réponse rendue. **Limite restante** : seul le prompt du
