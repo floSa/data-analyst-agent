@@ -111,6 +111,41 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 - **Statut** : **Corrigé** (deux fois). Détail et rejeux :
   [surface-conversationnelle.md](surface-conversationnelle.md) §9 à §11.
 
+### Le plafond d'allers-retours de l'agent système était serré sous Ollama
+
+- **Où** : [`config.py`](../src/data_analyst_agent/config.py), `systeme_request_limit` ;
+  [`orchestrator/systeme.py`](../src/data_analyst_agent/orchestrator/systeme.py),
+  `run_systeme`.
+- **Constat** : une question méta sur trente-six — « sur quoi je peux travailler ? » —
+  échouait **sous Ollama** par épuisement du plafond (`request_limit of 4`), pas par
+  erreur, et retombait dans le repli du planificateur. Sous vLLM elle passait. Signalé
+  aux §15.7, §18 et §19.11 de la surface conversationnelle, jamais traité : le plafond
+  est en tête de *chaque* tour, et le monter au jugé se paie sur toutes les questions.
+- **Ce que la mesure a montré, et qui n'était pas prévu** : ce n'est pas une boucle.
+  La question ouvre sur tous les sujets à la fois, et les deux moteurs y répondent
+  différemment — vLLM ouvre **un** outil, Ollama en ouvre **cinq** (capacités,
+  sources, deux fois le schéma, modèles), soit six allers-retours avec la
+  formulation. Sondée seule à 6, 8 puis 12, elle coûte 6 à chaque fois : le chemin
+  converge. Un plafond plus haut n'aurait donc rien laissé filer.
+- **Mesuré** — batterie complète, 36 questions méta et 4 témoins, sur les deux
+  moteurs (`scripts/mesure_surface_conversationnelle.py`) :
+
+  | Plafond | vLLM — méta | appels LLM | Ollama — méta | appels LLM |
+  |---|---|---|---|---|
+  | 4 | 36/36 | 78 | **35/36** | 83 |
+  | 5 | 36/36 | 78 | **35/36** | 84 |
+  | **6** | **36/36** | **78** | **36/36** | **83** |
+
+  Témoins à 4/4 et 17 appels dans les six exécutions.
+- **Corrigé** (C26) : `systeme_request_limit = 6`. C'est la plus basse valeur qui rend
+  36/36 sur les **deux** moteurs — 5 échoue encore — et elle est **gratuite** : même
+  total qu'à 4 sur les deux moteurs, et pas une seule question dont le coût bouge. Un
+  plafond n'est pas un budget dépensé, c'est un budget disponible, et seule la
+  question qui en a besoin le touche. L'atteindre coûtait d'ailleurs *plus* cher que
+  de réussir : l'échec ajoute le tour du planificateur et celui de la synthèse — d'où
+  les 84 appels du plafond 5, le plus cher et le moins bon des trois.
+- **Statut** : **Traité** (C26, 2026-09-15).
+
 ### La capacité système n'est pas dans `Capability`, et ne doit pas y revenir sans mesure
 
 - **Où** : [`orchestrator/plan.py`](../src/data_analyst_agent/orchestrator/plan.py)
@@ -493,6 +528,9 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 | — | Catalogue limité à `postgres` et `file` | **Corrigé** | Un troisième type `duckdb`, qui apporte les clés étrangères qu'aucun fichier ne déclare. Mesuré 6/6 sur les trois types à la fois |
 | — | Relevé jamais rafraîchi | **Corrigé** | Était : une source revenue restait « non relevée » toute la session. Devenue re-tentée au bout de 30 s, et périmée au bout de 15 min |
 | — | Relevé non borné en temps | **Corrigé** | Était : une source muette bloquait l'inventaire sans plafond (mesuré : > 75 s). Devenue dégradée en injoignable au bout de 10 s |
+| — | Plafond de l'agent système serré sous Ollama | **Corrigé** | Était : 35/36 sous Ollama, une question perdue par épuisement du plafond. Devenu 36/36 sur les deux moteurs, pour le même nombre d'appels |
+| — | Période lue sur la première colonne de date venue | **Corrigé** | La source désigne sa colonne de référence ; une désignation fausse se dit au lieu de retomber en silence |
+| — | Correspondance déclarée jamais relue contre la source | **Corrigé** | Était : une colonne déclarée inexistante était silencieusement réparée par l'agent SQL (4 tirages sur 4), ou rendait une erreur qui accusait les données. Refusée avant la requête, 2 appels au lieu de 5 |
 | P1 | Migration des conversations réelles jamais exécutée | Ouvert | Les fils existants restent hors de l'arborescence par utilisateur |
 | P1 | Aucun fichier `LICENSE` | Ouvert | L'annonce MIT du README est sans portée |
 | P2 | argon2 non plafonné face au pool de threads | Ouvert | Une rafale de connexions réserve ~2,5 Gio |
