@@ -18,7 +18,7 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 ### L'anti-force brute compte par adresse, et l'adresse disparaît derrière un frontal
 
-- **Où** : [`api/app.py:264`](../src/data_analyst_agent/api/app.py)
+- **Où** : [`api/app.py:320`](../src/data_analyst_agent/api/app.py)
 - **Constat** :
   ```python
   adresse = request.client.host if request.client else "inconnue"
@@ -34,7 +34,7 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 ### Le plafond de corps ne voit pas une requête en `chunked`
 
-- **Où** : [`api/app.py:229`](../src/data_analyst_agent/api/app.py)
+- **Où** : [`api/app.py:285`](../src/data_analyst_agent/api/app.py)
 - **Constat** :
   ```python
   annonce = request.headers.get("content-length", "")
@@ -285,10 +285,57 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 - **Statut** : **Traité** (C26, 2026-09-15). Relevé en mesurant C23, hors de son
   périmètre.
 
+### Le code d'une analyse n'était pas un artefact, et ne survivait pas un tour
+
+- **Où** : [`orchestrator/workspace.py:566`](../src/data_analyst_agent/orchestrator/workspace.py)
+  (`last_code_for`), [`orchestrator/rappel.py`](../src/data_analyst_agent/orchestrator/rappel.py)
+- **Constat** : la mémoire d'une conversation persistait les **tableaux** ; le code
+  d'analyse, lui, vivait dans un unique `ConversationContext.last_code` **écrasé à
+  chaque tour**, et n'était réutilisable que si la source du tour suivant était la
+  même (`last_code_for`). Les figures n'étaient pas persistées du tout.
+- **Problème** : « mets les barres en bleu » juste après un graphique marchait ; la
+  même phrase **deux tours plus tard** ne trouvait plus rien, et rien ne le disait —
+  le planificateur fabriquait une figure neuve, correcte, présentée comme une
+  reprise. C'est le pire des trois cas : ni erreur, ni refus, une réponse fausse qui
+  ressemble à la bonne.
+- **Corrigé** (C24) : un **magasin unique à trois natures** (`table`, `code`,
+  `figure`), chaque objet nommé, décrit et persisté au manifeste ; un nœud `rappel`
+  à deux outils (`lire_un_artefact`, `rejouer_un_code`) placé entre le nœud système
+  et le planificateur ; une fenêtre de contexte propre au code
+  (`DAA_CONTEXT_CODE_WINDOW`), distincte de celle des tableaux — les faire partager
+  une fenêtre de huit ferait évincer la figure du tour 1 au bout de quatre tours qui
+  produisent chacun un tableau, c'est-à-dire exactement le défaut qu'on corrige.
+- **Mesuré** sur `scripts/mesure_rappel_dartefact.py`, huit tours, `titanic` en
+  Postgres, figures réellement exécutées en bac à sable, sur les **deux** moteurs :
+  - tour 4, « reprends le graphe de tout à l'heure et mets les barres en bleu »
+    **deux questions sans rapport après la figure** — le cas que `last_code`, écrasé
+    deux fois, ne pouvait pas servir : `rejeu de graphique_1` sur vLLM **et** sur
+    Ollama ;
+  - tour 7, « reviens au tout premier graphique » **cinq tours et une autre figure
+    plus loin**, donc un catalogue où deux `graphique_N` se disputent la
+    désignation : les deux moteurs choisissent `graphique_1` ;
+  - le coût du catalogue dans le prompt : **1 439 tokens** au tour 1, magasin vide,
+    **1 911 au tour 8** avec sept artefacts — *+472 tokens pour sept objets*, tokens
+    rendus par le serveur et non estimés. Le contenu n'entre jamais dans le prompt.
+- **Ce que la mesure a trouvé en chemin, et qui a été corrigé ensuite** (C25) : le
+  tour 8 — « remontre-moi le camembert des ports que tu avais fait », dans un fil qui
+  n'en porte aucun — échouait sur les deux moteurs. Aucun outil n'est appelé, donc
+  aucun refus ne part, et la figure neuve passe pour un rappel. La désignation d'un
+  artefact passé se lit désormais **dans le message** (grammaire) et l'absence
+  **dans le catalogue**, hors du modèle ; quand les deux se rencontrent, l'aveu est
+  mis en tête et le tour continue.
+- **Ce qui reste ouvert** : le tour 5 (« le premier tableau que tu m'as sorti, redis-moi
+  ce qu'il y avait dedans ») est capté par le nœud **système** sous Ollama, pas sous
+  vLLM — instruit en
+  [surface-conversationnelle §20.10](surface-conversationnelle.md).
+- **Statut** : **Traité** (C24 puis C25, 2026-09-15). Détail :
+  [ARCHITECTURE §4.12](ARCHITECTURE.md#412-les-artefacts-nommés-dune-conversation--relire-rejouer),
+  [surface-conversationnelle §20 et §21](surface-conversationnelle.md).
+
 ### Deux politiques différentes face à un fichier corrompu
 
-- **Où** : [`orchestrator/workspace.py:471`](../src/data_analyst_agent/orchestrator/workspace.py)
-  (`_load`) contre [`orchestrator/conversations.py:165`](../src/data_analyst_agent/orchestrator/conversations.py) (`load`)
+- **Où** : [`orchestrator/workspace.py:582`](../src/data_analyst_agent/orchestrator/workspace.py)
+  (`_load`) contre [`orchestrator/conversations.py:161`](../src/data_analyst_agent/orchestrator/conversations.py) (`load`)
 - **Problème** : `ConversationStore.load()` tolère un fichier illisible et rend `None` ;
   `_load()` du manifeste ne le tolère pas et lève. Depuis le passage aux écritures
   atomiques, la corruption ne peut plus venir d'une interruption — mais elle peut venir
@@ -377,7 +424,7 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 ### `list()` ouvre et valide tous les fils pour n'en rendre qu'un résumé
 
-- **Où** : [`orchestrator/conversations.py:168`](../src/data_analyst_agent/orchestrator/conversations.py)
+- **Où** : [`orchestrator/conversations.py:175`](../src/data_analyst_agent/orchestrator/conversations.py)
 - **Constat** :
   ```python
   for dossier in self.base_dir.iterdir():
@@ -392,7 +439,7 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 ### `fit_to_budget` est en O(n²) dans le cas dégénéré
 
-- **Où** : [`orchestrator/workspace.py:374`](../src/data_analyst_agent/orchestrator/workspace.py)
+- **Où** : [`orchestrator/workspace.py:485`](../src/data_analyst_agent/orchestrator/workspace.py)
 - **Problème** : la boucle recalcule `describe()` en entier à chaque objet retiré.
   **Mesuré : 126 ms pour 1 000 objets**, fenêtre d'artefacts désactivée et budget serré.
   Avec la fenêtre par défaut (8), la boucle fait au plus huit tours et le cas ne se
@@ -448,7 +495,7 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 ### Seul le prompt du planificateur est budgété
 
-- **Où** : [`orchestrator/graph.py:534`](../src/data_analyst_agent/orchestrator/graph.py)
+- **Où** : [`orchestrator/graph.py:753`](../src/data_analyst_agent/orchestrator/graph.py)
   (`_peser_le_prompt`)
 - **Problème** : l'agent SQL, l'agent d'analyse et la synthèse ne décomptent aucun budget.
   Ils restent bornés par leurs limites d'allers-retours, mais un dépassement chez eux
@@ -459,7 +506,7 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 ### `safe_dir_name` distingue la casse
 
-- **Où** : [`orchestrator/workspace.py:275`](../src/data_analyst_agent/orchestrator/workspace.py)
+- **Où** : [`orchestrator/workspace.py:351`](../src/data_analyst_agent/orchestrator/workspace.py)
 - **Problème** : `A` et `a` produisent deux noms de dossier distincts, qui collisionneraient
   sur un système de fichiers insensible à la casse (macOS, Windows). Sans effet ici — les
   logins sont repliés en amont par `normalize_login`, et les identifiants de conversation
@@ -472,7 +519,8 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 ### Les prompts sont sortis du code mais restent dans le paquet
 
 - **Où** : [`prompts/`](../src/data_analyst_agent/prompts)
-- **Problème** : les quatre prompts sont éditables sans toucher au code, mais ils vivent
+- **Problème** : les six prompts (planificateur, agent SQL, agent d'analyse, synthèse,
+  agent système, agent de rappel) sont éditables sans toucher au code, mais ils vivent
   dans le wheel. Un déploiement ne peut pas les adapter à son cas d'usage sans réinstaller.
   Sur un socle destiné à plusieurs cas d'usage clients, c'est la limite qu'on rencontrera
   en premier.
@@ -530,6 +578,8 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 | — | Relevé non borné en temps | **Corrigé** | Était : une source muette bloquait l'inventaire sans plafond (mesuré : > 75 s). Devenue dégradée en injoignable au bout de 10 s |
 | — | Plafond de l'agent système serré sous Ollama | **Corrigé** | Était : 35/36 sous Ollama, une question perdue par épuisement du plafond. Devenu 36/36 sur les deux moteurs, pour le même nombre d'appels |
 | — | Période lue sur la première colonne de date venue | **Corrigé** | La source désigne sa colonne de référence ; une désignation fausse se dit au lieu de retomber en silence |
+| — | Code d'analyse non persisté, reprise impossible au-delà d'un tour | **Corrigé** | Était : « mets les barres en bleu » deux tours plus tard fabriquait une figure neuve présentée comme une reprise. Devenu un magasin d'artefacts nommés — rejeu réussi au tour +2 et au tour +5 sur les deux moteurs, pour +472 tokens de prompt à sept artefacts |
+| — | Un artefact désigné et jamais produit ne se disait pas | **Corrigé** | Était : 0/2 moteurs sur « remontre-moi le camembert que tu avais fait ». L'absence est avouée en tête de réponse, et le tour continue |
 | — | Correspondance déclarée jamais relue contre la source | **Corrigé** | Était : une colonne déclarée inexistante était silencieusement réparée par l'agent SQL (4 tirages sur 4), ou rendait une erreur qui accusait les données. Refusée avant la requête, 2 appels au lieu de 5 |
 | P1 | Migration des conversations réelles jamais exécutée | Ouvert | Les fils existants restent hors de l'arborescence par utilisateur |
 | P1 | Aucun fichier `LICENSE` | Ouvert | L'annonce MIT du README est sans portée |

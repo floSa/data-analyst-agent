@@ -80,6 +80,23 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 - À ne pas confondre avec les **modèles ML métier** (Titanic/Iris/California) : artefacts scikit-learn séparés, appelés par ③, sans LLM dans le calcul.
 - Qwen3-Coder-Next (80B MoE) écarté : ne tient ni sur la 4060 Ti ni sur la L4.
 
+> **Note de relecture (2026-09-15) — la seule décision de cadrage que les faits ont
+> démentie.** Ce document est historique et n'est pas réécrit ; cette section fait
+> exception parce qu'elle décrit un choix qui n'a jamais eu lieu. **`qwen3-coder:30b`
+> n'a jamais été chargé sur le service central**, et le repli du code qui le désignait
+> échouait en `404 model not found` — le masquage des erreurs ne laissant qu'un « je
+> n'ai pas réussi à interpréter la demande » dans la réponse. Le modèle réellement
+> servi, et le défaut du code depuis, est **`gemma4:e4b`**
+> ([`config.py:52-57`](../src/data_analyst_agent/config.py)) ; le `.env` reste maître.
+> Le raisonnement de cette section — *un seul modèle pour tout ce qui est langage* —
+> tient, et c'est lui qu'il faut lire ici ; le nom du modèle, non. Deux conséquences
+> ont suivi et sont documentées ailleurs : le **moteur** n'est plus nommé dans le code
+> (l'application ne parle que `/v1/chat/completions`, `DAA_LLM_BASE_URL` suffit à
+> passer d'Ollama à vLLM — [ARCHITECTURE §4.3](ARCHITECTURE.md#43-llmpy--configpy--llm-mutualisé-et-réglages),
+> [VLLM.md](VLLM.md)), et la licence du modèle servi est **déclarée par le modèle
+> lui-même**, donc à revérifier à chaque changement (voir le tableau des licences du
+> [README](../README.md#licences--composants)).
+
 ## 6. La sandbox (capacité ② et exécution de code)
 
 | Aspect | Décision |
