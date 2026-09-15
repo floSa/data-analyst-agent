@@ -47,12 +47,14 @@ from data_analyst_agent.auth.rate_limit import RateLimiter
 from data_analyst_agent.auth.sessions import TOKEN_BYTES, Session, SessionStore
 from data_analyst_agent.auth.throttle import LoginThrottle
 from data_analyst_agent.config import Settings, get_settings
+from data_analyst_agent.orchestrator.context_budget import ContextLimits
 from data_analyst_agent.orchestrator.conversations import (
     Conversation,
     ConversationStore,
     ConversationSummary,
 )
 from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator, SourceDuCatalogue
+from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 
 # Les seules routes atteignables sans session. `/health` parce qu'une sonde n'en
 # a pas ; `/login` parce qu'il faut bien une porte pour en obtenir une.
@@ -72,6 +74,11 @@ ECHEC_CONNEXION = "Identifiants invalides."
 ECHEC_VERROUILLE = "Trop de tentatives. Réessayez dans quelques minutes."
 ECHEC_FORMULAIRE = "Formulaire expiré. Recommencez."
 SOURCE_INCONNUE = "source inconnue"
+# Un artefact introuvable, ÉVINCÉ ou appartenant à quelqu'un d'autre : le
+# même 404 et le même mot, parce qu'un message différent par cas dirait à un
+# inconnu lequel des trois il vient de toucher. Le détail — existe mais
+# évincé — se dit en conversation, dans un fil dont on est le propriétaire.
+ARTEFACT_INCONNU = "artefact inconnu"
 CORPS_TROP_GROS = "corps de requête trop volumineux"
 MESSAGE_TROP_LONG = "message trop long"
 TROP_DE_REQUETES = "trop de questions en peu de temps : réessayez dans un instant"
@@ -90,6 +97,31 @@ class ChatRequest(BaseModel):
     # de la session, jamais du corps de la requête. Un champ inconnu envoyé par
     # un client est ignoré par pydantic, et le magasin réécrit de toute façon
     # l'`owner` de ce qu'il persiste.
+
+
+class ArtefactDuFil(BaseModel):
+    """Un artefact du fil, tel que la page a besoin de le lister.
+
+    Le CONTENU n'y est pas : lister n'est pas ouvrir, et une liste qui
+    porterait le code de chaque figure pèserait ce qu'on cherche justement à ne
+    pas transporter. Il s'obtient par la route de lecture, un artefact à la fois.
+    """
+
+    name: str
+    kind: str
+    description: str
+    question: str
+    retenu: bool  # dans le contexte du prochain tour, ou évincé par les plafonds
+
+
+class ContenuDArtefact(BaseModel):
+    """Le contenu d'UN artefact : le code Python, ou la tête du tableau."""
+
+    name: str
+    kind: str
+    description: str
+    question: str
+    content: str
 
 
 class SourceDeTravailRequest(BaseModel):
@@ -454,6 +486,77 @@ def create_app(
             conversation_id=conversation_id,
             source_de_travail=requete.source,
             message=annonce,
+        )
+
+    def _espace_du_fil(utilisateur: CurrentUser, conversation_id: str) -> ConversationWorkspace:
+        """Le magasin d'artefacts d'un fil DONT ON EST LE PROPRIÉTAIRE.
+
+        Le cloisonnement est un chemin, pas un filtre : le workspace est ouvert
+        sous ``magasin.base_dir``, c'est-à-dire sous la racine de l'appelant. Le
+        fil d'un autre compte n'est donc pas « refusé », il n'existe pas de là
+        où on regarde — et le 404 qu'on rend est le MÊME que celui d'un
+        identifiant inventé. C'est délibéré : un 403 confirmerait l'existence du
+        fil, et cette fuite-là est gratuite à éviter (cf. l'en-tête de
+        ``orchestrator/conversations``).
+
+        La transcription est chargée d'abord, et pas seulement par prudence :
+        sans elle, un identifiant quelconque rendrait un workspace vide plutôt
+        qu'un 404, et « ce fil n'existe pas » deviendrait indiscernable de « ce
+        fil n'a rien produit ».
+        """
+        magasin = store(utilisateur)
+        if magasin.load(conversation_id) is None:
+            raise HTTPException(status_code=404, detail="conversation inconnue")
+        return ConversationWorkspace(
+            magasin.base_dir,
+            conversation_id,
+            limits=ContextLimits.from_settings(reglages),
+        )
+
+    @app.get("/conversations/{conversation_id}/artefacts", response_model=list[ArtefactDuFil])
+    def lister_les_artefacts(conversation_id: str, utilisateur: Utilisateur) -> list[ArtefactDuFil]:
+        """Le catalogue des artefacts d'un fil : tableaux, analyses, figures.
+
+        Tout ce que porte le DISQUE, et non le seul contexte du tour : un
+        artefact évincé appartient encore à la conversation, et le fil l'affiche
+        intégralement. ``retenu`` dit lequel des deux il est, pour que la page
+        puisse expliquer pourquoi l'agent ne sait plus le rejouer.
+        """
+        espace = _espace_du_fil(utilisateur, conversation_id)
+        retenus = {a.name for a in espace.catalogue()}
+        return [
+            ArtefactDuFil(
+                name=a.name,
+                kind=a.kind,
+                description=a.description,
+                question=a.question,
+                retenu=a.name in retenus,
+            )
+            for a in espace.artifacts
+        ]
+
+    @app.get("/conversations/{conversation_id}/artefacts/{name}", response_model=ContenuDArtefact)
+    def lire_un_artefact(
+        conversation_id: str, name: str, utilisateur: Utilisateur
+    ) -> ContenuDArtefact:
+        """Le contenu d'un artefact : son code Python, ou la tête de son tableau.
+
+        C'est ce qui permet de RÉCUPÉRER le code d'une figure sans passer par la
+        conversation — le relire, le copier, le porter ailleurs.
+
+        Lu sur le disque, donc y compris s'il est évincé du contexte : l'éviction
+        borne ce que l'agent réinjecte dans un prompt, elle n'efface rien.
+        """
+        espace = _espace_du_fil(utilisateur, conversation_id)
+        artefact = espace.sur_le_disque(name)
+        if artefact is None:
+            raise HTTPException(status_code=404, detail=ARTEFACT_INCONNU)
+        return ContenuDArtefact(
+            name=artefact.name,
+            kind=artefact.kind,
+            description=artefact.description,
+            question=artefact.question,
+            content=espace.lire(artefact),
         )
 
     @app.get("/conversations/{conversation_id}", response_model=Conversation)

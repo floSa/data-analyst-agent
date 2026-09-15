@@ -269,6 +269,58 @@ def test_la_memoire_du_fil_atterrit_sous_la_meme_racine_que_sa_transcription(
     assert memoire.dir == ConversationStore(settings.workspace_dir, ALICE).dir_of(fil)
 
 
+# -- les artefacts d'un fil ---------------------------------------------------
+
+
+def _artefact_dans(settings: Settings, login: str, fil: str) -> None:
+    """Fabrique une figure dans le fil de quelqu'un, comme un tour l'aurait fait."""
+    espace = ConversationWorkspace(ConversationStore(settings.workspace_dir, login).base_dir, fil)
+    espace.save_code("plt.bar([1], [2])", "fais un graphe", source="iris", figures=1)
+
+
+def test_on_lit_le_catalogue_et_le_contenu_de_SES_artefacts(
+    alice: TestClient, settings: Settings
+) -> None:
+    fil = _ouvrir_un_fil(alice, "La question d'Alice")
+    _artefact_dans(settings, ALICE, fil)
+
+    catalogue = alice.get(f"/conversations/{fil}/artefacts").json()
+    assert [(a["name"], a["kind"], a["retenu"]) for a in catalogue] == [
+        ("graphique_1", "figure", True)
+    ]
+
+    contenu = alice.get(f"/conversations/{fil}/artefacts/graphique_1").json()
+    assert contenu["content"] == "plt.bar([1], [2])"
+    assert contenu["question"] == "fais un graphe"
+
+
+def test_l_artefact_dun_autre_est_un_404_indistinguable_de_l_inexistant(
+    alice: TestClient, settings: Settings, fil_de_bob: str
+) -> None:
+    """Le cloisonnement est un chemin : le fil de Bob n'existe pas là où Alice regarde.
+
+    Les trois réponses doivent être le MÊME 404 — l'artefact de quelqu'un
+    d'autre, un fil inventé, un nom d'artefact inventé chez soi. Un message
+    différent par cas dirait à un inconnu lequel des trois il vient de toucher,
+    donc lui dirait qu'un fil existe.
+    """
+    _artefact_dans(settings, BOB, fil_de_bob)
+    fil_dalice = _ouvrir_un_fil(alice, "La question d'Alice")
+
+    chez_bob = alice.get(f"/conversations/{fil_de_bob}/artefacts/graphique_1")
+    fil_invente = alice.get("/conversations/jamais-ouvert/artefacts/graphique_1")
+    catalogue_de_bob = alice.get(f"/conversations/{fil_de_bob}/artefacts")
+
+    assert chez_bob.status_code == 404
+    assert (chez_bob.status_code, chez_bob.json()) == (fil_invente.status_code, fil_invente.json())
+    assert catalogue_de_bob.status_code == 404
+    assert "plt.bar" not in chez_bob.text
+
+    # et un nom inconnu DANS SON PROPRE fil rend le même code, sans dire lequel
+    chez_soi = alice.get(f"/conversations/{fil_dalice}/artefacts/graphique_1")
+    assert chez_soi.status_code == 404
+
+
 # -- aucune route ne rend 403 sur un fil d'autrui ----------------------------
 
 
@@ -280,10 +332,14 @@ def test_aucun_acces_croise_ne_confirme_lexistence_du_fil(
         "GET": alice.get(f"/conversations/{fil_de_bob}"),
         "DELETE": alice.delete(f"/conversations/{fil_de_bob}"),
         "DUPLICATE": alice.post(f"/conversations/{fil_de_bob}/duplicate"),
+        "ARTEFACTS": alice.get(f"/conversations/{fil_de_bob}/artefacts"),
+        "ARTEFACT": alice.get(f"/conversations/{fil_de_bob}/artefacts/graphique_1"),
     }
 
     assert {methode: r.status_code for methode, r in reponses.items()} == {
         "GET": 404,
         "DELETE": 404,
         "DUPLICATE": 404,
+        "ARTEFACTS": 404,
+        "ARTEFACT": 404,
     }
