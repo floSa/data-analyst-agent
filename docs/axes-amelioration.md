@@ -111,6 +111,41 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 - **Statut** : **Corrigé** (deux fois). Détail et rejeux :
   [surface-conversationnelle.md](surface-conversationnelle.md) §9 à §11.
 
+### Le plafond d'allers-retours de l'agent système était serré sous Ollama
+
+- **Où** : [`config.py`](../src/data_analyst_agent/config.py), `systeme_request_limit` ;
+  [`orchestrator/systeme.py`](../src/data_analyst_agent/orchestrator/systeme.py),
+  `run_systeme`.
+- **Constat** : une question méta sur trente-six — « sur quoi je peux travailler ? » —
+  échouait **sous Ollama** par épuisement du plafond (`request_limit of 4`), pas par
+  erreur, et retombait dans le repli du planificateur. Sous vLLM elle passait. Signalé
+  aux §15.7, §18 et §19.11 de la surface conversationnelle, jamais traité : le plafond
+  est en tête de *chaque* tour, et le monter au jugé se paie sur toutes les questions.
+- **Ce que la mesure a montré, et qui n'était pas prévu** : ce n'est pas une boucle.
+  La question ouvre sur tous les sujets à la fois, et les deux moteurs y répondent
+  différemment — vLLM ouvre **un** outil, Ollama en ouvre **cinq** (capacités,
+  sources, deux fois le schéma, modèles), soit six allers-retours avec la
+  formulation. Sondée seule à 6, 8 puis 12, elle coûte 6 à chaque fois : le chemin
+  converge. Un plafond plus haut n'aurait donc rien laissé filer.
+- **Mesuré** — batterie complète, 36 questions méta et 4 témoins, sur les deux
+  moteurs (`scripts/mesure_surface_conversationnelle.py`) :
+
+  | Plafond | vLLM — méta | appels LLM | Ollama — méta | appels LLM |
+  |---|---|---|---|---|
+  | 4 | 36/36 | 78 | **35/36** | 83 |
+  | 5 | 36/36 | 78 | **35/36** | 84 |
+  | **6** | **36/36** | **78** | **36/36** | **83** |
+
+  Témoins à 4/4 et 17 appels dans les six exécutions.
+- **Corrigé** (C26) : `systeme_request_limit = 6`. C'est la plus basse valeur qui rend
+  36/36 sur les **deux** moteurs — 5 échoue encore — et elle est **gratuite** : même
+  total qu'à 4 sur les deux moteurs, et pas une seule question dont le coût bouge. Un
+  plafond n'est pas un budget dépensé, c'est un budget disponible, et seule la
+  question qui en a besoin le touche. L'atteindre coûtait d'ailleurs *plus* cher que
+  de réussir : l'échec ajoute le tour du planificateur et celui de la synthèse — d'où
+  les 84 appels du plafond 5, le plus cher et le moins bon des trois.
+- **Statut** : **Traité** (C26, 2026-09-15).
+
 ### La capacité système n'est pas dans `Capability`, et ne doit pas y revenir sans mesure
 
 - **Où** : [`orchestrator/plan.py`](../src/data_analyst_agent/orchestrator/plan.py)
@@ -177,6 +212,79 @@ c'est la partie qu'on ne retrouve pas dans un diff.
   elle — ce qu'on lit en dernier est ce à quoi on répond.
 - **Statut** : **Corrigé.**
 
+### La correspondance déclarée au catalogue n'était pas relue contre la source
+
+- **Où** : [`agents/inference/correspondance.py`](../src/data_analyst_agent/agents/inference/correspondance.py),
+  `Correspondance.declaree` ; [`orchestrator/graph.py`](../src/data_analyst_agent/orchestrator/graph.py),
+  `_fetch_predict_node`.
+- **Constat** : C23 a introduit le bloc `features: {dataset: {feature: colonne}}`
+  déclaré par la source, et il a supprimé la devinette. Ce qu'il ne vérifiait pas,
+  c'est que la colonne déclarée **existe** : la déclaration était relue contre le
+  schéma de *features* (complète ? aucune feature inconnue ?) et jamais contre le
+  schéma de la *source*.
+- **Problème** : une déclaration est du texte dans un YAML. Un `classes.levelx`
+  au lieu de `classes.level` partait en consigne SQL, et ce qui suivait dépendait
+  de ce que le modèle voulait bien en faire.
+- **Mesuré, avant correction**, sur la vraie base Postgres `titanic` et sous vLLM
+  (confrontation neutralisée, question « Prédis la survie des cinq premiers
+  passagers ») — **deux visages, et le premier est le pire** :
+
+  | Déclaration fausse | Ce qui sort | Appels LLM | Requêtes sur la source |
+  |---|---|---|---|
+  | `classes.levelx` | « a survécu : 3 (60 %) » — une prédiction **juste**, 4 tirages sur 4 : l'agent SQL a silencieusement réparé la faute en `c.level` | 5 | 1 |
+  | `classes.rang_du_billet` | « aucune des 5 lignes n'a passé la validation (`pclass` : reçu `'3e classe'`) », 2 tirages sur 2 : l'agent a choisi `c.label` | 5 | 1 |
+
+  Le premier cas est celui qu'on n'avait pas vu : la déclaration fausse ne produit
+  **aucun symptôme**. Le modèle devine la bonne colonne, ça marche, et la
+  déclaration devient du texte mort que rien n'applique — exactement la devinette
+  que C23 avait retirée, revenue par la porte de service. Le second est le symptôme
+  du §19.11, et son message accuse les **données** (« reçu `'3e classe'` ») là où la
+  faute est dans le catalogue.
+- **Corrigé** (C26) : `Correspondance.confronter(schema)`, appelée dans
+  `_fetch_predict_node` une fois la connexion ouverte et **avant la requête**. Le
+  refus nomme la colonne introuvable, propose la colonne réelle qui lui ressemble
+  (distance d'édition sur les noms **nus** des deux côtés — la table qualifiante
+  gonfle la ressemblance de ce qui partage son préfixe et noie celle d'une
+  déclaration nue ; muette si rien ne ressemble, une suggestion tirée au hasard
+  coûterait la confiance qu'on gagne à ne rien deviner), liste les colonnes
+  de la source et dit que rien n'a été interrogé. Une déclaration **qualifiée** est
+  lue sur ses deux derniers segments et les deux doivent tomber juste :
+  `classes.sex` est refusé comme `passengers.levelx`, parce que ce n'est pas cette
+  table qui porte la colonne ; se rabattre sur le seul nom laisserait passer la
+  moitié des fautes. Une déclaration **nue** se compare aux noms de colonnes de
+  toutes les tables : c'est l'écriture de la source à une table, qui n'a aucune
+  raison de se qualifier. Toutes les colonnes fautives sont dites
+  d'un coup : rendre une faute à la fois ferait corriger le YAML trois fois de
+  suite sans qu'aucune contrainte ne l'impose.
+- **Mesuré, après correction**, mêmes questions et même base : les deux
+  déclarations sont refusées avant la requête — **2 appels LLM** (le tour de
+  routage, la synthèse de l'erreur) et **0 requête de données**, contre 5 et 1. Le
+  message nomme `classes.levelx`, propose `classes.level`, liste les treize
+  colonnes de la source et dit que rien n'a été interrogé. Pour
+  `classes.rang_du_billet`, aucune proposition : rien ne lui ressemble, et se taire
+  vaut mieux que suggérer au hasard.
+- **Ce qu'elle coûte** : une lecture du schéma, et rien d'autre — 27,7 ms sur la base
+  Postgres `titanic` (médiane de sept, valeurs distinctes des colonnes texte
+  comprises), 1,8 ms sur le CSV `iris` ; la confrontation elle-même pèse ~20 µs.
+  Aucun appel au modèle, aucune requête de données. C'est une lecture que l'agent
+  SQL fait de toute façon à son premier outil : le cas fautif l'économise, le cas
+  juste la paie deux fois.
+- **Ce qui a été délimité** : la confrontation ne porte que sur la correspondance
+  **déclarée**. Un tableau du tour précédent réinjecté sous `resultat_1` ne déclare
+  rien — ses colonnes sont rapprochées par leur nom, et une feature qu'aucune ne
+  porte doit rester réclamée par le schéma. La confronter aurait transformé un
+  chaînage qui marche en faute de catalogue à corriger dans un fichier qui n'existe
+  pas.
+- **Ce que la correction a démenti** : deux tests supposaient une déclaration
+  impossible — un `classes.level` déclaré sur un CSV à plat, et une identité
+  complète déclarée sur une source à deux colonnes. Aucun des deux ne pouvait
+  arriver en vrai, et tous deux passaient. Ils mesurent maintenant ce qu'ils
+  prétendaient mesurer : la consigne SQL sur une colonne qui existe vraiment, et
+  une ligne incomplète parce que la **requête** n'a ramené qu'une colonne des sept
+  demandées — pas parce que la source ne les porte pas.
+- **Statut** : **Traité** (C26, 2026-09-15). Relevé en mesurant C23, hors de son
+  périmètre.
+
 ### Deux politiques différentes face à un fichier corrompu
 
 - **Où** : [`orchestrator/workspace.py:471`](../src/data_analyst_agent/orchestrator/workspace.py)
@@ -241,7 +349,31 @@ c'est la partie qu'on ne retrouve pas dans un diff.
   celle qui compte pour le métier.
 - **Correction proposée** : laisser le dictionnaire de la source désigner sa colonne
   de date de référence, et retomber sur la première à défaut.
-- **Statut** : Ouvert.
+- **Corrigé** (C26) — **pas au dictionnaire, au catalogue**. Le `dictionary` est un
+  Markdown qui s'adresse au modèle de langage ; y désigner une colonne obligerait à
+  lire de la prose pour prendre une décision de code, et une source qui n'en déclare
+  aucun n'aurait nulle part où le dire. La désignation vit donc là où vit déjà
+  `features`, pour la raison qui a fait naître `features` : ce champ s'adresse au
+  code. Un champ `date_reference` **facultatif** sur la source — `table.colonne` ou
+  `colonne` seule, insensible à la casse — et le défaut d'avant inchangé quand rien
+  n'est désigné.
+- **Ce qui a été ajouté en chemin** : une désignation que le schéma ne porte pas ne
+  fait pas tomber le relevé — les tables, les lignes et une période restent bonnes,
+  et un inventaire qui disparaît pour une faute de frappe dans un YAML serait une
+  punition démesurée — mais elle **se dit**, avec les colonnes de date réelles.
+  Sans ce message, le repli sur la première colonne serait indiscernable d'une
+  source qui ne désigne rien : la correction se serait payée d'un nouveau silence.
+- **Mesuré** sur `tests/catalogues/deux-dates/` — une source de 120 lignes portant
+  `date_commande` **et** `date_livraison`, dont les intervalles diffèrent des deux
+  côtés, et trois déclarations sur les mêmes octets
+  (`uv run python scripts/mesure_releve_des_sources.py --seulement dates`) :
+
+  | Déclaration | Période rendue |
+  |---|---|
+  | aucune | du 2024-02-11 au 2024-11-30 (`date_commande`) |
+  | `date_reference: date_livraison` | du 2024-02-22 au 2025-01-07 (`date_livraison`) |
+  | `date_reference: date_livraision` (faute de frappe) | du 2024-02-11 au 2024-11-30 (`date_commande`) **+ « colonne de date de référence déclarée introuvable »**, colonnes réelles nommées |
+- **Statut** : **Traité** (C26, 2026-09-15).
 
 ### `list()` ouvre et valide tous les fils pour n'en rendre qu'un résumé
 
@@ -396,6 +528,9 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 | — | Catalogue limité à `postgres` et `file` | **Corrigé** | Un troisième type `duckdb`, qui apporte les clés étrangères qu'aucun fichier ne déclare. Mesuré 6/6 sur les trois types à la fois |
 | — | Relevé jamais rafraîchi | **Corrigé** | Était : une source revenue restait « non relevée » toute la session. Devenue re-tentée au bout de 30 s, et périmée au bout de 15 min |
 | — | Relevé non borné en temps | **Corrigé** | Était : une source muette bloquait l'inventaire sans plafond (mesuré : > 75 s). Devenue dégradée en injoignable au bout de 10 s |
+| — | Plafond de l'agent système serré sous Ollama | **Corrigé** | Était : 35/36 sous Ollama, une question perdue par épuisement du plafond. Devenu 36/36 sur les deux moteurs, pour le même nombre d'appels |
+| — | Période lue sur la première colonne de date venue | **Corrigé** | La source désigne sa colonne de référence ; une désignation fausse se dit au lieu de retomber en silence |
+| — | Correspondance déclarée jamais relue contre la source | **Corrigé** | Était : une colonne déclarée inexistante était silencieusement réparée par l'agent SQL (4 tirages sur 4), ou rendait une erreur qui accusait les données. Refusée avant la requête, 2 appels au lieu de 5 |
 | P1 | Migration des conversations réelles jamais exécutée | Ouvert | Les fils existants restent hors de l'arborescence par utilisateur |
 | P1 | Aucun fichier `LICENSE` | Ouvert | L'annonce MIT du README est sans portée |
 | P2 | argon2 non plafonné face au pool de threads | Ouvert | Une rafale de connexions réserve ~2,5 Gio |

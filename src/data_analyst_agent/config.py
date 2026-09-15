@@ -106,11 +106,25 @@ class Settings(BaseSettings):
 
     # --- Agent Système (questions SUR l'agent : cf. orchestrator/systeme.py) ---
     # Bien plus court que celui de la récupération, et pour une raison : l'agent
-    # système n'a pas de boucle de correction à mener. Un appel pour choisir
-    # l'outil, un pour formuler ce qu'il a rendu ; deux de marge pour une
-    # question qui couvre deux sujets. Au-delà, il tourne en rond, et ce tour
-    # de trop est en tête de CHAQUE question posée à l'application.
-    systeme_request_limit: int = 4
+    # système n'a pas de boucle de correction à mener. Un appel par outil qu'il
+    # décide d'ouvrir, un dernier pour formuler ce qu'ils ont rendu.
+    #
+    # 4 pendant longtemps, et 4 était serré : une question sur trente-six —
+    # « sur quoi je peux travailler ? » — l'épuisait sous Ollama et tombait dans
+    # le repli du planificateur (« request_limit of 4 »), alors qu'elle passait
+    # sous vLLM. Ce n'était pas une boucle : la question ouvre sur TOUS les
+    # sujets, et Ollama y répond en regardant tout — capacités, sources, deux
+    # fois le schéma, modèles. Cinq outils, donc six allers-retours. vLLM
+    # répond à la même question avec un seul outil.
+    #
+    # 6 est la plus basse valeur qui rend 36/36 sur les DEUX moteurs (5 échoue
+    # encore), et elle est GRATUITE : batterie complète, 83 appels sous Ollama
+    # à 4 comme à 6, 78 sous vLLM aux trois valeurs, et pas une question dont
+    # le coût bouge. Un plafond n'est pas un budget dépensé — c'est un budget
+    # disponible, et seule la question qui en avait besoin le touche. L'atteindre
+    # coûtait d'ailleurs plus cher que de réussir : l'échec ajoute le tour du
+    # planificateur et celui de la synthèse.
+    systeme_request_limit: int = 6
 
     # --- Agent de rappel (artefacts du fil : cf. orchestrator/rappel.py) ---
     # Un peu plus large que celui de l'agent système, parce que sa boucle est

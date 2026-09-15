@@ -40,12 +40,24 @@ class SourceBase(BaseModel):
     se trompait (cf. ``agents/inference/correspondance``).
 
     Facultatif aussi : une source dont on ne prédit rien n'a rien à déclarer.
+
+    ``date_reference`` désigne la colonne de date sur laquelle se lit la PÉRIODE
+    couverte par la source — ``table.colonne``, ou ``colonne`` seule quand elle
+    ne prête pas à confusion. Sans elle, la période est celle de la première
+    colonne de date du schéma : juste, puisque la colonne est nommée dans la
+    réponse, mais choisie par l'ordre du DDL. Une source qui porte une date de
+    commande ET une date de livraison a une colonne qui compte, et elle seule le
+    sait (cf. ``agents/retrieval/faits``).
+
+    Facultatif encore : une source qui n'a qu'une colonne de date, ou aucune,
+    n'a rien à désigner.
     """
 
     name: str
     description: str = ""
     dictionary: Path | None = None
     features: Declarations = Field(default_factory=dict)
+    date_reference: str | None = None
 
     def dictionary_text(self) -> str | None:
         """Contenu du dictionnaire, ou ``None`` si la source n'en déclare pas."""

@@ -8,8 +8,9 @@ module : trois faits par source, tous **lus dans la source elle-même**.
 
 - le **nombre de tables**, du schéma ;
 - le **nombre de lignes**, d'un ``count(*)`` par table ;
-- la **période couverte**, d'un ``min``/``max`` sur la première colonne de date
-  rencontrée — et rien du tout s'il n'y en a aucune.
+- la **période couverte**, d'un ``min``/``max`` sur la colonne de date que la
+  source DÉSIGNE (``date_reference``), à défaut la première du schéma — et rien
+  du tout s'il n'y en a aucune.
 
 **Jamais racontés.** C'est le défaut corrigé par ``acfd8f5`` — « décris le
 dataset iris » répondu de mémoire, avec une jolie prose et zéro requête — et il
@@ -87,6 +88,10 @@ class FaitsDeSource(BaseModel):
     valent alors leur défaut et ne doivent pas être affichés comme des faits.
     Le distinguer d'une source réellement vide compte — « 0 ligne » est une
     information, « je n'ai pas pu ouvrir la source » en est une autre.
+
+    ``avertissement`` est l'autre moitié : tout a été lu, et quelque chose de
+    DÉCLARÉ ne tient pas. Les faits restent bons ; c'est le catalogue qui est à
+    corriger.
     """
 
     nom: str
@@ -97,6 +102,13 @@ class FaitsDeSource(BaseModel):
     # exactement le travers que ce module existe pour empêcher.
     estimees: list[str] = Field(default_factory=list)
     periode: Periode | None = None
+    # Ce qui a été relevé de travers sans empêcher de relever — aujourd'hui, une
+    # ``date_reference`` que le schéma ne porte pas. Séparé de ``echec``, qui dit
+    # que rien n'a pu être lu : ici tout a été lu, et une DÉCLARATION est fausse.
+    # Dit plutôt que taire : sans lui, une désignation mal orthographiée
+    # retomberait sur la première colonne de date exactement comme avant la
+    # correction, et ne se verrait nulle part.
+    avertissement: str = ""
     echec: str = ""
 
     @property
@@ -131,12 +143,12 @@ class FaitsDeSource(BaseModel):
         )
         approche = "~" if self.estimees else ""
         volume = f"{self.tables} table(s), {approche}{self.lignes} ligne(s) ({detail})"
-        if self.periode is None:
-            return volume
-        return (
-            f"{volume} — période couverte : du {self.periode.debut} au {self.periode.fin} "
-            f"(colonne {self.periode.colonne} de {self.periode.table})"
-        )
+        if self.periode is not None:
+            volume += (
+                f" — période couverte : du {self.periode.debut} au {self.periode.fin} "
+                f"(colonne {self.periode.colonne} de {self.periode.table})"
+            )
+        return f"{volume} [{self.avertissement}]" if self.avertissement else volume
 
 
 @dataclass(frozen=True)
@@ -268,19 +280,73 @@ def _compter(adaptateur: DatabaseAdapter, table: str, seuil: int = 0) -> tuple[i
     return (int(resultat.rows[0][0]) if resultat.rows else 0), False
 
 
-def _colonne_de_date(schema: SchemaInfo) -> tuple[str, str] | None:
-    """La première colonne de date du schéma — (table, colonne) — ou ``None``.
+@dataclass(frozen=True)
+class ColonneDeDate:
+    """La colonne sur laquelle lire la période, et ce que la désignation a donné.
 
-    La **première**, dans l'ordre du schéma, et pas une élue par un pari sur son
-    nom : une source qui en porte plusieurs verra la période de l'une d'elles,
-    nommée dans la réponse, ce qui vaut mieux qu'un choix silencieux entre
-    ``created_at`` et ``closed_at``.
+    ``avertissement`` non vide veut dire que la source DÉSIGNAIT une colonne et
+    que le schéma ne la porte pas : on retombe alors sur la première, et on le
+    dit. Se taire ici rendrait la correction invisible — une période lue sur
+    ``date_commande`` est indiscernable, pour qui lit la phrase, selon qu'elle
+    vient d'un défaut assumé ou d'un ``date_livraision`` mal orthographié.
     """
-    for table in schema.tables:
-        for colonne in table.columns:
-            if colonne.type.upper().startswith(TYPES_TEMPORELS):
-                return table.name, colonne.name
+
+    colonne: tuple[str, str] | None
+    avertissement: str = ""
+
+
+def _colonnes_de_date(schema: SchemaInfo) -> list[tuple[str, str]]:
+    """Toutes les colonnes de date du schéma, dans son ordre."""
+    return [
+        (table.name, colonne.name)
+        for table in schema.tables
+        for colonne in table.columns
+        if colonne.type.upper().startswith(TYPES_TEMPORELS)
+    ]
+
+
+def _designee(candidates: list[tuple[str, str]], designation: str) -> tuple[str, str] | None:
+    """Celle des colonnes de date que ``designation`` nomme, ou ``None``.
+
+    Deux écritures acceptées, ``table.colonne`` et ``colonne`` seule : une source
+    à une table n'a aucune raison de se qualifier, et une source qui porte la
+    même date dans deux tables en a toutes. Insensible à la casse, comme le
+    rapprochement des features — Postgres replie ses identifiants en minuscules,
+    un en-tête de CSV garde sa majuscule, et la désignation est écrite à la main.
+    """
+    voulue = designation.strip().lower()
+    for table, colonne in candidates:
+        if voulue in (colonne.lower(), f"{table.lower()}.{colonne.lower()}"):
+            return table, colonne
     return None
+
+
+def _colonne_de_date(schema: SchemaInfo, designation: str | None = None) -> ColonneDeDate:
+    """La colonne de date DÉSIGNÉE par la source, à défaut la première du schéma.
+
+    La désignation d'abord, parce qu'elle est la seule chose qui puisse dire
+    laquelle **compte** : une source qui porte une date de commande et une date
+    de livraison a deux périodes également vraies, et le schéma ne dit pas
+    laquelle décrit la source. Le défaut — la première, dans l'ordre du schéma —
+    reste celui d'avant : il ne parie pas sur le nom des colonnes, il assume de
+    ne pas choisir, et la colonne retenue est nommée dans la réponse.
+
+    Une désignation que le schéma ne porte pas ne fait pas tomber le relevé : le
+    reste des faits est bon, et un inventaire qui disparaît pour une faute de
+    frappe dans un YAML serait une punition démesurée. Elle se dit.
+    """
+    candidates = _colonnes_de_date(schema)
+    if not designation:
+        return ColonneDeDate(candidates[0] if candidates else None)
+    retenue = _designee(candidates, designation)
+    if retenue is not None:
+        return ColonneDeDate(retenue)
+    connues = ", ".join(f"{t}.{c}" for t, c in candidates) or "aucune"
+    return ColonneDeDate(
+        candidates[0] if candidates else None,
+        f"colonne de date de référence déclarée introuvable : {designation} — "
+        f"colonnes de date de la source : {connues}",
+    )
 
 
 # Un horodatage à minuit pile, tel que le rendent DuckDB (une colonne de dates
@@ -323,10 +389,14 @@ def _lire(source: Source, seuil: int) -> FaitsDeSource:
             lignes[table.name], estimee = _compter(adaptateur, table.name, seuil)
             if estimee:
                 estimees.append(table.name)
-        reperee = _colonne_de_date(schema)
-        periode = _periode(adaptateur, *reperee) if reperee else None
+        reperee = _colonne_de_date(schema, source.date_reference)
+        periode = _periode(adaptateur, *reperee.colonne) if reperee.colonne else None
     return FaitsDeSource(
-        nom=source.name, lignes_par_table=lignes, estimees=estimees, periode=periode
+        nom=source.name,
+        lignes_par_table=lignes,
+        estimees=estimees,
+        periode=periode,
+        avertissement=reperee.avertissement,
     )
 
 

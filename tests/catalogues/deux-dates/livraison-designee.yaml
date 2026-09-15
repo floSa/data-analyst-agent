@@ -1,0 +1,13 @@
+# Catalogue de mesure — NE PAS UTILISER EN PRODUCTION.
+#
+# Les MÊMES octets que `sans-designation.yaml`, à une ligne près : la source
+# désigne sa colonne de date de référence. La période bascule alors sur
+# `date_livraison`, qui n'est pas la première du schéma.
+sources:
+  - type: file
+    name: commandes
+    description: >-
+      Commandes d'une boutique (CSV, une table plate) — date de commande, date
+      de livraison, client, montant.
+    path: commandes.csv
+    date_reference: date_livraison

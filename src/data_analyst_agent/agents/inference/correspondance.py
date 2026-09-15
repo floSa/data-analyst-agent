@@ -36,6 +36,16 @@ Ce que cette déclaration donne, et que la prose ne donne pas :
    écrire et où — là où l'absence de déclaration ne produisait qu'un silence,
    ou une prédiction sur la mauvaise colonne.
 
+**Et la déclaration est relue contre la source.** Une déclaration est du texte
+dans un YAML : rien n'empêche d'y écrire ``classes.levelx``. Ce qui suivait
+était lisible, et tard — l'agent SQL partait, la requête échouait sur une
+colonne inconnue, il se corrigeait comme il pouvait, et la feature finissait
+absente du payload, réclamée par le schéma sous un nom qui ne disait rien de la
+faute de frappe. ``confronter`` lit le schéma de la source et refuse AVANT la
+requête, en nommant la colonne introuvable et en donnant celles qui existent.
+C'est le même principe qu'au-dessus, d'un cran plus loin : une déclaration
+incomplète était déjà refusée, une déclaration FAUSSE ne l'était pas.
+
 Ce n'est pas un relâchement de la garde. Une valeur qu'aucune traduction
 déclarée ne couvre est laissée TELLE QUELLE : le schéma la refuse en citant ce
 qu'il a lu — ``'3e classe'`` reste une erreur de validation lisible, et une
@@ -44,11 +54,13 @@ valeur hors bornes venue de la base est refusée comme celle d'un utilisateur.
 
 from __future__ import annotations
 
+import difflib
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from data_analyst_agent.agents.inference.schemas import get_schema
+from data_analyst_agent.agents.retrieval.sql import SchemaInfo
 
 
 class FeatureDeclaration(BaseModel):
@@ -182,6 +194,40 @@ class Correspondance:
             },
         )
 
+    def confronter(self, schema: SchemaInfo) -> None:
+        """Relit la déclaration contre le schéma réel. Lève si une colonne manque.
+
+        Appelée AVANT la requête, et c'est tout l'intérêt : une déclaration
+        fausse partait jusqu'ici en SQL, revenait en erreur de colonne inconnue,
+        laissait l'agent se corriger au jugé, et finissait en feature absente du
+        payload — un symptôme à trois pas de sa cause. La faute est ici nommée
+        là où elle est écrite, avec les colonnes que la source porte réellement.
+
+        Pas de traduction de valeurs ici : ``values`` se vérifie sur les données,
+        pas sur le schéma, et une valeur non couverte est déjà refusée par le
+        schéma de features en citant ce qui a été lu.
+        """
+        connues = sorted(
+            f"{table.name}.{colonne.name}" for table in schema.tables for colonne in table.columns
+        )
+        introuvables = [
+            (feature, decl.column)
+            for feature, decl in self.par_feature.items()
+            if not _portee_par(decl.column, connues)
+        ]
+        if not introuvables:
+            return
+        detail = "; ".join(
+            f"{feature} -> {colonne}{_peut_etre(colonne, connues)}"
+            for feature, colonne in introuvables
+        )
+        raise CorrespondanceIndisponible(
+            f"la source {self.source!r} déclare pour le modèle {self.dataset!r} des "
+            f"colonnes que la source ne porte pas : {detail}. Colonnes de la source : "
+            f"{', '.join(connues)}. Corrigez le bloc "
+            f"`features.{self.dataset}` du catalogue — rien n'a été interrogé."
+        )
+
     def consigne_sql(self) -> str:
         """Ce qu'on ajoute à la question posée à l'agent SQL : les colonnes, nommées.
 
@@ -228,6 +274,53 @@ class Correspondance:
                     payload[feature] = decl.traduire(par_nom[cle])
                     break
         return payload
+
+
+def _portee_par(declaree: str, connues: list[str]) -> bool:
+    """La source porte-t-elle la colonne déclarée ? Insensible à la casse.
+
+    Une déclaration **qualifiée** est lue sur ses deux derniers segments, et les
+    deux doivent tomber juste : `passengers.levelx` est refusé parce que la
+    colonne n'existe pas, et `classes.sex` parce que ce n'est pas cette table
+    qui la porte — les deux sont des déclarations fausses, et se rabattre sur le
+    seul nom de colonne laisserait passer la seconde. Trois segments sont admis
+    (`public.passengers.sex`) : le premier est un espace de noms, et le schéma
+    lu n'en rend pas.
+
+    Une déclaration **nue** se compare aux noms de colonnes, quelle que soit leur
+    table. C'est l'écriture de la source à une table, qui n'a aucune raison de se
+    qualifier ; un nom porté par deux tables reste accepté, parce que la source
+    désigne alors une colonne qui existe — et c'est tout ce que cette relecture
+    prétend dire.
+    """
+    voulue = declaree.lower()
+    if "." in voulue:
+        deux_derniers = ".".join(voulue.rsplit(".", 2)[-2:])
+        return any(connue.lower() == deux_derniers for connue in connues)
+    return any(connue.rsplit(".", 1)[-1].lower() == voulue for connue in connues)
+
+
+def _peut_etre(declaree: str, connues: list[str]) -> str:
+    """« (peut-être classes.level ?) », quand une colonne réelle en est proche.
+
+    Une faute de frappe est le cas fréquent, et la liste complète des colonnes ne
+    la pointe pas du doigt. Muet quand rien ne ressemble : proposer au hasard
+    coûterait la confiance qu'on gagne à ne rien deviner.
+
+    Comparé sur les noms **nus**, des deux côtés, et c'est mesuré : la table
+    qualifiante fausse la ressemblance dans les deux sens. Elle la gonfle —
+    ``classes.rang_du_billet`` et ``classes.label`` partagent dix caractères de
+    préfixe et passent le seuil, alors qu'ils n'ont rien à voir — et elle la
+    noie : ``pclas`` ne ressemble à aucun ``table.colonne``, la distance d'édition
+    étant mangée par le préfixe. Sur les noms nus, les deux tombent juste :
+    ``rang_du_billet`` ne ressemble à rien, ``pclas`` ressemble à ``pclass``.
+    """
+    nu = declaree.rsplit(".", 1)[-1].lower()
+    nus = [connue.rsplit(".", 1)[-1].lower() for connue in connues]
+    proches = difflib.get_close_matches(nu, nus, n=1)
+    if not proches:
+        return ""
+    return f" (peut-être {connues[nus.index(proches[0])]} ?)"
 
 
 __all__ = [

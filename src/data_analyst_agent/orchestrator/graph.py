@@ -1824,6 +1824,14 @@ class Orchestrator:
         Une source qui ne le déclare pas est refusée ici, avant d'être ouverte —
         prédire sur une colonne choisie au hasard coûte plus cher que ne rien
         rendre.
+
+        Et ce que la source DÉCLARE est relu contre son schéma, une fois la
+        connexion ouverte et avant la moindre requête : un YAML peut nommer une
+        colonne qui n'existe pas, et ça ne se voyait qu'au bout — SQL en erreur,
+        correction au jugé de l'agent, feature absente du payload. La connexion est ouverte
+        d'abord parce que c'est la source, et elle seule, qui dit ce qu'elle
+        porte : c'est le seul aller qu'on paie pour le savoir, et il ne coûte
+        aucun appel au modèle.
         """
         start = time.monotonic()
         plan = state["plan"]
@@ -1849,6 +1857,19 @@ class Orchestrator:
                 "trace": [self._step("fetch_predict", "correspondance non déclarée", start)],
             }
         with closing(open_source(source)) as adapter:
+            try:
+                # Seulement ce qui est DÉCLARÉ. Une correspondance par le nom
+                # (un tableau du tour précédent) ne déclare rien : une feature
+                # qu'aucune de ses colonnes ne porte est absente du payload et
+                # réclamée par le schéma sous son nom, ce qui est le
+                # comportement voulu — pas une faute de catalogue à corriger.
+                if du_catalogue:
+                    correspondance.confronter(adapter.schema())
+            except CorrespondanceIndisponible as exc:
+                return {
+                    "error": str(exc),
+                    "trace": [self._step("fetch_predict", "colonne déclarée absente", start)],
+                }
             retrieval = run_retrieval(
                 data_question + correspondance.consigne_sql(),
                 adapter=adapter,

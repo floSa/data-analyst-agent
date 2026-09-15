@@ -21,6 +21,17 @@
 #     pclass:
 #       column: classes.label
 #       values: {"1re classe": 1, "2e classe": 2, "3e classe": 3}
+#
+# Ce que `features` déclare est relu contre le schéma de la source avant toute
+# requête : une colonne déclarée qui n'existe pas est nommée, avec celles qui
+# existent, au lieu de finir en SQL en erreur puis en feature absente.
+#
+# `date_reference` (facultatif) : la colonne sur laquelle se lit la PÉRIODE couverte
+# par la source — `table.colonne`, ou `colonne` seule. Sans elle, c'est la première
+# colonne de date du schéma : juste, mais choisie par l'ordre du DDL. Une source qui
+# porte une date de commande ET une date de livraison a une colonne qui compte, et
+# elle seule le sait. Aucune source d'ici n'en déclare : ni titanic ni iris ne portent
+# de colonne de date.
 sources:
   - type: postgres
     name: titanic

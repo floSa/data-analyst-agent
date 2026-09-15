@@ -212,7 +212,7 @@ def test_une_colonne_de_date_sans_aucune_valeur_ne_donne_pas_de_periode():
     connexion = duckdb.connect(":memory:")
     connexion.execute("CREATE TABLE jours (jour DATE)")
     with closing(DuckDBAdapter(connexion, ["jours"])) as adaptateur:
-        assert _colonne_de_date(adaptateur.schema()) == ("jours", "jour")
+        assert _colonne_de_date(adaptateur.schema()).colonne == ("jours", "jour")
 
         assert _periode(adaptateur, "jours", "jour") is None
 
@@ -507,3 +507,107 @@ def test_une_table_absente_du_catalogue_du_moteur_est_comptee():
 
     assert faits.estimees == []
     assert adaptateur.comptages == 1
+
+
+# --- la colonne de date de référence -----------------------------------------
+#
+# Une source qui porte une date de commande ET une date de livraison a deux
+# périodes également vraies, et le schéma ne dit pas laquelle décrit la source.
+# La période était celle de la PREMIÈRE du DDL : rien de faux — la colonne est
+# nommée dans la réponse — mais l'ordre d'un DDL n'est pas une décision. La
+# source le déclare désormais, et les trois cas ci-dessous sont les trois
+# catalogues de `tests/catalogues/deux-dates/`, joués ici sur les mêmes octets.
+
+CATALOGUES_DEUX_DATES = Path(__file__).resolve().parents[3] / "tests/catalogues/deux-dates"
+
+
+def _commandes(catalogue: str):
+    from data_analyst_agent.agents.retrieval.catalog import load_catalog
+
+    return load_catalog(CATALOGUES_DEUX_DATES / f"{catalogue}.yaml").get("commandes")
+
+
+def test_sans_designation_la_periode_reste_celle_de_la_premiere_colonne():
+    """Le comportement d'avant, gardé tel quel : une source qui ne désigne rien
+    n'a rien à perdre, et le défaut n'invente toujours aucun pari sur les noms."""
+    faits = relever(_commandes("sans-designation"))
+
+    assert faits.periode is not None
+    assert faits.periode.colonne == "date_commande"
+    assert (faits.periode.debut, faits.periode.fin) == ("2024-02-11", "2024-11-30")
+    assert faits.avertissement == ""
+
+
+def test_la_source_designe_sa_colonne_de_date_et_la_periode_la_suit():
+    """Les mêmes octets, une ligne de YAML en plus, une autre période — celle de
+    `date_livraison`, qui n'est pas la première du schéma."""
+    faits = relever(_commandes("livraison-designee"))
+
+    assert faits.periode is not None
+    assert faits.periode.colonne == "date_livraison"
+    assert (faits.periode.debut, faits.periode.fin) == ("2024-02-22", "2025-01-07")
+    assert "du 2024-02-22 au 2025-01-07" in faits.en_clair()
+    assert faits.avertissement == ""
+
+
+def test_une_designation_introuvable_se_dit_et_nomme_les_colonnes_reelles():
+    """Le repli ne doit pas être un cache-misère.
+
+    Sans ce message, une désignation mal orthographiée retomberait sur la
+    première colonne de date et serait indiscernable d'une source qui n'en
+    désigne aucune : la déclaration fausse survivrait indéfiniment.
+    """
+    faits = relever(_commandes("designation-fautive"))
+
+    assert faits.lu  # le relevé ne tombe pas : les faits restent bons
+    assert faits.lignes == 120
+    assert faits.periode is not None
+    assert faits.periode.colonne == "date_commande"
+    assert "date_livraision" in faits.avertissement
+    assert "commandes.date_livraison" in faits.avertissement
+    assert "commandes.date_commande" in faits.avertissement
+    assert faits.avertissement in faits.en_clair()
+
+
+def test_la_designation_se_qualifie_par_sa_table_et_ignore_la_casse(tmp_path: Path):
+    """« table.colonne » autant que « colonne », et la casse ne compte pas.
+
+    Postgres replie ses identifiants en minuscules, un en-tête de CSV garde sa
+    majuscule, et la désignation est écrite à la main dans un YAML.
+    """
+    chemin = tmp_path / "ventes.csv"
+    chemin.write_text("Ouverture,Cloture\n2024-01-01,2024-03-01\n", encoding="utf-8")
+
+    qualifiee = relever(FileSource(name="v", path=chemin, date_reference="ventes.CLOTURE"))
+    nue = relever(FileSource(name="v", path=chemin, date_reference="cloture"))
+
+    assert qualifiee.periode is not None
+    assert qualifiee.periode.colonne == "Cloture"
+    assert qualifiee.avertissement == ""
+    assert nue.periode is not None
+    assert nue.periode.colonne == "Cloture"
+    assert nue.avertissement == ""
+
+
+def test_une_designation_sur_une_colonne_qui_n_est_pas_une_date_est_refusee(tmp_path: Path):
+    """`client` existe, et n'est pas une colonne de date. La désigner comme telle
+    est la même faute qu'en désigner une qui n'existe pas, et se dit pareil."""
+    faits = relever(
+        source(tmp_path, "ventes", VENTES).model_copy(update={"date_reference": "client"})
+    )
+
+    assert faits.periode is not None
+    assert faits.periode.colonne == "date_vente"
+    assert "client" in faits.avertissement
+    assert "ventes.date_vente" in faits.avertissement
+
+
+def test_une_source_sans_aucune_date_qui_en_designe_une_le_dit(tmp_path: Path):
+    """Aucune période à rendre, et une déclaration à corriger : les deux se disent."""
+    faits = relever(
+        source(tmp_path, "plat", SANS_DATE).model_copy(update={"date_reference": "jour"})
+    )
+
+    assert faits.periode is None
+    assert "aucune" in faits.avertissement
+    assert faits.avertissement in faits.en_clair()

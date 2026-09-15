@@ -334,7 +334,17 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   registre. Le `dictionary` s'adresse au modèle de langage ; `features` s'adresse au
   code (§4.6, `correspondance.py`). C'est la source qui le sait, et elle seule : le
   même modèle `titanic` est alimenté par `classes.level` dans la base Postgres et
-  par `Pclass` dans le CSV vendorisé.
+  par `Pclass` dans le CSV vendorisé. Ce que la source déclare là est **relu contre
+  son schéma** avant toute requête : une colonne déclarée qui n'existe pas est
+  nommée, avec celles qui existent, au lieu de finir en SQL en erreur puis en
+  feature absente (§4.6).
+  Elle peut enfin déclarer `date_reference` **facultatif** — la colonne sur laquelle
+  se lit la **période** couverte, `table.colonne` ou `colonne` seule. Sans elle, la
+  période est celle de la première colonne de date du schéma (§4.11, « Ce qu'on LIT
+  dans une source ») : juste, puisque
+  la colonne est nommée dans la réponse, mais choisie par l'ordre du DDL. Une source
+  qui porte une date de commande **et** une date de livraison a une colonne qui
+  compte, et elle seule le sait.
 - `sql.py` — l'ontologie (tables, colonnes, types, clés primaires/étrangères) rendue
   en DDL compact pour le prompt, valeurs des colonnes à faible cardinalité comprises
   (sans quoi le modèle devine les littéraux, et il les devine dans sa langue) ; le
@@ -394,7 +404,23 @@ agrégat calculé dessus étant faux sans en avoir l'air. Les figures reviennent
   (`classes.level AS pclass`) ; la ligne récupérée est rapprochée du schéma **par le
   nom déclaré**, sans dépendre de ce que l'agent a aliasé ; et une source du
   catalogue qui ne déclare rien pour un modèle est **refusée avant d'être
-  interrogée**, avec le message qui dit quoi écrire. Une source peut aussi déclarer
+  interrogée**, avec le message qui dit quoi écrire. Quatrième usage depuis, et
+  c'est la moitié qui manquait : `confronter()` relit chaque colonne déclarée
+  **contre le schéma réel de la source**, une fois la connexion ouverte et avant
+  la moindre requête. Un `classes.levelx` écrit dans un YAML partait jusque-là en
+  SQL, échouait sur une colonne inconnue, laissait l'agent se corriger au jugé et
+  finissait en feature absente du payload — un symptôme à trois pas de sa cause.
+  Le refus nomme la colonne introuvable, propose la colonne réelle qui lui
+  ressemble, liste celles de la source, et dit que rien n'a été interrogé.
+  Mesuré avant/après sur la base Postgres `titanic` : un `classes.levelx` était
+  **silencieusement réparé** par l'agent SQL (une prédiction juste, 4 tirages sur
+  4, et une déclaration fausse qui survit) ; un `classes.rang_du_billet` passait
+  par `classes.label` et rendait « reçu `'3e classe'` », qui accuse les données là
+  où la faute est au catalogue. Les deux coûtaient 5 appels LLM et une requête ;
+  ils en coûtent 2 et zéro, avec un message qui dit quelle ligne du YAML corriger. Sur la
+  correspondance **déclarée** seulement : un tableau du tour précédent ne déclare
+  rien, et une feature qu'aucune de ses colonnes ne porte doit rester réclamée par
+  le schéma, pas traitée en faute de catalogue. Une source peut aussi déclarer
   la traduction des valeurs (`values: {"3e classe": 3}`) quand elle ne représente
   pas la feature comme le schéma l'attend — deux écarts distincts, le nom et la
   représentation. Une valeur qu'aucune traduction ne couvre est laissée **telle
@@ -560,7 +586,30 @@ toute autre capacité.
 invalide, plafond d'allers-retours atteint (`DAA_SYSTEME_REQUEST_LIMIT`) — le tour
 repart au planificateur au lieu d'échouer, parce que ce nœud est en tête de *chaque*
 tour et qu'un planificateur qui aurait su répondre ne doit pas être privé de la
-question. Ce qu'un **outil** rate — une source injoignable, un catalogue illisible —
+question.
+
+**Le plafond, lui, vaut 6, et c'est mesuré.** Il valait 4, et 4 était serré : une
+question sur trente-six — « sur quoi je peux travailler ? » — l'épuisait **sous
+Ollama** et retombait dans le repli du planificateur, alors qu'elle passait sous
+vLLM. Ce n'était pas une boucle : la question ouvre sur tous les sujets à la fois,
+et les deux moteurs y répondent différemment — vLLM ouvre **un** outil, Ollama en
+ouvre **cinq** (capacités, sources, deux fois le schéma, modèles), soit six
+allers-retours avec la formulation. Sondée seule à 6, 8 et 12, elle coûte 6 à
+chaque fois : le chemin converge, il ne s'emballe pas.
+
+| Plafond | vLLM — méta | appels LLM | Ollama — méta | appels LLM |
+|---|---|---|---|---|
+| 4 | 36/36 | 78 | **35/36** | 83 |
+| 5 | 36/36 | 78 | **35/36** | 84 |
+| **6** | **36/36** | **78** | **36/36** | **83** |
+
+Batterie complète des 36 questions méta, témoins à 4/4 et 17 appels dans les six
+exécutions. 6 est la plus basse valeur qui rend 36/36 sur les **deux** moteurs, et
+elle est **gratuite** : même total qu'à 4 sur les deux moteurs, et pas une seule
+question dont le coût bouge. Un plafond n'est pas un budget dépensé, c'est un budget
+disponible — seule la question qui en a besoin le touche. L'atteindre coûtait
+d'ailleurs *plus* cher que de réussir : l'échec ajoute le tour du planificateur et
+celui de la synthèse, d'où les 84 appels du plafond 5. Ce qu'un **outil** rate — une source injoignable, un catalogue illisible —
 n'est pas rattrapé : c'est un vrai défaut de configuration, il remonte au garde-fou
 et il est dit.
 
@@ -654,8 +703,17 @@ fil ne lie rien : il est interrogeable, ce n'est pas une source de données.
 Le catalogue YAML ne porte qu'une description écrite à la main. Pour choisir entre
 plusieurs sources il faut savoir laquelle pèse trois cents lignes et laquelle couvre
 2024 : `agents/retrieval/faits.py` **lit** chaque source — nombre de tables, de lignes,
-et la période de sa première colonne de date s'il y en a une — et `RelevesDuCatalogue`
+et la période de sa colonne de date s'il y en a une — et `RelevesDuCatalogue`
 garde le relevé.
+
+- **Quelle** colonne de date : celle que la source **désigne** (`date_reference`,
+  §4.4), à défaut la première du schéma. Le défaut ne parie pas sur les noms et
+  assume de ne pas choisir — la colonne retenue est nommée dans la réponse. Une
+  désignation que le schéma ne porte pas ne fait pas tomber le relevé (les tables
+  et les lignes restent bonnes) mais **se dit**, avec les colonnes de date
+  réelles : sans ce message, le repli serait indiscernable d'une source qui ne
+  désigne rien, et une faute de frappe survivrait indéfiniment. Mesuré sur
+  `tests/catalogues/deux-dates/`, trois déclarations sur les mêmes octets.
 
 - Le relevé est fait au **premier inventaire**, pas à l'ouverture du serveur : ouvrir
   toutes les sources au démarrage ferait payer le lancement à qui ne pose aucune
@@ -949,7 +1007,7 @@ plafonds de la sandbox).
 | `DAA_CATALOG_PATH` | `sources/catalogue.yaml` | catalogue des sources |
 | `DAA_RETRIEVAL_MAX_ROWS` | `200` | lignes max renvoyées par requête |
 | `DAA_RETRIEVAL_REQUEST_LIMIT` | `10` | allers-retours LLM max (anti-boucle) |
-| `DAA_SYSTEME_REQUEST_LIMIT` | `4` | allers-retours LLM max de l'agent système : un pour choisir l'outil de faits, un pour formuler, deux de marge. Court exprès — ce nœud est en tête de **chaque** question |
+| `DAA_SYSTEME_REQUEST_LIMIT` | `6` | allers-retours LLM max de l'agent système : un par outil de faits ouvert, un dernier pour formuler. Court exprès — ce nœud est en tête de **chaque** question. 6 est la plus basse valeur qui rend 36/36 sur les deux moteurs, et elle ne coûte rien de plus que 4 (§4.10) |
 | `DAA_ANALYSIS_MAX_ATTEMPTS` | `3` | essais de self-debug du code |
 | `DAA_ANALYSIS_TABLE_MAX_ROWS` | `10000` | lignes matérialisées par table pour l'analyse. **Au-delà, la table est coupée** et l'avertissement part dans le contexte du code généré, dans la trace et dans la réponse : un agrégat calculé sur un échantillon ne doit pas se présenter comme complet |
 | `DAA_MODELS_REGISTRY_PATH` | `models/registry.yaml` | registre des modèles ML |
