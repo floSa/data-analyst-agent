@@ -31,6 +31,8 @@ formulation à laquelle personne n'avait pensé.
 | **15** | la même batterie sur **deux moteurs** — le trou de la ceinture que vLLM a découvert, et la mesure à 36/36 des deux côtés | **oui** |
 | **16** | le typage des arguments d'outil : le **seul** champ que le schéma ne déclare pas, et la prédiction que seul Ollama rendait | **oui** |
 | **17** | le planificateur **substituait** une valeur légale à l'entrée impossible : la garde mesurée sur une entrée que le système ne fabriquait pas | **oui** |
+| **18** | un témoin qui **bouclait** : une question sur les colonnes, dans un prompt qui n'en connaissait pas | **oui** |
+| **19** | la correspondance source → features **devinée** : trois requêtes pour une même question, et la déclaration qui les remplace | **oui** |
 
 ## 1. Le défaut constaté, et sa cause
 
@@ -2211,4 +2213,303 @@ Suite complète : **875 passés, 99,49 %** (872 avant le chantier).
   réponse ;
 - **`fetch_then_predict`** — la source Postgres rend `'3e classe'` là où le
   schéma attend `pclass`. Antérieur, distinct, sur les deux moteurs ;
-  explicitement hors du périmètre de ce chantier.
+  explicitement hors du périmètre de ce chantier. **Traité au
+  [§19](#19-la-ligne-venait-de-la-base-et-la-prédiction-la-refusait)**, où la
+  mesure a montré non pas un symptôme mais trois.
+
+## 19. La ligne venait de la base, et la prédiction la refusait
+
+Relevé depuis quatre chantiers et renvoyé chaque fois au suivant
+([§15.6](#156-les-témoins-et-les-deux-questions-de-données-qui-restent),
+[§16](#16-literal1-2-3-refusait-1--la-prédiction-que-seul-ollama-rendait),
+[§17](#17-la-4e-classe-nexiste-pas-et-lagent-prédisait-quand-même),
+[§18.9](#189-ce-qui-reste-ouvert-après-le-18)) : `fetch_then_predict` — aller
+chercher des lignes en base, puis prédire dessus — échouait sur des lignes
+venues de la base elle-même.
+
+> « Prédis la survie des cinq premiers passagers de la base. »
+
+### 19.1 Le défaut reproduit, cinq tirages par moteur
+
+Le relevé précédent nommait un seul symptôme : « la source rend `'3e classe'`
+là où le schéma attend `pclass` ». Mesuré, il y en a **trois**, et c'est le
+fait central de ce §. Cinq tirages par moteur, avec le SQL réellement exécuté
+et la ligne réellement reçue :
+
+| Moteur | Tirages | SQL choisi pour la classe | Ce que la ligne portait | Lignes prédites |
+|---|---|---|---|---|
+| vLLM | 5/5 | `p.class_id` — **sans alias** | colonne `class_id` | **0/5** |
+| Ollama | 4/5 | `c.label AS pclass` | `'3e classe'` | **0/5** |
+| Ollama | 1/5 | `class_id AS pclass` | `3` | 5/5 |
+
+Un sixième tirage, pris avant la série, avait donné `c.level AS pclass` — la
+réponse juste, par une troisième route. Quatre requêtes différentes pour une
+même question, sur un même schéma.
+
+Ce que la validation disait, mot pour mot :
+
+- sous vLLM — `Aucune des 5 lignes récupérées n'a passé la validation (pclass
+  (Classe du billet (1re, 2e, 3e)) : valeur manquante) — pas de prédiction.`
+  La colonne s'appelait `class_id`, elle ne portait aucun nom du schéma, elle a
+  été écartée du payload ;
+- sous Ollama — même refus, pour une raison opposée : la colonne s'appelait bien
+  `pclass`, et valait `'3e classe'`.
+
+**Le défaut n'est donc pas une valeur mal traduite. C'est une correspondance
+devinée**, qui tombe juste ou faux selon le moteur, le tirage, et la table sur
+laquelle le modèle a posé les yeux.
+
+### 19.2 Deux écarts empilés, qu'il ne faut pas confondre
+
+La base est modélisée en deux tables. `passengers` porte `class_id`, clé
+étrangère vers `classes`, qui porte `level` (l'entier) **et** `label` (le
+libellé). Le schéma de prédiction, lui, attend `pclass` — le nom du dataset
+d'entraînement, pas celui de la base.
+
+- **écart de nom** : `pclass` ne nomme aucune colonne de la source ;
+- **écart de représentation** : la même information existe en base sous deux
+  formes, `3` et `'3e classe'`, et une seule convient au modèle.
+
+Les deux se règlent séparément : nommer la colonne ne dit pas comment lire sa
+valeur, et traduire la valeur ne dit pas dans quelle colonne la prendre.
+
+### 19.3 L'étendue, colonne par colonne
+
+La consigne était de mesurer chaque colonne, et non de supposer que seule
+`pclass` divergeait. Relevé sur la base réelle (891 passagers), en confrontant
+chaque champ du schéma aux colonnes des deux tables :
+
+| Feature | Type attendu | Colonne de même nom | Domaine lu en base | Verdict |
+|---|---|---|---|---|
+| `sex` | `Literal['male','female']` | `passengers.sex` | `female`, `male` — 0 NULL | **aligné**, domaine exactement le `Literal` |
+| `pclass` | `Literal[1,2,3]` | **aucune** | trois candidates : `passengers.class_id` (1-3), `classes.level` (1-3), `classes.label` (`'1re classe'`…) | **seul écart** — de nom ET de représentation |
+| `age` | `float` 0-100 | `passengers.age` | 0,42 → 80 — **177 NULL** | aligné ; les NULL écartent la ligne, comme prévu |
+| `sibsp` | `int` 0-10 | `passengers.sibsp` | 0-8 — 0 NULL | aligné, domaine inclus dans les bornes |
+| `parch` | `int` 0-10 | `passengers.parch` | 0-6 — 0 NULL | aligné |
+| `fare` | `float` 0-600 | `passengers.fare` | 0 → 512,33 — 0 NULL | aligné |
+| `embarked` | `Literal['S','C','Q']` | `passengers.embarked` | `C`, `Q`, `S` — **2 NULL** | aligné ; les NULL écartent la ligne |
+
+Sept features, **un seul écart**. Mais le mesurer changeait la correction : si
+trois colonnes avaient divergé, une table de traduction par source aurait été
+la forme évidente. Une seule, et c'est la *place* de la déclaration qui
+compte, pas son volume.
+
+### 19.4 Où la correspondance a sa place, et pourquoi pas ailleurs
+
+Trois candidats étaient à éprouver.
+
+**Le schéma de features — écarté, et mesuré.** `TitanicFeatures` sait qu'il
+attend `pclass ∈ {1,2,3}` ; il ne sait pas d'où ça vient, et il ne peut pas le
+savoir : le **même** modèle `titanic` est alimenté par deux sources de ce dépôt,
+la base Postgres (`classes.level`) et le CSV vendorisé `sources/titanic.csv`
+(en-tête `Pclass`), et par trois de plus dans les tests. Un schéma qui
+déclarerait la colonne devrait les énumérer toutes. C'est exactement la table en
+dur retirée en C13, déplacée d'un cran vers le modèle.
+
+**Le dictionnaire de la source — écarté, et mesuré aussi.** C'est le candidat
+sérieux : le dictionnaire existe déjà pour dire ce que les données *veulent
+dire*, et c'est bien de cela qu'il s'agit. Il a donc été essayé pour de bon —
+le paragraphe qu'un dictionnaire écrirait, ajouté au prompt de l'agent SQL,
+sous vLLM :
+
+> « `classes.level` porte l'ENTIER (1, 2, 3) ; `classes.label` porte le libellé
+> humain. La feature `pclass` attend l'entier : utilise `classes.level`, jamais
+> `classes.label` ni `passengers.class_id`. »
+
+**Et ça marche : 3 tirages sur 3, `c.level AS pclass`.** Le résultat est rapporté
+tel quel, parce qu'il est le vrai argument de la décision — et qu'il ne suffit
+pas :
+
+1. **la prose persuade, elle ne déclare pas.** Ce 3/3 vaut pour ce moteur, ce
+   modèle, cette rédaction. Le §19.1 vient de montrer quatre requêtes
+   différentes sur la même consigne : ce projet a changé de moteur il y a un
+   chantier, et une correction qui tient par la formulation est une correction
+   qu'il faut remesurer à chaque bascule ;
+2. **une prose absente ne produit aucun refus.** Une source dont le
+   dictionnaire ne dit rien de `pclass` retombe exactement sur le défaut du
+   §19.1 — silencieusement ;
+3. **le dictionnaire n'atteint même pas l'endroit du défaut.** Il n'est lu
+   aujourd'hui que par `orchestrator/systeme.py`, pour répondre au sens d'une
+   colonne. L'y brancher ferait entrer dans le prompt SQL tout ce qu'un
+   dictionnaire contient par ailleurs — pièges de modélisation, unités,
+   historique — pour une seule phrase utile.
+
+**Le catalogue — retenu.** La source y est déclarée par un humain, dans un
+fichier, et c'est la source qui *sait* quelle colonne porte quoi. Chaque source
+peut donc déclarer `features: {dataset: {feature: colonne}}` :
+
+```yaml
+  - type: postgres
+    name: titanic
+    dsn: postgresql+pg8000://…/titanic
+    features:
+      titanic:
+        sex: passengers.sex
+        pclass: classes.level      # l'ENTIER, pas classes.label
+        age: passengers.age
+        …
+```
+
+La différence avec la prose n'est pas de style : cette déclaration est **lue par
+le code**, trois fois.
+
+### 19.5 Ce que la déclaration fait, et ce qu'elle refuse
+
+`agents/inference/correspondance.py` en tire trois usages, et c'est ce qui la
+distingue d'un dictionnaire :
+
+1. **la consigne SQL devient exacte.** Au lieu de « renvoie des colonnes nommées
+   exactement : `sex, pclass, …` », l'agent reçoit `classes.level AS pclass`,
+   ligne par ligne. Il ne reste rien à choisir ;
+2. **le rapprochement est mécanique.** La ligne reçue est lue par le nom déclaré
+   — l'alias demandé, ou le nom nu de la colonne si l'agent l'a omis, à la casse
+   près. Elle ne dépend plus de ce que l'agent a bien voulu aliaser ;
+3. **l'absence de déclaration est un refus, pas un silence.** Une source du
+   catalogue qui ne déclare rien pour un modèle est refusée **avant** d'être
+   interrogée.
+
+L'écart de représentation, lui, se déclare en forme longue — et c'est la
+deuxième moitié, tenue séparément :
+
+```yaml
+        pclass:
+          column: classes.label
+          values: {"1re classe": 1, "2e classe": 2, "3e classe": 3}
+```
+
+**Ce n'est pas un relâchement de la garde.** Une valeur qu'aucune traduction
+déclarée ne couvre est laissée **telle quelle**, et le schéma la refuse en
+citant ce qu'il a lu — `'troisième classe'` ressort en « Input should be 1, 2 or
+3 (reçu : `'troisième classe'`) ». Substituer ici une valeur légale serait
+précisément la faute du [§17](#17-la-4e-classe-nexiste-pas-et-lagent-prédisait-quand-même).
+Un `age` à 150 venu de la base est refusé comme un `age` à 150 venu de
+l'utilisateur, et le lot reste borné par `retrieval_max_rows`.
+
+### 19.6 Ce qui n'a AUCUN fichier où déclarer
+
+Une exception, et une seule : un tableau produit au tour précédent et réinjecté
+sous `resultat_1` (« prédis ces lignes ») n'est écrit dans aucun YAML. Ses
+colonnes sont celles que la requête précédente a nommées ; on les rapproche par
+leur nom, ce qui n'invente rien, et une feature qu'aucune colonne ne porte reste
+absente du payload — donc réclamée par le schéma, sous son nom. Les sources du
+catalogue, elles, ont un fichier où écrire, et le refus les y renvoie.
+
+### 19.7 La mesure d'après
+
+Même question, même protocole, cinq tirages par moteur :
+
+| Moteur | Avant | Après |
+|---|---|---|
+| vLLM | 0/5 lignes prédites, 5 tirages sur 5 | **5/5 lignes prédites, 5 tirages sur 5** |
+| Ollama | 0/5 sur 4 tirages, 5/5 sur 1 | **5/5 lignes prédites, 5 tirages sur 5** |
+
+Les probabilités rendues, identiques sur les deux moteurs — le predict est
+déterministe et sans LLM, seul le chemin qui l'alimente changeait :
+
+| # | Passager | Prédiction | Confiance | Issue réelle (base) |
+|---|---|---|---|---|
+| 1 | Braund, Mr. Owen Harris | n'a pas survécu | 0,9122 | `survived = 0` ✓ |
+| 2 | Cumings, Mrs. John Bradley | a survécu | 0,9143 | `survived = 1` ✓ |
+| 3 | Heikkinen, Miss. Laina | a survécu | 0,6184 | `survived = 1` ✓ |
+| 4 | Futrelle, Mrs. Jacques Heath | a survécu | 0,8810 | `survived = 1` ✓ |
+| 5 | Allen, Mr. William Henry | n'a pas survécu | 0,9245 | `survived = 0` ✓ |
+
+Cinq sur cinq. La colonne `survived` a été relue dans la base, et non récitée :
+c'est l'oracle, pas un souvenir.
+
+**L'écart de représentation, mesuré à part.** La même base, déclarée sur
+`classes.label` avec sa table `values`, sous vLLM : l'agent sélectionne
+`c.label AS pclass`, la ligne arrive avec `'3e classe'`, et les cinq
+prédictions sont **identiques à celles du tableau ci-dessus**. La table de
+détail montre `'3e classe'` — la source dit ce qu'elle dit — pendant que le
+modèle a reçu `3`.
+
+### 19.8 Le refus, sur une source qui ne déclare rien
+
+Mesuré sur `tests/catalogues/ambiguite/titanic-en-premier.yaml`, qui déclare une
+source `titanic` pointant sur le CSV vendorisé, sans bloc `features` :
+
+```
+Je n'ai pas pu répondre : la source 'titanic' ne déclare pas quelles colonnes
+alimentent le modèle 'titanic'. Ajoutez-lui dans le catalogue un bloc
+`features: {titanic: ...}` avec une entrée par feature attendue (sex, pclass,
+age, sibsp, parch, fare, embarked) — sur le modèle `sex: <table>.<colonne>`.
+Sans lui, la colonne qui porte chaque feature serait devinée.
+```
+
+Trace : `[fetch_predict] correspondance non déclarée`. **Aucune requête n'a été
+envoyée à la source** — le refus tombe avant l'ouverture.
+
+Ce cas mérite d'être regardé de près, parce qu'il est le plus tentant : ce CSV
+porte `Pclass`, `Sex`, `Age`… Le rapprochement par le nom, insensible à la
+casse, **aurait marché**. C'est précisément ce qu'on refuse : ce qui marche par
+coïncidence sur une source se trompe sur la suivante, où `pclass` vit dans une
+autre table sous un autre nom — et ce § est le compte rendu de cette
+coïncidence-là.
+
+Une déclaration **incomplète** ou portant une feature que le modèle n'attend pas
+est refusée de la même façon, en nommant ce qui manque ou ce qui est en trop.
+
+### 19.9 Ce que la suite garde
+
+Un fichier de tests pour le module (`tests/unit/inference/test_correspondance.py`,
+17 tests) et un test de bout en bout dans le graphe. Ce qu'ils tiennent, et non
+ce qu'ils couvrent :
+
+- la forme courte vaut la forme longue, et le catalogue relit la déclaration ;
+- la consigne SQL nomme la colonne source **et** son alias ;
+- la feature est reconnue sous son alias, sous le nom nu de la colonne déclarée,
+  et à la casse près ;
+- une colonne déclarée mais absente de la ligne n'est **pas inventée** : le
+  schéma la réclame sous son nom ;
+- le libellé déclaré est traduit ; **un libellé non déclaré reste tel quel et le
+  schéma le refuse en le citant** ;
+- un `age` hors bornes venu de la base est refusé comme un autre ;
+- les trois refus — rien de déclaré, déclaration incomplète, feature inconnue du
+  modèle — nomment chacun ce qu'il faut écrire ;
+- de bout en bout : une source du catalogue sans déclaration refuse **sans
+  interroger la source**, et la trace le dit.
+
+Une phrase de la consigne SQL est tenue par un test, et elle vient d'une mesure :
+« le filtre et le nombre de lignes restent ceux de la demande ci-dessus ». Sans
+elle, une consigne de sept lignes recouvrait la demande — sous Ollama, « les
+cinq premiers passagers » repartait **sans `LIMIT`** et ramenait toute la table,
+coupée à 200 par `retrieval_max_rows`.
+
+Suite complète : **893 passés, 99,50 %** (875 avant le chantier).
+
+### 19.10 La batterie rejouée, sur les deux moteurs
+
+Ce chantier touche le catalogue et le chaînage de prédiction, pas le routage
+des questions méta. La batterie est donc rejouée pour montrer qu'il n'a rien
+déplacé, et non pour mesurer autre chose.
+
+| Moteur | Questions méta | Témoins | Coût |
+|---|---|---|---|
+| vLLM (`google/gemma-4-E4B-it-qat-w4a16-ct`, port 8100) | **36/36** | **4/4** | 78 + 17 appels LLM |
+| Ollama (`gemma4:e4b`, port 11434) | **35/36** | **4/4** | 83 + 17 appels LLM |
+
+Le seul écart, `sources-premiere-personne` sous Ollama, est celui que le
+[§18.7](#187-pas-de-régression--la-batterie-complète-sur-les-deux-moteurs) a déjà instruit et rendu à sa
+cause : `agent système écarté (incident 240eef48) : The next request would
+exceed the request_limit of 4`. C'est le `systeme_request_limit = 4` signalé
+serré au [§15.7](#157-ce-qui-reste-ouvert-après-le-15), le *fail-open* joue son
+rôle, et il n'est pas arrondi ici.
+
+Le témoin `temoin-colonnes-a-trous` passe sur les deux moteurs, avec l'oracle
+durci au §18 — celui qui vérifie aussi les colonnes **interdites**. Il n'a pas
+été desserré.
+
+### 19.11 Ce qui reste ouvert après le §19
+
+- **`sources-premiere-personne` sous Ollama** — inchangé depuis le §18.7, cause
+  identifiée (`systeme_request_limit = 4`), à traiter pour lui-même ;
+- **la déclaration n'est pas vérifiée contre la source.** Rien ne relit le
+  schéma de la base pour confirmer que `classes.level` existe. Une déclaration
+  fausse produit un SQL en erreur, que l'agent tente de corriger, puis une
+  feature absente — lisible, mais tard. Le catalogue pourrait le dire au
+  chargement ;
+- **la déclaration est par source ET par dataset.** Deux sources qui exposent la
+  même modélisation la répètent. Rien ne le justifie tant qu'il y en a deux ;
+- **le relevé d'une source ne choisit toujours pas sa colonne de date** quand il
+  y en a plusieurs, cf. [axes-amelioration.md](axes-amelioration.md).

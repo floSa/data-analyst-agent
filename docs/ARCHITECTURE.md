@@ -225,9 +225,9 @@ les CSV, sans laisser de données orphelines.
   atomiques et verrou par conversation.
 - `graph.py` — le `StateGraph` LangGraph : state typé (`TypedDict` avec accumulation
   des artefacts et de la trace), nœuds gardés, routage code, chaînage
-  `fetch_then_predict` (lignes SQL → intersection avec les champs du schéma de
-  features, insensible à la casse → validation → predict ; ce que l'utilisateur a
-  fourni explicitement prime sur la ligne lue). **Une ligne récupérée → prédiction
+  `fetch_then_predict` (lignes SQL → rapprochement par la correspondance **déclarée
+  par la source** (§4.6), insensible à la casse → validation → predict ; ce que
+  l'utilisateur a fourni explicitement prime sur la ligne lue). **Une ligne récupérée → prédiction
   unitaire ; plusieurs lignes (« toutes les femmes ») → prédiction en lot** :
   chaque ligne validée, les valides prédites en un seul appel modèle vectorisé,
   les invalides écartées et comptées, réponse agrégée (répartition des classes ou
@@ -300,6 +300,12 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   Toute source peut déclarer un `dictionary` **facultatif** : un Markdown qui dit ce
   que les données *veulent dire*, là où le DDL ne dit que des types. C'est lui qu'on
   cite quand on demande le sens d'une colonne (§4.10).
+  Elle peut aussi déclarer un bloc `features` **facultatif** — `{dataset: {feature:
+  colonne}}` — qui dit quelles colonnes de CETTE source alimentent quel modèle du
+  registre. Le `dictionary` s'adresse au modèle de langage ; `features` s'adresse au
+  code (§4.6, `correspondance.py`). C'est la source qui le sait, et elle seule : le
+  même modèle `titanic` est alimenté par `classes.level` dans la base Postgres et
+  par `Pclass` dans le CSV vendorisé.
 - `sql.py` — l'ontologie (tables, colonnes, types, clés primaires/étrangères) rendue
   en DDL compact pour le prompt, valeurs des colonnes à faible cardinalité comprises
   (sans quoi le modèle devine les littéraux, et il les devine dans sa langue) ; le
@@ -352,6 +358,21 @@ agrégat calculé dessus étant faux sans en avoir l'air. Les figures reviennent
   `manquant`, `hors_bornes`, `valeur_non_autorisee`, `type_invalide`,
   `champ_inconnu` — plus la question de relance en français. **Pas de predict tant
   que ça ne valide pas.**
+- `correspondance.py` — **quelle colonne d'une source porte quelle feature**, lu
+  dans le bloc `features` que la source déclare au catalogue (§4.4). Trois usages,
+  et c'est ce qui distingue une déclaration d'un paragraphe de documentation : la
+  consigne donnée à l'agent SQL nomme la colonne source ET son alias
+  (`classes.level AS pclass`) ; la ligne récupérée est rapprochée du schéma **par le
+  nom déclaré**, sans dépendre de ce que l'agent a aliasé ; et une source du
+  catalogue qui ne déclare rien pour un modèle est **refusée avant d'être
+  interrogée**, avec le message qui dit quoi écrire. Une source peut aussi déclarer
+  la traduction des valeurs (`values: {"3e classe": 3}`) quand elle ne représente
+  pas la feature comme le schéma l'attend — deux écarts distincts, le nom et la
+  représentation. Une valeur qu'aucune traduction ne couvre est laissée **telle
+  quelle** et refusée par le schéma, qui la cite : substituer ici une valeur légale
+  serait la faute que §4.2 interdit au planificateur. Seule exception au refus : un
+  tableau du tour précédent réinjecté sous `resultat_1`, qui n'a aucun YAML où
+  déclarer — ses colonnes sont rapprochées par leur nom.
 - `registry.py` — registre YAML (`models/registry.yaml`) : dataset → artefact
   joblib, tâche, libellés de classes, unité. Cache de chargement. Cible d'évolution :
   MLflow Model Registry, même interface.
