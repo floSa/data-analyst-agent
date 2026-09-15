@@ -19,7 +19,8 @@ place, sources réelles, bac à sable Docker :
 6. produire une SECONDE figure, sur un autre sujet ;
 7. revenir à la PREMIÈRE figure — cinq tours plus tard, et deux figures plus
    loin ;
-8. demander un artefact qui n'existe pas — le refus doit le dire.
+8. demander un artefact qui n'existe pas — l'absence doit être DITE avant
+   qu'une figure neuve soit produite.
 
 Le tour 7 est aussi la mesure de l'**éviction**, et il se lit à la lumière du
 réglage : avec la fenêtre de code par défaut, la première figure est encore là
@@ -85,7 +86,16 @@ MARQUEUR_DE_REFUS = "aucun artefact ne s'appelle"
 # Le refus d'un artefact ÉVINCÉ, qui n'est pas le même : il dit qu'on a bien
 # produit la chose, mais qu'elle est sortie de la fenêtre. Les confondre
 # reviendrait à dire à quelqu'un qu'il n'a jamais demandé ce graphique.
-MARQUEUR_D_EVICTION = "evince du contexte"
+# Deux formes, selon qui parle : l'outil refuse un NOM (« l'artefact
+# graphique_1 … a été évincé »), ou le nœud constate une désignation restée
+# sans réponse dans un fil tronqué (« N objet(s) … ont été ÉVINCÉS »).
+MARQUEURS_D_EVICTION = ("evince du contexte", "evinces du contexte")
+
+# L'aveu déterministe du nœud : on produit à la place de rappeler, et on le
+# dit. C'est ce qu'on veut LIRE au tour 8 — la dernière poche de la famille
+# `acfd8f5`, celle où rien de faux n'est affirmé mais où l'utilisateur repart
+# en croyant qu'on a retrouvé son travail.
+MARQUEUR_D_AVEU = "ce qui suit est neuf, pas un rappel"
 
 # Les agents, reconnus par la première ligne de leur prompt système. Sert à
 # ranger les tokens mesurés par agent : le poids du planificateur et celui de
@@ -232,7 +242,7 @@ PARCOURS = [
     Tour(
         "absent",
         "Tu peux me remontrer le camembert des ports d'embarquement que tu avais fait ?",
-        "un refus qui dit que cet artefact n'existe pas",
+        "l'absence DITE avant qu'une figure neuve soit produite",
     ),
 ]
 
@@ -280,9 +290,16 @@ def juger(releve: Releve, premiers_artefacts: list[str], fenetre_de_code: int) -
             return _verdict(
                 releve, False, f"rejeu du MAUVAIS artefact : {releve.detail_du_rappel}", grave=True
             )
-        ok = MARQUEUR_D_EVICTION in plat and releve.figures == 0
+        # L'éviction DITE est ce qu'on exige, et une figure neuve produite
+        # après l'avoir dite n'est plus une tromperie : le compte de figures ne
+        # décide donc plus du verdict, la phrase seule le décide.
+        ok = any(m in plat for m in MARQUEURS_D_EVICTION)
         return _verdict(releve, ok, f"réponse={' '.join(releve.reponse.split())[:160]!r}")
-    ok = MARQUEUR_DE_REFUS in plat
+    # Tour 8 — deux issues conformes, et elles disent la même chose par deux
+    # portes : l'outil a été appelé avec un nom et l'a refusé, ou le nœud a vu
+    # une désignation rester sans réponse et a dit l'absence avant de laisser
+    # le planificateur produire. Ce qui est exclu est le silence.
+    ok = MARQUEUR_DE_REFUS in plat or MARQUEUR_D_AVEU in plat
     return _verdict(releve, ok, f"réponse={' '.join(releve.reponse.split())[:160]!r}")
 
 
