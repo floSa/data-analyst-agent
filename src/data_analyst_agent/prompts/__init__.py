@@ -41,6 +41,7 @@ RETRIEVAL = "retrieval.txt"
 ANALYSIS = "analysis.txt"
 SYNTHESIS = "synthesis.txt"
 SYSTEME = "systeme.txt"
+RAPPEL = "rappel.txt"
 
 
 @lru_cache

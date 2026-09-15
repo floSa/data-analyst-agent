@@ -148,6 +148,7 @@ def test_chaque_noeud_a_son_message():
         "inference",
         "fetch_predict",
         "system",
+        "rappel",
         "synthesize",
     }
 

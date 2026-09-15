@@ -587,7 +587,15 @@ def test_predict_sans_features_chaine_sur_le_tableau_memorise(tmp_path: Path):
     assert answer.plan.capability == "fetch_then_predict"
     assert answer.plan.source == "resultat_1"
     assert "Prédiction (iris)" in answer.answer
-    assert [s.node for s in answer.trace] == ["system", "plan", "fetch_predict", "synthesize"]
+    # `rappel` est traversé parce que le fil PORTE un artefact — il décline, et
+    # sa ligne le dit : un fil qui a des artefacts en laisse toujours une.
+    assert [s.node for s in answer.trace] == [
+        "system",
+        "rappel",
+        "plan",
+        "fetch_predict",
+        "synthesize",
+    ]
 
 
 def test_predict_sans_features_sans_tableau_utilisable_redemande(registry: Registry):

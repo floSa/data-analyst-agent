@@ -14,7 +14,8 @@ import re
 import tempfile
 import time
 import uuid
-from contextlib import closing
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, TypedDict
@@ -66,8 +67,16 @@ from data_analyst_agent.orchestrator.plan import (
     planner_system_prompt,
     planner_template,
 )
+from data_analyst_agent.orchestrator.rappel import (
+    Rejeu,
+    defaut_de_formulation,
+    run_rappel,
+)
 from data_analyst_agent.orchestrator.systeme import run_systeme
-from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
+from data_analyst_agent.orchestrator.workspace import (
+    ConversationWorkspace,
+    WorkspaceArtifact,
+)
 from data_analyst_agent.sandbox.client import MimeOutput
 
 logger = logging.getLogger("data_analyst_agent.orchestrator")
@@ -93,6 +102,7 @@ ERREURS_UTILISATEUR = {
     "inference": "la prédiction n'a pas pu être lancée",
     "fetch_predict": "les données de la prédiction n'ont pas pu être récupérées",
     "system": "je n'ai pas pu relire ma propre configuration",
+    "rappel": "je n'ai pas pu reprendre ce qui a déjà été produit dans cette conversation",
     "synthesize": "la réponse n'a pas pu être composée",
 }
 ERREUR_UTILISATEUR_PAR_DEFAUT = "une étape interne a échoué"
@@ -167,6 +177,7 @@ class OrchestratorState(TypedDict, total=False):
     source_out: str | None  # ce que le fil retient de ce tour
     avis_de_source: str  # « je travaille sur X », mis en tête de la réponse
     system: str | None  # réponse à une question SUR le système
+    rappel: str | None  # réponse rendue en rappelant un artefact du fil
     clarification: str | None
     workspace: ConversationWorkspace | None
     answer: str
@@ -442,6 +453,7 @@ class Orchestrator:
         builder.add_node("inference", self._guarded("inference", self._inference_node))
         builder.add_node("fetch_predict", self._guarded("fetch_predict", self._fetch_predict_node))
         builder.add_node("system", self._guarded("system", self._system_node))
+        builder.add_node("rappel", self._guarded("rappel", self._rappel_node))
         builder.add_node("synthesize", self._guarded("synthesize", self._synthesize_node))
 
         # Le nœud `system` est en TÊTE, et c'est le changement de forme du
@@ -453,6 +465,16 @@ class Orchestrator:
         builder.add_conditional_edges(
             "system",
             self._apres_le_systeme,
+            {"rappel": "rappel", "synthesize": "synthesize"},
+        )
+        # Puis : « est-ce qu'on parle de quelque chose que j'ai déjà produit ? ».
+        # Deuxième question posée, et pas la première : « que sais-tu faire ? »
+        # ne doit pas se faire attraper par un fil qui a produit des tableaux.
+        # Le nœud se retire sans appeler le modèle quand le fil n'a rien
+        # produit — un fil neuf ne paie donc rien (cf. `_rien_a_rappeler`).
+        builder.add_conditional_edges(
+            "rappel",
+            self._apres_le_rappel,
             {"plan": "plan", "synthesize": "synthesize"},
         )
         builder.add_conditional_edges(
@@ -486,11 +508,31 @@ class Orchestrator:
         formulation les porte, ou quand il faut servir les faits eux-mêmes. Il
         le laisse vide dans tous les autres cas — question sur les données,
         modèle qui n'a rien appelé, agent système indisponible — et le tour
-        suit alors le chemin d'avant, planificateur compris.
+        continue : d'abord le rappel d'artefact, qui se retire sans rien coûter
+        quand le fil n'a rien produit, puis le planificateur.
         """
         if state.get("error"):
             return "synthesize"
-        return "synthesize" if state.get("system") is not None else "plan"
+        return "synthesize" if state.get("system") is not None else "rappel"
+
+    @staticmethod
+    def _apres_le_rappel(state: OrchestratorState) -> str:
+        """Le rappel a-t-il abouti, ou la demande part-elle au plan ?
+
+        Une seule chose est regardée, comme après le nœud système : ``rappel``
+        est-il renseigné. Le nœud le renseigne quand le modèle a appelé un outil
+        de rappel — relire un artefact, en rejouer un — et le laisse vide dans
+        tous les autres cas, y compris quand il n'y avait rien à rappeler. Le
+        tour suit alors le chemin d'avant, planificateur compris.
+
+        Un REJEU, lui, ne passe pas par ``rappel`` : il renseigne ``analysis``
+        et un ``plan`` d'analyse, parce que c'en est une — même synthèse, même
+        trace, même mémorisation que n'importe quelle autre analyse.
+        """
+        if state.get("error"):
+            return "synthesize"
+        abouti = state.get("rappel") is not None or state.get("analysis") is not None
+        return "synthesize" if abouti else "plan"
 
     @staticmethod
     def _route(state: OrchestratorState) -> str:
@@ -1309,6 +1351,207 @@ class Orchestrator:
             "trace": [self._step("system", f"{outils} — formulé par le modèle", start)],
         }
 
+    # -- le nœud de rappel : « parle-t-on de ce que j'ai déjà produit ? » ------
+
+    @staticmethod
+    def _rien_a_rappeler(state: OrchestratorState) -> str:
+        """Les tours où ce nœud n'a rien à faire — et ne doit donc rien coûter.
+
+        Le cas du fil vide est traité par l'appelant, avant même cet appel :
+        **un fil qui n'a encore rien produit n'a rien à rappeler**, et il ne
+        laisse donc aucune trace. Ce n'est pas un lexique déguisé, c'est une
+        précondition structurelle — le catalogue est vide, les deux outils ne
+        pourraient que refuser, et l'appel au modèle serait payé pour apprendre
+        ce que le disque dit déjà. Conséquence mesurable : une question posée
+        dans une conversation NEUVE ne paie pas ce nœud, ce qui est exactement
+        le cas de la batterie de `scripts/mesure_surface_conversationnelle.py`.
+
+        Reste ce que dit ``_tour_deja_engage`` : un message qui apporte les
+        features d'une prédiction en attente n'est pas une question, et le
+        laisser passer donnerait à ce nœud l'occasion de s'emparer d'un message
+        qui ne lui est pas adressé — c'est le défaut mesuré au §12 de
+        `docs/surface-conversationnelle.md`, par une autre porte.
+        """
+        if state.get("pending_in") is not None:
+            return "prédiction en attente de features"
+        return ""
+
+    def _rejouer_un_code(
+        self, state: OrchestratorState, artefact: WorkspaceArtifact, modification: str
+    ) -> AnalysisResult:
+        """Reprend le code d'un artefact, y applique la modification, le réexécute.
+
+        **Par le bac à sable, et par lui seul.** ``run_analysis`` est appelée
+        exactement comme au premier tour : mêmes montages en lecture seule,
+        même image durcie, donc réseau coupé, mémoire et PIDs bornés,
+        capabilities retirées — et même sémaphore de places
+        (``SandboxPlaces``), puisque c'est ``SandboxSession`` qui le prend. Un
+        rejeu n'est pas un chemin de confiance parce que le code vient de nous :
+        le code vient d'un modèle, et il a été écrit au tour 1 pour un décor
+        qui a pu changer.
+
+        Le code rappelé arrive par ``previous_code`` — le paramètre qui servait
+        déjà à l'ajustement du tour immédiatement précédent. Ce qui change n'est
+        pas le mécanisme, c'est **d'où vient le code** : d'un artefact nommé, et
+        non du dernier tour.
+
+        La source est celle qui avait été interrogée, retenue avec l'artefact.
+        Si elle n'est plus au catalogue — renommée, retirée — on remonte le
+        décor de la source du tour courant, et à défaut celui du fil ; le code
+        échouera peut-être, et il échouera dans le bac à sable avec un message,
+        ce qui vaut mieux que de refuser un rejeu qui aurait pu marcher.
+        """
+        catalogue = self._effective_catalog(state)
+        nom = artefact.source or state.get("source_in") or ""
+        resolu = self._match_source_name(nom, catalogue) if nom else None
+        source = catalogue.get(resolu) if resolu else None
+        if source is None and catalogue.sources:
+            source = catalogue.sources[0]
+        if source is None:
+            raise KeyError("aucune source à monter pour rejouer ce code")
+        with self._decor_de_donnees(state, source) as (data_files, data_context, _avis):
+            return run_analysis(
+                modification,
+                data_files=data_files,
+                data_context=data_context,
+                previous_code=self._lire_le_code(state, artefact),
+                model=self.model,
+                settings=self.settings,
+                sandbox=self._sandbox_override,
+            )
+
+    @staticmethod
+    def _lire_le_code(state: OrchestratorState, artefact: WorkspaceArtifact) -> str:
+        workspace = state["workspace"]
+        return workspace.lire(artefact)
+
+    def _rappel_node(self, state: OrchestratorState) -> dict:
+        """« Parle-t-on d'un artefact déjà produit ? » — et c'est le MODÈLE qui répond.
+
+        Deux outils, décrits dans ``orchestrator/rappel`` : relire un artefact
+        par son nom, en rejouer un avec une modification. Le catalogue du fil
+        est dans son prompt — **une ligne par artefact, jamais leur contenu**.
+        S'il n'appelle rien, le tour repart au planificateur comme avant.
+
+        **Pourquoi un nœud et non une capacité du planificateur.** Même raison
+        qu'au §6 de `docs/surface-conversationnelle.md` pour la capacité
+        système : ajouter `replay` à `Capability` la mettrait en concurrence
+        avec `query` et `analyze` à CHAQUE question, y compris les neuf sur dix
+        qui ne rappellent rien. Ici la question ne se pose que dans un fil qui a
+        déjà produit quelque chose.
+
+        **Trois façons de ne pas servir le modèle**, et ce sont les mêmes que
+        pour l'agent système :
+
+        - aucun outil appelé — la demande n'était pas pour lui ;
+        - tous les outils ont refusé : c'est le REFUS qui est servi, pas la
+          phrase du modèle. Un artefact absent ou évincé doit s'entendre comme
+          tel, jamais se faire remplacer par une invention (famille `acfd8f5`) ;
+        - la formulation cite un nom d'artefact que la conversation n'a jamais
+          produit, ou rend la sentinelle alors qu'un outil a répondu : les
+          faits sont servis tels quels (``defaut_de_formulation``).
+
+        Un incident du MODÈLE (sortie invalide, plafond d'allers-retours) est
+        **fail-open** : le tour repart au planificateur au lieu d'échouer. Ce
+        qu'un OUTIL rate — un rejeu qui n'aboutit pas — n'est pas rattrapé : il
+        est rendu comme une analyse en échec, et il est dit.
+        """
+        start = time.monotonic()
+        workspace = state.get("workspace")
+        if workspace is None or not workspace.catalogue():
+            # AUCUNE trace, et c'est délibéré : il n'y a pas d'artefact dans ce
+            # fil, donc rien à décider, rien à appeler et rien à observer. Une
+            # ligne « rien à rappeler » sur chaque tour de chaque conversation
+            # qui n'a rien produit serait du bruit dans une trace qu'on déplie
+            # pour comprendre ce qui s'est passé. Un fil qui A des artefacts, lui,
+            # laisse toujours une ligne — y compris quand le modèle décline.
+            return {}
+        rien = self._rien_a_rappeler(state)
+        if rien:
+            return {"trace": [self._step("rappel", f"{rien} — passe au planificateur", start)]}
+        try:
+            resultat = run_rappel(
+                state["question"],
+                model=self.model,
+                workspace=state["workspace"],
+                rejouer=lambda artefact, modification: self._rejouer_un_code(
+                    state, artefact, modification
+                ),
+                request_limit=self.settings.rappel_request_limit,
+            )
+        except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
+            incident = reference_dincident()
+            logger.warning("agent de rappel écarté (incident %s) : %s", incident, exc)
+            return {
+                "trace": [
+                    self._step(
+                        "rappel",
+                        f"agent de rappel écarté (incident {incident}) — passe au planificateur",
+                        start,
+                    )
+                ]
+            }
+        if not resultat.concerne_le_rappel:
+            return {
+                "trace": [
+                    self._step("rappel", "aucun outil appelé — passe au planificateur", start)
+                ]
+            }
+        if resultat.rejeu is not None:
+            return self._rendu_du_rejeu(state, resultat.rejeu, start)
+        outils = ", ".join(resultat.outils_appeles)
+        if resultat.tout_a_ete_refuse:
+            return {
+                "rappel": "\n\n".join(resultat.refus),
+                "trace": [self._step("rappel", f"{outils} — refus servi tel quel", start)],
+            }
+        defaut = defaut_de_formulation(resultat.reponse, state["workspace"], resultat.attendus)
+        if defaut:
+            return {
+                "rappel": resultat.faits,
+                "trace": [self._step("rappel", f"{outils} — faits servis ({defaut})", start)],
+            }
+        return {
+            "rappel": resultat.reponse,
+            "trace": [self._step("rappel", f"{outils} — formulé par le modèle", start)],
+        }
+
+    def _rendu_du_rejeu(self, state: OrchestratorState, rejeu: Rejeu, start: float) -> dict:
+        """Un rejeu est une ANALYSE, et il est rendu comme telle.
+
+        Le state reçoit un ``plan`` d'analyse et un ``analysis`` : la synthèse,
+        l'affichage des figures, la mémorisation du tour et le nouvel artefact
+        de code passent alors par les chemins qui existent déjà. Fabriquer ici
+        une réponse à part aurait dupliqué les quatre.
+
+        Le ``plan`` est renseigné et non laissé vide : ce tour a bien exécuté du
+        code sur une source, et ``ChatAnswer.plan`` doit le dire.
+        """
+        resultat = rejeu.resultat
+        workspace = state["workspace"]
+        origine = workspace.retenu(rejeu.artefact)
+        source = (origine.source if origine is not None else "") or state.get("source_in") or ""
+        images = (
+            [r for r in resultat.execution.results if r.mime == "image/png"]
+            if resultat.succeeded
+            else []
+        )
+        detail = (
+            f"rejeu de {rejeu.artefact} — {resultat.attempts} essai(s), "
+            f"{len(images)} figure(s), statut {resultat.execution.status}"
+        )
+        if not resultat.succeeded:
+            detail += f" — {self._cause_lisible(resultat.execution.error)}"
+        artefact = self._memoriser_le_code(workspace, resultat, state["question"], source)
+        if artefact is not None:
+            detail += f" — retenu sous le nom {artefact.name}"
+        return {
+            "plan": Plan(capability="analyze", source=source or None),
+            "analysis": resultat,
+            "artifacts": images,
+            "trace": [self._step("rappel", detail, start)],
+        }
+
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
@@ -1380,10 +1623,21 @@ class Orchestrator:
             "(somme, moyenne, comptage) décrit cet échantillon, pas la table entière."
         )
 
-    def _analysis_node(self, state: OrchestratorState) -> dict:
-        start = time.monotonic()
-        plan = state["plan"]
-        source = self._resolve_source(plan, self._effective_catalog(state))
+    @contextmanager
+    def _decor_de_donnees(self, state: OrchestratorState, source) -> Iterator[tuple]:
+        """Ce que le code d'analyse voit sous ``/data/``, et ce qu'on lui en dit.
+
+        Cède ``(fichiers, contexte, avis)`` : les montages du bac à sable, la
+        description qui les accompagne dans le prompt, et l'avis de troncature
+        s'il y en a un. Le dossier temporaire où les tables SQL sont
+        matérialisées ne vit que le temps du bloc.
+
+        Extrait de ``_analysis_node`` parce que le REJEU d'un code en a besoin
+        exactement pareil : rejouer ``graphique_1`` sur un bac à sable où
+        personne n'a monté les CSV, c'est rejouer un ``FileNotFoundError``. Deux
+        copies de ce montage, ce seraient deux décors qui divergent — et un code
+        qui marchait au tour 1 échouerait au tour 4 sans que rien ne le dise.
+        """
         avis = ""
         with tempfile.TemporaryDirectory(prefix="daa-analysis-") as tmp:
             if isinstance(source, FileSource):
@@ -1417,8 +1671,15 @@ class Orchestrator:
             # objets intermédiaires de la conversation : montés aussi pour que le
             # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
             data_context = self._mount_workspace(state, data_files, data_context)
+            yield data_files, data_context, avis
+
+    def _analysis_node(self, state: OrchestratorState) -> dict:
+        start = time.monotonic()
+        plan = state["plan"]
+        workspace = state.get("workspace")
+        source = self._resolve_source(plan, self._effective_catalog(state))
+        with self._decor_de_donnees(state, source) as (data_files, data_context, avis):
             # ajustement d'un graphique précédent : on repart de son code
-            workspace = state.get("workspace")
             previous_code = workspace.last_code_for(plan.source) if workspace is not None else None
             outcome = run_analysis(
                 state["question"],
@@ -1445,11 +1706,38 @@ class Orchestrator:
         if not outcome.succeeded:
             # la cause vit ici, pas dans la réponse rendue à l'utilisateur
             detail += f" — {self._cause_lisible(outcome.execution.error)}"
+        artefact = self._memoriser_le_code(workspace, outcome, state["question"], plan.source)
+        if artefact is not None:
+            detail += f" — retenu sous le nom {artefact.name}"
         return {
             "analysis": outcome,
             "artifacts": images,
             "trace": [self._step("analysis", detail, start, truncated=bool(avis), truncation=avis)],
         }
+
+    @staticmethod
+    def _memoriser_le_code(
+        workspace: ConversationWorkspace | None,
+        outcome: AnalysisResult,
+        question: str,
+        source: str | None,
+    ) -> WorkspaceArtifact | None:
+        """Retient le code d'une analyse RÉUSSIE comme artefact nommé du fil.
+
+        C'est ce que le propriétaire demande à pouvoir rappeler : « le code qui
+        génère une image doit pouvoir être rappelé pour être modifié ». L'image,
+        elle, n'est pas persistée — elle part dans la réponse et y reste. Ce
+        qu'on rejoue est le code ; repeindre un PNG ne rendrait rien.
+
+        **Seulement si elle a abouti**, et c'est délibéré : un code qui n'a pas
+        tourné n'est pas un artefact, c'est une tentative. Le rappeler
+        n'offrirait que de rejouer un échec, et il encombrerait le catalogue de
+        lignes qu'on ne peut pas désigner utilement.
+        """
+        if workspace is None or not outcome.succeeded:
+            return None
+        figures = len([r for r in outcome.execution.results if r.mime == "image/png"])
+        return workspace.save_code(outcome.code, question, source=source or "", figures=figures)
 
     def _inference_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
@@ -1577,6 +1865,11 @@ class Orchestrator:
             # catalogue, et c'est tout ce qu'on cherche à empêcher ici.
             answer = state["system"]
             mode = "système (déterministe)"
+        elif state.get("rappel") is not None:
+            # Même raison : ce texte est soit ce qu'un outil a rendu, soit un
+            # refus exact. Le repasser au LLM ne pourrait que l'abîmer.
+            answer = state["rappel"]
+            mode = "rappel d'artefact"
         elif inference is not None and inference.status == "invalid":
             answer = inference.reask or "Il manque des informations pour prédire."
             mode = "relance"

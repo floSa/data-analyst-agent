@@ -34,6 +34,7 @@ RETRIEVAL = prompts.marqueur(prompts.RETRIEVAL)
 ANALYSIS = prompts.marqueur(prompts.ANALYSIS)
 SYNTHESIS = prompts.marqueur(prompts.SYNTHESIS)
 SYSTEME = prompts.marqueur(prompts.SYSTEME)
+RAPPEL = prompts.marqueur(prompts.RAPPEL)
 
 
 def text(content: str) -> ModelResponse:
@@ -66,6 +67,12 @@ class ScriptedLLM:
 
     ``prompts_for(SYSTEME)`` compte les refus comme les autres passages : le
     coût du nœud reste observable.
+
+    **L'agent de RAPPEL décline lui aussi par défaut**, et pour la même raison.
+    Il n'est sollicité que dans un fil qui a déjà produit un artefact — mais
+    une bonne partie des tests en fabriquent un pour poser leur décor (un
+    tableau mémorisé au tour précédent), sans que le rappel soit leur sujet.
+    Un test qui s'intéresse à ce chemin script ``RAPPEL`` explicitement.
     """
 
     # Une réponse texte sans aucun appel d'outil : le signal « cette question
@@ -105,9 +112,10 @@ class ScriptedLLM:
                         raise AssertionError(f"script épuisé pour l'agent {marker!r}")
                     self.captured.append((marker, system, last_user))
                     return queue.pop(0)
-            if SYSTEME in system:
-                self.captured.append((SYSTEME, system, last_user))
-                return text(self.REFUS_DU_SYSTEME)
+            for marqueur in (SYSTEME, RAPPEL):
+                if marqueur in system:
+                    self.captured.append((marqueur, system, last_user))
+                    return text(self.REFUS_DU_SYSTEME)
             raise AssertionError(f"aucun script pour le prompt système : {system[:120]!r}")
 
         return FunctionModel(responder)
