@@ -208,9 +208,16 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 - **Corrigé** (C26) : `Correspondance.confronter(schema)`, appelée dans
   `_fetch_predict_node` une fois la connexion ouverte et **avant la requête**. Le
   refus nomme la colonne introuvable, propose la colonne réelle qui lui ressemble
-  (distance d'édition, muette si rien ne ressemble — une suggestion tirée au hasard
-  coûterait la confiance qu'on gagne à ne rien deviner), liste les colonnes de la
-  source et dit que rien n'a été interrogé. Toutes les colonnes fautives sont dites
+  (distance d'édition sur les deux écritures, qualifiée et nue, la plus
+  ressemblante l'emportant ; muette si rien ne ressemble — une suggestion tirée au
+  hasard coûterait la confiance qu'on gagne à ne rien deviner), liste les colonnes
+  de la source et dit que rien n'a été interrogé. Une déclaration **qualifiée** est
+  lue sur ses deux derniers segments et les deux doivent tomber juste :
+  `classes.sex` est refusé comme `passengers.levelx`, parce que ce n'est pas cette
+  table qui porte la colonne ; se rabattre sur le seul nom laisserait passer la
+  moitié des fautes. Une déclaration **nue** se compare aux noms de colonnes de
+  toutes les tables : c'est l'écriture de la source à une table, qui n'a aucune
+  raison de se qualifier. Toutes les colonnes fautives sont dites
   d'un coup : rendre une faute à la fois ferait corriger le YAML trois fois de
   suite sans qu'aucune contrainte ne l'impose.
 - **Mesuré, après correction**, mêmes questions et même base : les deux

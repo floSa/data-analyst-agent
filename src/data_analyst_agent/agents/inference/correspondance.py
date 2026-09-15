@@ -207,30 +207,24 @@ class Correspondance:
         pas sur le schéma, et une valeur non couverte est déjà refusée par le
         schéma de features en citant ce qui a été lu.
         """
-        connues = {
-            f"{table.name}.{colonne.name}".lower(): f"{table.name}.{colonne.name}"
-            for table in schema.tables
-            for colonne in table.columns
-        }
-        # Les noms nus, pour la source à une table qui ne se qualifie pas. Un nom
-        # porté par deux tables reste accepté : la déclaration désigne alors une
-        # colonne qui existe, et c'est tout ce que cette relecture prétend dire.
-        nus = {qualifie.rsplit(".", 1)[-1].lower() for qualifie in connues.values()}
+        connues = sorted(
+            f"{table.name}.{colonne.name}" for table in schema.tables for colonne in table.columns
+        )
         introuvables = [
             (feature, decl.column)
             for feature, decl in self.par_feature.items()
-            if decl.column.lower() not in connues and decl.nom_de_colonne.lower() not in nus
+            if not _portee_par(decl.column, connues)
         ]
         if not introuvables:
             return
         detail = "; ".join(
-            f"{feature} -> {colonne}{_peut_etre(colonne, sorted(connues.values()))}"
+            f"{feature} -> {colonne}{_peut_etre(colonne, connues)}"
             for feature, colonne in introuvables
         )
         raise CorrespondanceIndisponible(
             f"la source {self.source!r} déclare pour le modèle {self.dataset!r} des "
             f"colonnes que la source ne porte pas : {detail}. Colonnes de la source : "
-            f"{', '.join(sorted(connues.values()))}. Corrigez le bloc "
+            f"{', '.join(connues)}. Corrigez le bloc "
             f"`features.{self.dataset}` du catalogue — rien n'a été interrogé."
         )
 
@@ -282,6 +276,30 @@ class Correspondance:
         return payload
 
 
+def _portee_par(declaree: str, connues: list[str]) -> bool:
+    """La source porte-t-elle la colonne déclarée ? Insensible à la casse.
+
+    Une déclaration **qualifiée** est lue sur ses deux derniers segments, et les
+    deux doivent tomber juste : `passengers.levelx` est refusé parce que la
+    colonne n'existe pas, et `classes.sex` parce que ce n'est pas cette table
+    qui la porte — les deux sont des déclarations fausses, et se rabattre sur le
+    seul nom de colonne laisserait passer la seconde. Trois segments sont admis
+    (`public.passengers.sex`) : le premier est un espace de noms, et le schéma
+    lu n'en rend pas.
+
+    Une déclaration **nue** se compare aux noms de colonnes, quelle que soit leur
+    table. C'est l'écriture de la source à une table, qui n'a aucune raison de se
+    qualifier ; un nom porté par deux tables reste accepté, parce que la source
+    désigne alors une colonne qui existe — et c'est tout ce que cette relecture
+    prétend dire.
+    """
+    voulue = declaree.lower()
+    if "." in voulue:
+        deux_derniers = ".".join(voulue.rsplit(".", 2)[-2:])
+        return any(connue.lower() == deux_derniers for connue in connues)
+    return any(connue.rsplit(".", 1)[-1].lower() == voulue for connue in connues)
+
+
 def _peut_etre(declaree: str, connues: list[str]) -> str:
     """« (peut-être classes.level ?) », quand une colonne réelle en est proche.
 
@@ -289,18 +307,27 @@ def _peut_etre(declaree: str, connues: list[str]) -> str:
     la pointe pas du doigt. Muet quand rien ne ressemble : proposer au hasard
     coûterait la confiance qu'on gagne à ne rien deviner.
 
-    Comparé sous les DEUX écritures, qualifiée et nue. Une déclaration qui ne se
-    qualifie pas (`pclas`) ne ressemble à aucun `table.colonne` — la distance
-    d'édition est mangée par le préfixe — et c'est justement la source à une
-    table, celle qui n'a aucune raison de se qualifier.
+    Comparé sous les DEUX écritures, qualifiée et nue, et c'est la plus
+    ressemblante qui gagne. Chacune attrape ce que l'autre manque : une
+    déclaration nue (`pclas`) ne ressemble à aucun `table.colonne`, la distance
+    d'édition étant mangée par le préfixe ; et `classes.sex`, dont la table est
+    fausse et la colonne juste, ressemble plus à `classes.level` qu'à
+    `passengers.sex` si on ne regarde que la forme qualifiée — alors que c'est
+    `passengers.sex` qu'on voulait écrire.
     """
-    for candidates in (connues, [c.rsplit(".", 1)[-1] for c in connues]):
-        cible = declaree if candidates is connues else declaree.rsplit(".", 1)[-1]
-        proches = difflib.get_close_matches(cible.lower(), [c.lower() for c in candidates], n=1)
-        if proches:
-            indice = next(i for i, c in enumerate(candidates) if c.lower() == proches[0])
-            return f" (peut-être {connues[indice]} ?)"
-    return ""
+    nu = declaree.rsplit(".", 1)[-1].lower()
+    meilleure, score = "", 0.0
+    for connue in connues:
+        for cible, candidate in (
+            (declaree.lower(), connue.lower()),
+            (nu, connue.rsplit(".", 1)[-1].lower()),
+        ):
+            ressemblance = difflib.SequenceMatcher(None, cible, candidate).ratio()
+            if ressemblance > score:
+                meilleure, score = connue, ressemblance
+    # Le seuil de `difflib.get_close_matches`, gardé tel quel : c'est celui qui
+    # sépare une faute de frappe d'une autre colonne.
+    return f" (peut-être {meilleure} ?)" if score >= 0.6 else ""
 
 
 __all__ = [

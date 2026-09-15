@@ -343,3 +343,22 @@ def test_une_colonne_sans_ressemblance_est_refusee_sans_proposition_au_hasard():
 
     assert "peut-être" not in str(refus.value)
     assert "classes.level" in str(refus.value)
+
+
+def test_une_colonne_declaree_sous_la_mauvaise_table_est_refusee():
+    """`classes.sex` : la colonne existe, cette table ne la porte pas.
+
+    Se rabattre sur le seul nom de colonne laisserait passer la déclaration —
+    et c'en est une fausse au même titre qu'une colonne qui n'existe nulle part.
+    """
+    with pytest.raises(CorrespondanceIndisponible) as refus:
+        titanic({**PAR_LE_NIVEAU, "sex": "classes.sex"}).confronter(schema_titanic())
+
+    assert "classes.sex" in str(refus.value)
+    assert "peut-être passengers.sex ?" in str(refus.value)
+
+
+def test_un_espace_de_noms_devant_la_table_est_admis():
+    """`public.passengers.sex` : le premier segment est un espace de noms, et le
+    schéma lu n'en rend pas. Les deux derniers segments décident."""
+    titanic({**PAR_LE_NIVEAU, "sex": "public.passengers.sex"}).confronter(schema_titanic())
