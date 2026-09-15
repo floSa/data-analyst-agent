@@ -22,7 +22,11 @@ from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.context_budget import ContextLimits, estimate_tokens
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
-from data_analyst_agent.orchestrator.rappel import noms_inventes, refus_dartefact
+from data_analyst_agent.orchestrator.rappel import (
+    designation_dun_artefact_passe,
+    noms_inventes,
+    refus_dartefact,
+)
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput, SandboxResult
 from helpers.doubles import FakeClassifier, ScriptedSandbox
@@ -700,3 +704,267 @@ def test_une_reponse_vide_se_disqualifie_aussi(tmp_path: Path):
 
     assert defaut_de_formulation("   ", ws) == "réponse vide"
     assert defaut_de_formulation("J'ai relu `graphique_1`.", ws) == ""
+
+
+# --- désigner un artefact qui n'existe pas : le dire avant d'en produire un ---
+#
+# Le défaut, mesuré en live sur les DEUX moteurs : « reprends le camembert des
+# ports que tu m'avais fait » dans un fil qui n'en porte aucun. L'agent de
+# rappel décline, le planificateur fabrique un camembert neuf — correct, bons
+# chiffres — et rien ne dit qu'il n'existait pas. L'utilisateur repart en
+# croyant qu'on a retrouvé son travail alors qu'on en a refait un autre.
+
+# Six tournures qui DÉSIGNENT, dont trois sans un mot du catalogue (« celui
+# d'avant », « le précédent », « ce que tu m'avais sorti ») : c'est là que le
+# signal doit être grammatical et non lexical.
+DESIGNATIONS = [
+    "Reprends le camembert des ports d'embarquement que tu m'avais fait.",
+    "Tu peux me remontrer le camembert des ports d'embarquement que tu avais fait ?",
+    "Reprends le graphe de tout à l'heure et mets les barres en bleu.",
+    "Reviens au tout premier graphique, celui par classe, et repasse-le en vert.",
+    "Le premier tableau que tu m'as sorti, redis-moi ce qu'il y avait dedans.",
+    "Le graphique de tantôt, en vert.",
+    "Refais le même graphique mais en bleu.",
+    "Je voudrais revoir la courbe que tu as tracée plus tôt.",
+    # les trois sans aucun mot du catalogue
+    "Remontre-moi celui d'avant.",
+    "Affiche le précédent.",
+    "Ce que tu m'avais sorti, tu peux me le remettre ?",
+]
+
+# Le défaut SYMÉTRIQUE : une tournure innocente prise pour une désignation
+# coûterait une phrase de repentir à une demande neuve. Les six premières sont
+# des questions RÉELLES de `scripts/mesure_surface_conversationnelle.py` —
+# celles qui portent « tu as », le piège du détecteur.
+INNOCENTES = [
+    "De quand datent les données que tu as ?",
+    "qu'est-ce que tu as comme données ?",
+    "À quelles bases de données as-tu accès ?",
+    "montre-moi ce que tu as",
+    "tu as accès à quelles données",
+    "Quelles colonnes de la table passengers contiennent des valeurs manquantes ?",
+    "Fais-moi un camembert des ports d'embarquement.",
+    "Fais-moi un graphique en barres du nombre de passagers par classe.",
+    "Combien de passagers y a-t-il en tout ?",
+    "Et quel est l'âge moyen des passagers ?",
+    "Peux-tu me faire un histogramme des âges ?",
+    "Quel est l'âge du passager le plus âgé ?",
+    "Compare les résultats de la première classe et de la deuxième.",
+    "Ajoute une légende au graphique.",
+    "Fais un tableau des survivants par sexe.",
+    "Trace la courbe des âges.",
+    "Est-ce que tu sais faire des prédictions, et sur quoi ?",
+    "Quelle est la taille de tes données ?",
+]
+
+
+@pytest.mark.parametrize("message", DESIGNATIONS)
+def test_une_tournure_qui_designe_un_artefact_passe_est_reconnue(message: str):
+    """Le signal est dans le MESSAGE : un passé attribué à l'agent, ou un déictique.
+
+    Trois de ces tournures ne portent aucun mot du catalogue — « celui
+    d'avant », « le précédent », « ce que tu m'avais sorti ». C'est bien la
+    construction qui les qualifie, pas un lexique d'objets.
+    """
+    assert designation_dun_artefact_passe(message) != ""
+
+
+@pytest.mark.parametrize("message", INNOCENTES)
+def test_une_demande_neuve_nest_pas_prise_pour_une_designation(message: str):
+    """Le défaut symétrique, et il coûterait aussi cher.
+
+    « De quand datent les données que tu as ? » porte « tu as » et ne désigne
+    rien : c'est le PARTICIPE DE PRODUCTION qui fait la présupposition, pas
+    l'auxiliaire. Sans cette exigence, six questions de la batterie recevaient
+    un repentir qui n'a pas lieu d'être.
+    """
+    assert designation_dun_artefact_passe(message) == ""
+
+
+def test_le_camembert_jamais_produit_est_dit_avant_detre_refait(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """Le défaut mesuré, et sa correction : la figure part, précédée de l'aveu.
+
+    On ne bloque pas l'utilisateur — le camembert est bien produit. Ce qui
+    change est qu'il ne peut plus le prendre pour un rappel.
+    """
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_code(CODE_ROUGE, "un graphe en barres par classe", source="iris", figures=1)
+    sandbox = ScriptedSandbox([SandboxResult(status="ok", results=[PNG])])
+    llm = (
+        ScriptedLLM()
+        .script(RAPPEL, [text(ScriptedLLM.REFUS_DU_SYSTEME)])
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="iris"))])
+        .script(ANALYSIS, figure_ok(CODE_BLEU))
+        .script(SYNTHESIS, [text("Voici le camembert des ports d'embarquement.")])
+    )
+    orch = orchestrateur(llm, iris_csv, tmp_path, sandbox, registry)
+    reponse = orch.ask(
+        "Reprends le camembert des ports d'embarquement que tu m'avais fait.",
+        conversation_id="fil",
+    )
+
+    assert reponse.error is None
+    assert "Je n'ai pas produit dans cette conversation" in reponse.answer
+    assert "Ce qui suit est neuf, pas un rappel." in reponse.answer
+    assert "graphique_1" in reponse.answer  # ce qui EXISTE, lui, est énuméré
+    # et la figure est bien produite : on dit le manque, on ne refuse pas
+    assert [a.mime for a in reponse.artifacts] == ["image/png"]
+    assert "Voici le camembert" in reponse.answer
+    trace = next(s for s in reponse.trace if s.node == "rappel")
+    assert "absence dite" in trace.detail
+
+
+def test_une_figure_neuve_non_designee_est_produite_sans_un_mot(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """L'autre moitié du mécanisme, et elle compte autant.
+
+    « Fais-moi un camembert des ports » ne présuppose rien : commenter une
+    demande neuve serait du bruit à chaque tour.
+    """
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_code(CODE_ROUGE, "un graphe en barres par classe", source="iris", figures=1)
+    sandbox = ScriptedSandbox([SandboxResult(status="ok", results=[PNG])])
+    llm = (
+        ScriptedLLM()
+        .script(RAPPEL, [text(ScriptedLLM.REFUS_DU_SYSTEME)])
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="iris"))])
+        .script(ANALYSIS, figure_ok(CODE_BLEU))
+        .script(SYNTHESIS, [text("Voici le camembert des ports d'embarquement.")])
+    )
+    orch = orchestrateur(llm, iris_csv, tmp_path, sandbox, registry)
+    reponse = orch.ask("Fais-moi un camembert des ports d'embarquement.", conversation_id="fil")
+
+    assert reponse.answer == "Voici le camembert des ports d'embarquement."
+    assert [a.mime for a in reponse.artifacts] == ["image/png"]
+    trace = next(s for s in reponse.trace if s.node == "rappel")
+    assert trace.detail == "aucun outil appelé — passe au planificateur"
+
+
+def test_un_artefact_EVINCE_ne_se_dit_pas_absent(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """Le cas distinct, et le dire absent serait un mensonge.
+
+    Il a bien été produit ; il est sorti de la fenêtre. On ne PEUT pas affirmer
+    l'absence de ce qu'on ne voit plus — c'est la même frontière que
+    `refus_dartefact`, du côté où aucun nom n'a été prononcé.
+    """
+    limites = ContextLimits(artifact_window=8, code_window=1, token_budget=0)
+    ws = ConversationWorkspace(tmp_path, "fil", limits=limites)
+    ws.save_code(CODE_ROUGE, "le graphe par classe", source="iris", figures=1)
+    ws.save_code(CODE_BLEU, "l'histogramme des âges", source="iris", figures=1)
+    sandbox = ScriptedSandbox([SandboxResult(status="ok", results=[PNG])])
+    llm = (
+        ScriptedLLM()
+        .script(RAPPEL, [text(ScriptedLLM.REFUS_DU_SYSTEME)])
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="iris"))])
+        .script(ANALYSIS, figure_ok(CODE_ROUGE))
+        .script(SYNTHESIS, [text("Voici un graphe par classe.")])
+    )
+    orch = Orchestrator(
+        model=llm.model(),
+        catalog=Catalog(sources=[FileSource(name="iris", path=iris_csv)]),
+        registry=registry,
+        sandbox=sandbox,
+        settings=Settings(
+            _env_file=None, workspace_dir=tmp_path, context_code_window=1, context_token_budget=0
+        ),
+    )
+    reponse = orch.ask(
+        "Reviens au tout premier graphique, celui par classe, et repasse-le en vert.",
+        conversation_id="fil",
+    )
+
+    assert "Je ne peux pas affirmer ne l'avoir jamais produit" in reponse.answer
+    assert "ÉVINCÉS" in reponse.answer
+    assert "Je n'ai pas produit dans cette conversation" not in reponse.answer
+    assert "Ce qui suit est neuf, pas un rappel." in reponse.answer
+
+
+def test_un_fil_vide_dit_labsence_sans_appeler_le_modele(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """Le fil neuf est le cas où l'absence est la plus certaine — et la moins chère.
+
+    Le nœud se retire avant tout aller-retour : le catalogue est vide, il n'y a
+    rien à décider. L'aveu, lui, ne coûte rien puisqu'il est déterministe.
+    """
+    sandbox = ScriptedSandbox([SandboxResult(status="ok", results=[PNG])])
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="iris"))])
+        .script(ANALYSIS, figure_ok(CODE_BLEU))
+        .script(SYNTHESIS, [text("Voici le camembert des ports.")])
+    )
+    orch = orchestrateur(llm, iris_csv, tmp_path, sandbox, registry)
+    reponse = orch.ask("Remontre-moi le camembert que tu m'avais fait.", conversation_id="neuf")
+
+    assert llm.prompts_for(RAPPEL) == []  # pas un seul appel
+    assert "Je n'ai encore rien produit dans cette conversation" in reponse.answer
+    assert "Ce qui suit est neuf, pas un rappel." in reponse.answer
+    assert [a.mime for a in reponse.artifacts] == ["image/png"]
+
+
+def test_un_rejeu_qui_aboutit_ne_recoit_aucun_aveu(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """Le parcours de C24 ne doit rien perdre : quand le rappel MARCHE, on se tait.
+
+    « Reprends le graphe de tout à l'heure, barres en bleu » DÉSIGNE bien un
+    artefact passé — et il existe. L'aveu ne se déclenche que sur une
+    désignation restée sans réponse.
+    """
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_code(CODE_ROUGE, "un graphe par classe", source="iris", figures=1)
+    sandbox = ScriptedSandbox([SandboxResult(status="ok", results=[PNG])])
+    llm = (
+        ScriptedLLM()
+        .script(
+            RAPPEL,
+            [
+                tool_call(
+                    "rejouer_un_code",
+                    {"nom": "graphique_1", "modification": "mets les barres en bleu"},
+                ),
+                text("J'ai rejoué `graphique_1` avec les barres en bleu."),
+            ],
+        )
+        .script(ANALYSIS, figure_ok(CODE_BLEU))
+        .script(SYNTHESIS, [text("Voici le graphe, barres en bleu.")])
+    )
+    orch = orchestrateur(llm, iris_csv, tmp_path, sandbox, registry)
+    reponse = orch.ask(
+        "Reprends le graphe de tout à l'heure et mets les barres en bleu.",
+        conversation_id="fil",
+    )
+
+    assert "Ce qui suit est neuf" not in reponse.answer
+    assert "Je n'ai pas produit" not in reponse.answer
+    assert [a.mime for a in reponse.artifacts] == ["image/png"]
+    assert sandbox.executed[-1] == CODE_BLEU.strip()
+
+
+def test_un_refus_nomme_nest_pas_double_dun_aveu(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """Quand l'agent A appelé un outil et s'est fait refuser, le refus suffit.
+
+    Il nomme l'artefact demandé, ce que l'aveu ne peut pas faire : le doubler
+    ferait dire deux fois la même chose, la seconde moins précisément.
+    """
+    ConversationWorkspace(tmp_path, "fil").save_table(["a"], [[1]], "une question")
+    llm = ScriptedLLM().script(
+        RAPPEL,
+        [
+            tool_call("rejouer_un_code", {"nom": "graphique_1", "modification": "en bleu"}),
+            text("J'ai remis `graphique_1` en bleu, le voici."),
+        ],
+    )
+    orch = orchestrateur(llm, iris_csv, tmp_path, None, registry)
+    reponse = orch.ask("Remets en bleu le graphe que tu m'avais fait.", conversation_id="fil")
+
+    assert "Aucun artefact ne s'appelle « graphique_1 »" in reponse.answer
+    assert "Ce qui suit est neuf" not in reponse.answer

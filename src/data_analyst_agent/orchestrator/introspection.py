@@ -54,7 +54,7 @@ from data_analyst_agent.agents.retrieval.sql import SchemaInfo, TableInfo
 Faits = dict[str, FaitsDeSource]
 
 
-def _replie(texte: str) -> str:
+def replie(texte: str) -> str:
     """Minuscules, sans accents ni décoration, ponctuation ramenée à des blancs.
 
     Sert à deux comparaisons de sens et non de typographie : reconnaître le nom
@@ -80,8 +80,8 @@ def _nomme_dans(question: str, noms: list[str]) -> str | None:
     ``None`` quand aucun n'y est **et** quand plusieurs y sont : deux noms
     cités ne désignent pas une cible, et en choisir un serait deviner.
     """
-    plat = _replie(question)
-    trouves = [n for n in noms if f" {_replie(n).strip()} " in plat]
+    plat = replie(question)
+    trouves = [n for n in noms if f" {replie(n).strip()} " in plat]
     return trouves[0] if len(trouves) == 1 else None
 
 
@@ -139,7 +139,7 @@ def choix_de_source(question: str, catalogue: Catalog) -> str | None:
     nom = source_nommee(question, catalogue)
     if nom is None:
         return None
-    reste = [mot for mot in _replie(question).split() if mot != _replie(nom).strip()]
+    reste = [mot for mot in replie(question).split() if mot != replie(nom).strip()]
     return nom if len(reste) <= MOTS_EN_PLUS_D_UN_CHOIX else None
 
 
@@ -666,13 +666,13 @@ def defaut_de_fondation(reponse: str, faits: str) -> str:
     """
     if not reponse.strip():
         return "réponse vide"
-    if _replie(reponse).strip() == SENTINELLE_HORS_SUJET.lower():
+    if replie(reponse).strip() == SENTINELLE_HORS_SUJET.lower():
         return "réponse hors sujet"
     connus = _identifiants(faits, _JETON)
     inventes = [n for n in _identifiants(reponse, _ENTRE_ACCENTS, _EN_SERPENT) if n not in connus]
     if inventes:
         return "nom(s) qu'aucun fait ne porte : " + ", ".join(sorted(inventes))
-    plat = _replie(reponse)
+    plat = replie(reponse)
     omis = [n for n in _enumeres(faits) if f" {n} " not in plat]
     if omis:
         return "fait(s) omis : " + ", ".join(omis)

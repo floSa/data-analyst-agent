@@ -69,7 +69,9 @@ from data_analyst_agent.orchestrator.plan import (
 )
 from data_analyst_agent.orchestrator.rappel import (
     Rejeu,
+    aveu_dabsence,
     defaut_de_formulation,
+    designation_dun_artefact_passe,
     run_rappel,
 )
 from data_analyst_agent.orchestrator.systeme import run_systeme
@@ -176,6 +178,8 @@ class OrchestratorState(TypedDict, total=False):
     source_in: str | None  # la source liée au fil, telle que reçue
     source_out: str | None  # ce que le fil retient de ce tour
     avis_de_source: str  # « je travaille sur X », mis en tête de la réponse
+    # « je n'ai pas produit ça », mis en tête quand on PRODUIT au lieu de rappeler
+    avis_dabsence: str
     system: str | None  # réponse à une question SUR le système
     rappel: str | None  # réponse rendue en rappelant un artefact du fil
     clarification: str | None
@@ -1455,17 +1459,35 @@ class Orchestrator:
         **fail-open** : le tour repart au planificateur au lieu d'échouer. Ce
         qu'un OUTIL rate — un rejeu qui n'aboutit pas — n'est pas rattrapé : il
         est rendu comme une analyse en échec, et il est dit.
+
+        **Et quand il décline alors que le message désignait quelque chose ?**
+        Le premier cas ci-dessus — « aucun outil appelé » — recouvrait deux
+        situations très différentes : une question ordinaire qui ne le concerne
+        pas, et « reprends le camembert que tu m'avais fait » dans un fil qui
+        n'en porte aucun. La seconde laissait le planificateur produire une
+        figure neuve sans un mot. C'est ``_aveu_dabsence`` qui les sépare, et il
+        le fait **sans le modèle** : la désignation se lit dans le message, et
+        l'absence dans le catalogue.
         """
         start = time.monotonic()
         workspace = state.get("workspace")
-        if workspace is None or not workspace.catalogue():
-            # AUCUNE trace, et c'est délibéré : il n'y a pas d'artefact dans ce
-            # fil, donc rien à décider, rien à appeler et rien à observer. Une
-            # ligne « rien à rappeler » sur chaque tour de chaque conversation
-            # qui n'a rien produit serait du bruit dans une trace qu'on déplie
-            # pour comprendre ce qui s'est passé. Un fil qui A des artefacts, lui,
-            # laisse toujours une ligne — y compris quand le modèle décline.
+        if workspace is None:
+            # Pas de conversation du tout (``ask()`` sans ``conversation_id``) :
+            # aucun magasin, donc rien qui puisse affirmer une absence.
             return {}
+        if not workspace.catalogue():
+            # AUCUNE trace quand le message ne désigne rien, et c'est délibéré :
+            # il n'y a pas d'artefact dans ce fil, donc rien à décider, rien à
+            # appeler et rien à observer. Une ligne « rien à rappeler » sur
+            # chaque tour de chaque conversation qui n'a rien produit serait du
+            # bruit dans une trace qu'on déplie pour comprendre ce qui s'est
+            # passé. Un fil qui A des artefacts, lui, laisse toujours une ligne
+            # — y compris quand le modèle décline.
+            #
+            # Un message qui DÉSIGNE un artefact passé, lui, est servi même ici,
+            # et sans le moindre appel au modèle : un fil vide est le cas où
+            # l'absence est la plus certaine.
+            return self._aveu_dabsence(state, start)
         rien = self._rien_a_rappeler(state)
         if rien:
             return {"trace": [self._step("rappel", f"{rien} — passe au planificateur", start)]}
@@ -1492,11 +1514,12 @@ class Orchestrator:
                 ]
             }
         if not resultat.concerne_le_rappel:
-            return {
-                "trace": [
-                    self._step("rappel", "aucun outil appelé — passe au planificateur", start)
-                ]
-            }
+            # Le modèle n'a rien rappelé. Si le message DÉSIGNAIT pourtant un
+            # artefact passé, c'est ici que le défaut se jouait : le
+            # planificateur produisait une figure neuve, correcte, servie sans
+            # un mot — et l'utilisateur repartait en croyant qu'on avait
+            # retrouvé la sienne.
+            return self._aveu_dabsence(state, start, decline=True)
         if resultat.rejeu is not None:
             return self._rendu_du_rejeu(state, resultat.rejeu, start)
         outils = ", ".join(resultat.outils_appeles)
@@ -1514,6 +1537,45 @@ class Orchestrator:
         return {
             "rappel": resultat.reponse,
             "trace": [self._step("rappel", f"{outils} — formulé par le modèle", start)],
+        }
+
+    def _aveu_dabsence(
+        self, state: OrchestratorState, start: float, *, decline: bool = False
+    ) -> dict:
+        """« Je ne l'ai pas produit » — dit par le CATALOGUE, jamais par le modèle.
+
+        Le tour continue : le planificateur fera la figure, et elle sera juste.
+        Ce qu'on ajoute est la seule chose que le modèle ne sait pas dire — que
+        ce qui arrive est neuf. La phrase est mise en tête de la réponse par la
+        synthèse, comme l'avis de source, et pour la même raison : la trace
+        n'est pas dépliée par défaut, et ce qu'on veut éviter n'est pas de
+        produire une figure — c'est de la faire passer pour un rappel.
+
+        ``decline`` distingue les deux portes d'entrée dans la trace : un fil
+        sans aucun artefact (le nœud ne paie même pas un appel au modèle) et un
+        fil où l'agent de rappel a bien tourné puis décliné.
+        """
+        aveu = aveu_dabsence(state["workspace"], state["question"])
+        if not aveu:
+            if decline:
+                return {
+                    "trace": [
+                        self._step("rappel", "aucun outil appelé — passe au planificateur", start)
+                    ]
+                }
+            return {}
+        marqueur = designation_dun_artefact_passe(state["question"])
+        prefixe = "aucun outil appelé, " if decline else ""
+        return {
+            "avis_dabsence": aveu,
+            "trace": [
+                self._step(
+                    "rappel",
+                    f"{prefixe}désignation sans artefact (« {marqueur} ») — absence dite, "
+                    "puis passe au planificateur",
+                    start,
+                )
+            ],
         }
 
     def _rendu_du_rejeu(self, state: OrchestratorState, rejeu: Rejeu, start: float) -> dict:
@@ -1893,9 +1955,11 @@ class Orchestrator:
         # réponse, et non dans la trace. La trace n'est pas dépliée par défaut,
         # et ce qu'on veut éviter n'est pas de changer de source — c'est de
         # répondre sur d'autres données sans que ça se voie.
-        avis = state.get("avis_de_source", "")
-        if avis:
-            answer = f"{avis}\n\n{answer}" if answer else avis
+        # `avis_dabsence` en second : l'avis de source dit SUR QUOI on a
+        # travaillé, l'aveu d'absence dit que ce qui suit est neuf — il doit
+        # donc toucher la réponse qu'il qualifie.
+        preambules = [state.get("avis_de_source", ""), state.get("avis_dabsence", "")]
+        answer = "\n\n".join([p for p in (*preambules, answer) if p])
         return {"answer": answer, "trace": [self._step("synthesize", mode, start)]}
 
     @staticmethod

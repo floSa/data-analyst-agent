@@ -27,6 +27,18 @@ outre — s'il formule une réponse alors que tous les outils ont refusé — c'
 refus qui est servi, pas sa formulation : c'est la reprise de la famille
 ``acfd8f5``, où un modèle à qui l'on demande une chose absente la fabrique
 plutôt que de dire qu'elle est absente.
+
+**Et quand le modèle ne prononce aucun nom ?** Il reste un trou, et c'est le
+dernier de cette famille : « reprends le camembert des ports que tu m'avais
+fait » dans un fil qui n'en porte aucun. L'agent décline — rien au catalogue n'y
+ressemble — le planificateur fabrique un camembert neuf, correct, et personne ne
+dit qu'il n'existait pas. Aucun outil n'a refusé, donc aucun refus ne part.
+``designation_dun_artefact_passe`` et ``aveu_dabsence`` bouchent ce trou **sans
+le modèle** : le message dit qu'il DÉSIGNE (c'est une construction
+grammaticale), le catalogue dit ce qui EXISTE, et le nœud met l'absence en tête
+de la réponse. Trois reformulations du prompt avaient été essayées avant, sans
+succès — on demandait à un modèle d'affirmer une absence, et un modèle n'affirme
+pas une absence : il produit ce qu'il peut.
 """
 
 from __future__ import annotations
@@ -41,7 +53,7 @@ from pydantic_ai.usage import UsageLimits
 
 from data_analyst_agent import prompts
 from data_analyst_agent.agents.analysis.agent import AnalysisResult
-from data_analyst_agent.orchestrator.introspection import SENTINELLE_HORS_SUJET
+from data_analyst_agent.orchestrator.introspection import SENTINELLE_HORS_SUJET, replie
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace, WorkspaceArtifact
 
 # Ce qu'on dit au modèle d'un rejeu qui a échoué. La cause technique reste dans
@@ -92,6 +104,179 @@ def refus_dartefact(workspace: ConversationWorkspace, nom: str) -> str:
         f"L'artefact « {nom} » a bien été produit dans cette conversation, mais il a été "
         f"ÉVINCÉ du contexte de ce tour ({cause}) : je ne peux ni le relire ni le rejouer. "
         f"Artefacts encore disponibles : {disponibles}."
+    )
+
+
+# -- « tu m'avais fait un camembert » : désigner ce qui n'existe pas ----------
+
+# Ce qu'on dit quand on produit à la place de rappeler. C'est LA phrase du
+# mécanisme, et elle porte tout : l'utilisateur ne doit pas repartir en croyant
+# qu'on a retrouvé son travail alors qu'on en a refait un autre.
+SUITE_EST_NEUVE = "Ce qui suit est neuf, pas un rappel."
+
+# Les participes d'une PRODUCTION, et la liste est fermée : ce qu'on cherche
+# n'est pas un passé quelconque, c'est un passé où l'agent a FABRIQUÉ quelque
+# chose. Les accents sont tombés au repliement, « montré » s'y lit « montre ».
+#
+# « donné » y est au singulier seulement (``donnes?``) : « données » est le mot
+# le plus fréquent du domaine, et l'y admettre faisait de « qu'est-ce que tu as
+# comme données ? » une désignation d'artefact — mesuré, et c'est le faux
+# positif le plus coûteux qu'on ait trouvé.
+_PARTICIPES_DE_PRODUCTION = (
+    "faits?|faites?|produits?|produites?|sortis?|sorties?|montres?|montrees?|"
+    "affiches?|affichees?|generes?|generees?|crees?|creees?|traces?|tracees?|"
+    "dessines?|dessinees?|donnes?|calcules?|calculees?|construits?|construites?|"
+    "prepares?|preparees?|ecrits?|ecrites?|rendus?|rendues?|presentes?|presentees?|"
+    "envoyes?|envoyees?|obtenus?|obtenues?|proposes?|proposees?|realises?|realisees?"
+)
+
+# ① Le passé ATTRIBUÉ À L'AGENT : « tu m'avais fait », « que tu as tracée ».
+# L'auxiliaire seul ne suffit pas — « de quand datent les données que tu as ? »
+# porte « tu as » et ne désigne aucun artefact. C'est le participe de production
+# qui fait la présupposition, pas l'auxiliaire. Deux mots au plus les séparent
+# (« tu m'as bien montré »).
+_PASSE_ATTRIBUE = re.compile(
+    r"\btu\s+(?:m|me|nous|l|le|la|les|lui|en|y)?\s*(?:as|avais|avait|aviez|avons|a)\s+"
+    rf"(?:\w+\s+){{0,2}}(?:{_PARTICIPES_DE_PRODUCTION})\b"
+)
+
+# ② Le DÉICTIQUE du passé : le message situe la chose avant ce tour.
+# « déjà » en a été retiré : trop fréquent hors désignation (« tu sais déjà
+# faire des prédictions ? »), et il ne présuppose rien à lui seul.
+_DEICTIQUE_DU_PASSE = re.compile(
+    r"\b(?:tout a l heure|d avant|precedent|precedente|precedents|precedentes|"
+    r"tantot|plus tot|la derniere fois|du debut|le meme|la meme|les memes|d hier)\b"
+)
+
+# ③ Le verbe de REPRISE : « reprends », « remontre », « reviens au ». Il
+# présuppose que la chose existe — on ne reprend pas ce qui n'a jamais été.
+# « refais » n'y est PAS : « refais-moi un camembert » se lit aussi bien comme
+# une demande neuve, et l'ambiguïté se règle du côté du silence.
+_VERBE_DE_REPRISE = re.compile(
+    r"\b(?:reprends|reprend|reprendre|reprenez|remontre|remontrer|remontres|"
+    r"reaffiche|reafficher|redonne|redonner|remets|remettre|rappelle|rappeler|"
+    r"reviens|revenir|ressors|ressortir|repasse|repasser)\b"
+)
+
+# La CIBLE : ce que le message pointe. Un nom d'objet produisible, un
+# anaphorique (« celui », « ce que »), ou un nom d'artefact. Sans cible, un
+# marqueur de passé ne désigne pas un artefact — « tu m'as dit que » parle
+# d'une phrase, pas d'une figure.
+#
+# « précédent » y figure ET parmi les déictiques, et c'est le seul mot à jouer
+# les deux rôles : employé substantivement (« affiche le précédent »), il est à
+# lui seul l'antériorité et la chose désignée.
+_CIBLE_DESIGNEE = re.compile(
+    r"\b(?:celui|celle|ceux|celles|ca|cela|ce que|ce qu|"
+    r"graphique|graphiques|graphe|graphes|camembert|camemberts|diagramme|diagrammes|"
+    r"histogramme|histogrammes|courbe|courbes|figure|figures|schema|schemas|"
+    r"tableau|tableaux|barres|nuage|carte|analyse|analyses|resultat|resultats|"
+    r"visualisation|visualisations|plot|chart|calcul|liste|"
+    r"precedent|precedente|precedents|precedentes|"
+    r"graphique_\d+|resultat_\d+|analyse_\d+)\b"
+)
+
+
+def designation_dun_artefact_passe(question: str) -> str:
+    """Le marqueur par lequel ce message DÉSIGNE un artefact déjà produit — ``""`` sinon.
+
+    C'est le signal qui sépare les deux demandes que le catalogue, lui, ne peut
+    pas distinguer :
+
+    - « reprends le camembert des ports **que tu m'avais fait** » présuppose que
+      la chose existe. Si elle n'existe pas, il faut le DIRE avant d'en produire
+      une autre : sans ça, l'utilisateur repart en croyant qu'on a retrouvé son
+      travail ;
+    - « fais-moi un camembert des ports » ne présuppose rien. On la produit, et
+      un commentaire serait du bruit.
+
+    Le signal est dans le MESSAGE, pas dans le catalogue — le catalogue dit ce
+    qui existe, il ne dit pas ce que la phrase prétend. Il se compose de deux
+    moitiés, et **les deux sont exigées** :
+
+    1. un **marqueur d'antériorité** — le passé attribué à l'agent
+       (``_PASSE_ATTRIBUE``), un déictique du passé (``_DEICTIQUE_DU_PASSE``),
+       ou un verbe de reprise (``_VERBE_DE_REPRISE``) ;
+    2. une **cible** (``_CIBLE_DESIGNEE``) — un objet produisible ou un
+       anaphorique qui en tient lieu.
+
+    Ce n'est pas le lexique disqualifié au §9 de
+    ``docs/surface-conversationnelle.md``. Celui-là décidait de la ROUTE — quel
+    agent traite la demande — et plafonnait à 3 formulations sur 10 parce qu'il
+    fallait reconnaître *ce qu'on veut*. Ici on ne reconnaît qu'une construction
+    grammaticale — « tu » + auxiliaire + participe de production, ou un
+    déictique du passé — et elle décide seulement d'AJOUTER UNE PHRASE à une
+    réponse qui, elle, part de toute façon. Se tromper ne fait perdre ni une
+    réponse ni un tour : au pire une phrase de trop, au pire une phrase de
+    moins.
+
+    Rend le marqueur trouvé plutôt qu'un booléen : c'est ce qui part dans la
+    trace, et une décision déterministe doit pouvoir dire sur quoi elle s'est
+    fondée.
+    """
+    plat = replie(question)
+    marqueur = (
+        _PASSE_ATTRIBUE.search(plat)
+        or _DEICTIQUE_DU_PASSE.search(plat)
+        or _VERBE_DE_REPRISE.search(plat)
+    )
+    if marqueur is None or not _CIBLE_DESIGNEE.search(plat):
+        return ""
+    return marqueur.group(0)
+
+
+def aveu_dabsence(workspace: ConversationWorkspace, question: str) -> str:
+    """Ce qu'on met EN TÊTE quand on produit à la place de rappeler — ``""`` sinon.
+
+    Le défaut que ce texte corrige n'est pas une invention : à « reprends le
+    camembert des ports que tu m'avais fait », l'agent de rappel décline — rien
+    au catalogue n'y ressemble — le planificateur fabrique un camembert neuf, et
+    il est correct. Rien de faux n'est affirmé, aucun artefact n'est inventé.
+    Mais **l'utilisateur repart en croyant qu'on a retrouvé son travail**, alors
+    qu'on en a refait un autre. C'est la dernière poche de la famille
+    ``acfd8f5`` : répondre avec ce qu'on peut produire au lieu de dire ce qui
+    manque.
+
+    **Déterministe, et côté nœud.** Trois reformulations du prompt ont été
+    essayées au chantier précédent (§20.10) : aucune n'a tenu, parce qu'on
+    demandait au modèle d'affirmer une absence — et un modèle n'affirme pas une
+    absence, il produit ce qu'il peut. Le catalogue, lui, SAIT ce qui existe.
+    C'est donc lui qui le dit.
+
+    **Trois cas, trois phrases**, et les confondre serait mentir :
+
+    - le fil n'a rien produit du tout ;
+    - le fil a produit des choses, aucune n'est celle-là ;
+    - des artefacts ont été **ÉVINCÉS** du contexte de ce tour. Celui-là est le
+      piège : on ne PEUT PAS affirmer l'absence de ce qu'on ne voit plus, et le
+      dire absent reviendrait à dire à quelqu'un qu'il n'a jamais demandé ce
+      graphique. C'est la même frontière que ``refus_dartefact``, du côté où
+      aucun nom n'a été prononcé.
+
+    **On ne bloque jamais.** Cette phrase se met en tête d'une réponse qui part
+    de toute façon : le défaut n'est pas de produire la figure, c'est de laisser
+    croire qu'on l'a retrouvée.
+    """
+    if not designation_dun_artefact_passe(question):
+        return ""
+    disponibles = ", ".join(a.name for a in workspace.catalogue())
+    if workspace.trim.truncated:
+        cause = workspace.trim.cause or "plafond du contexte"
+        reste = f" Artefacts encore disponibles : {disponibles}." if disponibles else ""
+        return (
+            f"Je ne peux pas affirmer ne l'avoir jamais produit : {workspace.trim.dropped} "
+            f"objet(s) plus ancien(s) de cette conversation ont été ÉVINCÉS du contexte de "
+            f"ce tour ({cause}), et je ne peux ni les relire ni les rejouer. "
+            f"{SUITE_EST_NEUVE}{reste}"
+        )
+    if not disponibles:
+        return (
+            "Je n'ai encore rien produit dans cette conversation : il n'y a rien à "
+            f"reprendre. {SUITE_EST_NEUVE}"
+        )
+    return (
+        "Je n'ai pas produit dans cette conversation ce que tu me demandes de reprendre. "
+        f"{SUITE_EST_NEUVE} Ce que j'ai produit ici : {disponibles}."
     )
 
 
