@@ -177,6 +177,71 @@ c'est la partie qu'on ne retrouve pas dans un diff.
   elle — ce qu'on lit en dernier est ce à quoi on répond.
 - **Statut** : **Corrigé.**
 
+### La correspondance déclarée au catalogue n'était pas relue contre la source
+
+- **Où** : [`agents/inference/correspondance.py`](../src/data_analyst_agent/agents/inference/correspondance.py),
+  `Correspondance.declaree` ; [`orchestrator/graph.py`](../src/data_analyst_agent/orchestrator/graph.py),
+  `_fetch_predict_node`.
+- **Constat** : C23 a introduit le bloc `features: {dataset: {feature: colonne}}`
+  déclaré par la source, et il a supprimé la devinette. Ce qu'il ne vérifiait pas,
+  c'est que la colonne déclarée **existe** : la déclaration était relue contre le
+  schéma de *features* (complète ? aucune feature inconnue ?) et jamais contre le
+  schéma de la *source*.
+- **Problème** : une déclaration est du texte dans un YAML. Un `classes.levelx`
+  au lieu de `classes.level` partait en consigne SQL, et ce qui suivait dépendait
+  de ce que le modèle voulait bien en faire.
+- **Mesuré, avant correction**, sur la vraie base Postgres `titanic` et sous vLLM
+  (confrontation neutralisée, question « Prédis la survie des cinq premiers
+  passagers ») — **deux visages, et le premier est le pire** :
+
+  | Déclaration fausse | Ce qui sort | Appels LLM | Requêtes sur la source |
+  |---|---|---|---|
+  | `classes.levelx` | « a survécu : 3 (60 %) » — une prédiction **juste**, 4 tirages sur 4 : l'agent SQL a silencieusement réparé la faute en `c.level` | 5 | 1 |
+  | `classes.rang_du_billet` | « aucune des 5 lignes n'a passé la validation (`pclass` : reçu `'3e classe'`) », 2 tirages sur 2 : l'agent a choisi `c.label` | 5 | 1 |
+
+  Le premier cas est celui qu'on n'avait pas vu : la déclaration fausse ne produit
+  **aucun symptôme**. Le modèle devine la bonne colonne, ça marche, et la
+  déclaration devient du texte mort que rien n'applique — exactement la devinette
+  que C23 avait retirée, revenue par la porte de service. Le second est le symptôme
+  du §19.11, et son message accuse les **données** (« reçu `'3e classe'` ») là où la
+  faute est dans le catalogue.
+- **Corrigé** (C26) : `Correspondance.confronter(schema)`, appelée dans
+  `_fetch_predict_node` une fois la connexion ouverte et **avant la requête**. Le
+  refus nomme la colonne introuvable, propose la colonne réelle qui lui ressemble
+  (distance d'édition, muette si rien ne ressemble — une suggestion tirée au hasard
+  coûterait la confiance qu'on gagne à ne rien deviner), liste les colonnes de la
+  source et dit que rien n'a été interrogé. Toutes les colonnes fautives sont dites
+  d'un coup : rendre une faute à la fois ferait corriger le YAML trois fois de
+  suite sans qu'aucune contrainte ne l'impose.
+- **Mesuré, après correction**, mêmes questions et même base : les deux
+  déclarations sont refusées avant la requête — **2 appels LLM** (le tour de
+  routage, la synthèse de l'erreur) et **0 requête de données**, contre 5 et 1. Le
+  message nomme `classes.levelx`, propose `classes.level`, liste les treize
+  colonnes de la source et dit que rien n'a été interrogé. Pour
+  `classes.rang_du_billet`, aucune proposition : rien ne lui ressemble, et se taire
+  vaut mieux que suggérer au hasard.
+- **Ce qu'elle coûte** : une lecture du schéma, et rien d'autre — 27,7 ms sur la base
+  Postgres `titanic` (médiane de sept, valeurs distinctes des colonnes texte
+  comprises), 1,8 ms sur le CSV `iris` ; la confrontation elle-même pèse ~20 µs.
+  Aucun appel au modèle, aucune requête de données. C'est une lecture que l'agent
+  SQL fait de toute façon à son premier outil : le cas fautif l'économise, le cas
+  juste la paie deux fois.
+- **Ce qui a été délimité** : la confrontation ne porte que sur la correspondance
+  **déclarée**. Un tableau du tour précédent réinjecté sous `resultat_1` ne déclare
+  rien — ses colonnes sont rapprochées par leur nom, et une feature qu'aucune ne
+  porte doit rester réclamée par le schéma. La confronter aurait transformé un
+  chaînage qui marche en faute de catalogue à corriger dans un fichier qui n'existe
+  pas.
+- **Ce que la correction a démenti** : deux tests supposaient une déclaration
+  impossible — un `classes.level` déclaré sur un CSV à plat, et une identité
+  complète déclarée sur une source à deux colonnes. Aucun des deux ne pouvait
+  arriver en vrai, et tous deux passaient. Ils mesurent maintenant ce qu'ils
+  prétendaient mesurer : la consigne SQL sur une colonne qui existe vraiment, et
+  une ligne incomplète parce que la **requête** n'a ramené qu'une colonne des sept
+  demandées — pas parce que la source ne les porte pas.
+- **Statut** : **Traité** (C26, 2026-09-15). Relevé en mesurant C23, hors de son
+  périmètre.
+
 ### Deux politiques différentes face à un fichier corrompu
 
 - **Où** : [`orchestrator/workspace.py:471`](../src/data_analyst_agent/orchestrator/workspace.py)
@@ -241,7 +306,31 @@ c'est la partie qu'on ne retrouve pas dans un diff.
   celle qui compte pour le métier.
 - **Correction proposée** : laisser le dictionnaire de la source désigner sa colonne
   de date de référence, et retomber sur la première à défaut.
-- **Statut** : Ouvert.
+- **Corrigé** (C26) — **pas au dictionnaire, au catalogue**. Le `dictionary` est un
+  Markdown qui s'adresse au modèle de langage ; y désigner une colonne obligerait à
+  lire de la prose pour prendre une décision de code, et une source qui n'en déclare
+  aucun n'aurait nulle part où le dire. La désignation vit donc là où vit déjà
+  `features`, pour la raison qui a fait naître `features` : ce champ s'adresse au
+  code. Un champ `date_reference` **facultatif** sur la source — `table.colonne` ou
+  `colonne` seule, insensible à la casse — et le défaut d'avant inchangé quand rien
+  n'est désigné.
+- **Ce qui a été ajouté en chemin** : une désignation que le schéma ne porte pas ne
+  fait pas tomber le relevé — les tables, les lignes et une période restent bonnes,
+  et un inventaire qui disparaît pour une faute de frappe dans un YAML serait une
+  punition démesurée — mais elle **se dit**, avec les colonnes de date réelles.
+  Sans ce message, le repli sur la première colonne serait indiscernable d'une
+  source qui ne désigne rien : la correction se serait payée d'un nouveau silence.
+- **Mesuré** sur `tests/catalogues/deux-dates/` — une source de 120 lignes portant
+  `date_commande` **et** `date_livraison`, dont les intervalles diffèrent des deux
+  côtés, et trois déclarations sur les mêmes octets
+  (`uv run python scripts/mesure_releve_des_sources.py --seulement dates`) :
+
+  | Déclaration | Période rendue |
+  |---|---|
+  | aucune | du 2024-02-11 au 2024-11-30 (`date_commande`) |
+  | `date_reference: date_livraison` | du 2024-02-22 au 2025-01-07 (`date_livraison`) |
+  | `date_reference: date_livraision` (faute de frappe) | du 2024-02-11 au 2024-11-30 (`date_commande`) **+ « colonne de date de référence déclarée introuvable »**, colonnes réelles nommées |
+- **Statut** : **Traité** (C26, 2026-09-15).
 
 ### `list()` ouvre et valide tous les fils pour n'en rendre qu'un résumé
 

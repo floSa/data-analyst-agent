@@ -330,7 +330,16 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   registre. Le `dictionary` s'adresse au modèle de langage ; `features` s'adresse au
   code (§4.6, `correspondance.py`). C'est la source qui le sait, et elle seule : le
   même modèle `titanic` est alimenté par `classes.level` dans la base Postgres et
-  par `Pclass` dans le CSV vendorisé.
+  par `Pclass` dans le CSV vendorisé. Ce que la source déclare là est **relu contre
+  son schéma** avant toute requête : une colonne déclarée qui n'existe pas est
+  nommée, avec celles qui existent, au lieu de finir en SQL en erreur puis en
+  feature absente (§4.6).
+  Elle peut enfin déclarer `date_reference` **facultatif** — la colonne sur laquelle
+  se lit la **période** couverte, `table.colonne` ou `colonne` seule. Sans elle, la
+  période est celle de la première colonne de date du schéma (§5.6) : juste, puisque
+  la colonne est nommée dans la réponse, mais choisie par l'ordre du DDL. Une source
+  qui porte une date de commande **et** une date de livraison a une colonne qui
+  compte, et elle seule le sait.
 - `sql.py` — l'ontologie (tables, colonnes, types, clés primaires/étrangères) rendue
   en DDL compact pour le prompt, valeurs des colonnes à faible cardinalité comprises
   (sans quoi le modèle devine les littéraux, et il les devine dans sa langue) ; le
@@ -390,7 +399,23 @@ agrégat calculé dessus étant faux sans en avoir l'air. Les figures reviennent
   (`classes.level AS pclass`) ; la ligne récupérée est rapprochée du schéma **par le
   nom déclaré**, sans dépendre de ce que l'agent a aliasé ; et une source du
   catalogue qui ne déclare rien pour un modèle est **refusée avant d'être
-  interrogée**, avec le message qui dit quoi écrire. Une source peut aussi déclarer
+  interrogée**, avec le message qui dit quoi écrire. Quatrième usage depuis, et
+  c'est la moitié qui manquait : `confronter()` relit chaque colonne déclarée
+  **contre le schéma réel de la source**, une fois la connexion ouverte et avant
+  la moindre requête. Un `classes.levelx` écrit dans un YAML partait jusque-là en
+  SQL, échouait sur une colonne inconnue, laissait l'agent se corriger au jugé et
+  finissait en feature absente du payload — un symptôme à trois pas de sa cause.
+  Le refus nomme la colonne introuvable, propose la colonne réelle qui lui
+  ressemble, liste celles de la source, et dit que rien n'a été interrogé.
+  Mesuré avant/après sur la base Postgres `titanic` : un `classes.levelx` était
+  **silencieusement réparé** par l'agent SQL (une prédiction juste, 4 tirages sur
+  4, et une déclaration fausse qui survit) ; un `classes.rang_du_billet` passait
+  par `classes.label` et rendait « reçu `'3e classe'` », qui accuse les données là
+  où la faute est au catalogue. Les deux coûtaient 5 appels LLM et une requête ;
+  ils en coûtent 2 et zéro, avec un message qui dit quelle ligne du YAML corriger. Sur la
+  correspondance **déclarée** seulement : un tableau du tour précédent ne déclare
+  rien, et une feature qu'aucune de ses colonnes ne porte doit rester réclamée par
+  le schéma, pas traitée en faute de catalogue. Une source peut aussi déclarer
   la traduction des valeurs (`values: {"3e classe": 3}`) quand elle ne représente
   pas la feature comme le schéma l'attend — deux écarts distincts, le nom et la
   représentation. Une valeur qu'aucune traduction ne couvre est laissée **telle
@@ -650,8 +675,17 @@ fil ne lie rien : il est interrogeable, ce n'est pas une source de données.
 Le catalogue YAML ne porte qu'une description écrite à la main. Pour choisir entre
 plusieurs sources il faut savoir laquelle pèse trois cents lignes et laquelle couvre
 2024 : `agents/retrieval/faits.py` **lit** chaque source — nombre de tables, de lignes,
-et la période de sa première colonne de date s'il y en a une — et `RelevesDuCatalogue`
+et la période de sa colonne de date s'il y en a une — et `RelevesDuCatalogue`
 garde le relevé.
+
+- **Quelle** colonne de date : celle que la source **désigne** (`date_reference`,
+  §4.4), à défaut la première du schéma. Le défaut ne parie pas sur les noms et
+  assume de ne pas choisir — la colonne retenue est nommée dans la réponse. Une
+  désignation que le schéma ne porte pas ne fait pas tomber le relevé (les tables
+  et les lignes restent bonnes) mais **se dit**, avec les colonnes de date
+  réelles : sans ce message, le repli serait indiscernable d'une source qui ne
+  désigne rien, et une faute de frappe survivrait indéfiniment. Mesuré sur
+  `tests/catalogues/deux-dates/`, trois déclarations sur les mêmes octets.
 
 - Le relevé est fait au **premier inventaire**, pas à l'ouverture du serveur : ouvrir
   toutes les sources au démarrage ferait payer le lancement à qui ne pose aucune
