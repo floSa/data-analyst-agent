@@ -33,6 +33,7 @@ formulation à laquelle personne n'avait pensé.
 | **17** | le planificateur **substituait** une valeur légale à l'entrée impossible : la garde mesurée sur une entrée que le système ne fabriquait pas | **oui** |
 | **18** | un témoin qui **bouclait** : une question sur les colonnes, dans un prompt qui n'en connaissait pas | **oui** |
 | **19** | la correspondance source → features **devinée** : trois requêtes pour une même question, et la déclaration qui les remplace | **oui** |
+| **20** | un artefact **se nomme, se désigne et se rejoue** : le catalogue injecté sans son contenu, le rejeu mesuré au tour +2 et au tour +5, et la ligne de prompt qui en coûtait deux | **oui** |
 
 ## 1. Le défaut constaté, et sa cause
 
@@ -2513,3 +2514,296 @@ durci au §18 — celui qui vérifie aussi les colonnes **interdites**. Il n'a p
   même modélisation la répètent. Rien ne le justifie tant qu'il y en a deux ;
 - **le relevé d'une source ne choisit toujours pas sa colonne de date** quand il
   y en a plusieurs, cf. [axes-amelioration.md](axes-amelioration.md).
+
+## 20. Un artefact se nomme, se désigne et se rejoue
+
+Le besoin, dans les mots du propriétaire :
+
+> Le code qui génère une image doit pouvoir être rappelé pour être modifié. Si la
+> personne dit « je veux que les barres soient bleues au lieu de rouges », on doit
+> être en capacité de retrouver qu'on parle de cet artefact qui est le bout de code,
+> de le récupérer en contexte, de le modifier et de le réexécuter. Pareil pour les
+> jeux de données intermédiaires : les résultats d'une requête, on peut les stocker
+> et les lier à une conversation pour pouvoir y revenir dessus.
+
+### 20.1 Ce qui marchait déjà, et où exactement ça s'arrêtait
+
+**« Mets les barres en bleu » fonctionnait.** Le contexte du tour précédent portait
+le code produit (`ConversationContext.last_code`), l'agent d'analyse le recevait en
+`previous_code`, et il repartait dessus. Mesurer ça n'aurait rien appris.
+
+Ce qui ne fonctionnait pas tient en trois limites, et elles sont dans le code, pas
+dans le modèle :
+
+1. **la profondeur était de UN tour.** `ConversationContext` était écrasé à chaque
+   tour. La casse n'est donc pas au tour +1, elle est **au tour +2** : « reprends le graphe
+   de tout à l'heure », trois tours plus tard, ne trouvait plus rien ;
+2. **le code n'était pas un artefact.** `last_code` ne survivait qu'un tour, **et**
+   seulement si la source du tour suivant était identique (`last_code_for`). Deux
+   limites arbitraires, dont la seconde n'a jamais été justifiée ;
+3. **les figures n'étaient pas persistées.** Un `image/png` partait dans la réponse et
+   disparaissait. Le propriétaire s'en moque pour l'image — c'est le **code** qui doit
+   revenir.
+
+La conséquence est une conversation qui ne se souvient que de son dernier tour, dans
+un produit dont le fil, lui, s'affiche en entier.
+
+### 20.2 Ce qui a été bâti
+
+Un **magasin unique** par conversation, trois natures (`kind`) :
+
+| `kind` | ce que c'est | nom | fichier |
+|---|---|---|---|
+| `table` | résultat de requête, lot de prédiction | `resultat_1`… | `.csv` |
+| `figure` | le **code Python** d'une analyse qui a rendu une image | `graphique_1`… | `.py` |
+| `code` | le code Python d'une analyse sans image | `analyse_1`… | `.py` |
+
+`figure` n'est pas l'image. Repeindre un PNG ne rend rien ; rejouer son code rend une
+image neuve. Chacun porte un **nom**, une **description d'une ligne** et la **question
+qui l'a produit**.
+
+Dans le prompt n'entre que le **catalogue** — une ligne chacun, jamais le contenu.
+C'est le motif « le système de fichiers comme contexte » : on injecte l'index, on
+ouvre à la demande.
+
+Deux outils, et c'est le **modèle** qui décide de les appeler — comme pour les
+questions sur le système depuis le [§10](#10-ce-qui-a-remplacé-le-lexique--un-outil-et-le-modèle-qui-décide),
+et pour la même raison : « le graphe de tout à l'heure », « le camembert », « ce que tu
+m'as sorti avant » sont une famille ouverte, et le [§9](#9-le-lexique-avait-un-plafond-et-il-a-été-mesuré)
+a mesuré qu'un lexique y plafonne à 3 formulations sur 10.
+
+- `lire_un_artefact(nom)` — rend le contenu ;
+- `rejouer_un_code(nom, modification)` — reprend le code, applique la modification,
+  **réexécute** dans le bac à sable, garde-fous inchangés.
+
+Le nœud `rappel` s'insère entre `system` et `plan`, et **se retire sans appeler le
+modèle quand le fil n'a rien produit**. Précondition structurelle, pas lexique : le
+catalogue est vide, les outils ne pourraient que refuser. C'est aussi ce qui garantit
+que la batterie de ce document — une conversation neuve par question — ne le paie ni
+n'en voit le comportement.
+
+### 20.3 Le parcours mesure la PROFONDEUR, pas la reprise
+
+`scripts/mesure_rappel_dartefact.py`, huit tours dans **une** conversation, contre le
+vrai système — serveur LLM en place, Postgres réel, bac à sable Docker. Deux questions
+**sans rapport** sont intercalées entre la figure et sa reprise, délibérément : c'est
+le **tour +2** qui est la mesure. Puis on revient à la première figure **cinq tours
+plus tard, deux figures plus loin**.
+
+Le verdict est **mécanique**, lu dans la trace et le magasin — quel nœud a répondu,
+quel artefact il a nommé, ce que le magasin porte ensuite. Une réponse qui « a l'air »
+d'avoir rejoué ne compte pas.
+
+### 20.4 La mesure, sur les deux moteurs
+
+Huit tours, une conversation, `titanic` en Postgres, les figures réellement
+exécutées en bac à sable.
+
+| # | Tour | Ce qu'on exige | vLLM | Ollama |
+|---|---|---|---|---|
+| 1 | *Fais-moi un graphique en barres du nombre de passagers par classe.* | une figure, et son code retenu sous un nom | ✅ `graphique_1` | ✅ `graphique_1` |
+| 2 | *Combien de passagers y a-t-il en tout ?* | requête ordinaire, le rappel décline | ✅ | ✅ |
+| 3 | *Et quel est l'âge moyen des passagers ?* | requête ordinaire, le rappel décline | ✅ | ✅ |
+| **4** | ***Reprends le graphe de tout à l'heure et mets les barres en bleu.*** | **le rejeu du code du tour 1** | ✅ **`rejeu de graphique_1` → `graphique_2`** | ✅ **`rejeu de graphique_1` → `graphique_2`** |
+| 5 | *Le premier tableau que tu m'as sorti, redis-moi ce qu'il y avait dedans.* | la relecture d'un tableau, désigné sans son nom | ✅ `lire_un_artefact` → `resultat_1` | ❌ capté par le nœud **système** |
+| 6 | *Fais-moi un histogramme des âges des passagers.* | une seconde figure, sous son propre nom | ✅ `graphique_3` | ✅ `graphique_3` |
+| **7** | ***Reviens au tout premier graphique, celui par classe, et repasse-le en vert.*** | **le rejeu de la PREMIÈRE figure, 5 tours et 2 figures plus loin** | ✅ **`rejeu de graphique_1` → `graphique_4`** | ✅ **`rejeu de graphique_1` → `graphique_4`** |
+| 8 | *Tu peux me remontrer le camembert des ports d'embarquement que tu avais fait ?* | un refus qui dit que cet artefact n'existe pas | ❌ figure neuve | ❌ figure neuve |
+| | | | **7/8** | **6/8** |
+
+**Les deux tours qui sont la mesure passent sur les deux moteurs.** Le tour 4 est
+celui que le code d'avant ne pouvait pas servir : deux questions sans rapport
+séparent la figure de sa reprise, et `last_code` avait été écrasé deux fois. Le tour
+7 va plus loin — cinq tours, et une **autre figure** produite entre-temps, donc un
+catalogue où deux `graphique_N` se disputent la désignation « le tout premier ». Les
+deux moteurs choisissent `graphique_1`.
+
+Le rejeu repasse bien par le bac à sable : le code exécuté est celui de l'artefact,
+modifié, et le nouveau code entre au catalogue sous son propre nom — on peut donc
+rejouer un rejeu.
+
+Les deux manques sont instruits en [20.6](#206-trois-défauts-que-la-mesure-a-trouvés)
+et [20.10](#2010-ce-qui-reste-ouvert-après-le-20). Aucun des deux n'est une invention :
+dans les deux cas l'agent produit une réponse vraie, lue dans les données.
+
+### 20.5 Le poids du prompt : ce que le catalogue coûte vraiment
+
+Tokens **rendus par le serveur** (`input_tokens`), pas estimés — l'estimateur local
+surestime de 1 à 17 %, ce qui suffit pour couper au bon moment mais pas pour publier
+un chiffre.
+
+| Tour | artefacts au magasin | prompt du planificateur (vLLM) | (Ollama) | prompt de l'agent de rappel |
+|---|---|---|---|---|
+| 1 | 1 | **1 439** | 1 458 | — |
+| 2 | 2 | 1 601 | 1 620 | 1 055 |
+| 3 | 3 | 1 739 | 1 758 | 1 090 |
+| 6 | 5 | 1 822 | 1 841 | 1 172 |
+| 8 | 7 | **1 911** | 1 930 | 1 260 |
+
+**+472 tokens pour sept artefacts**, et exactement le même écart sur les deux moteurs.
+Le catalogue de ces sept objets pèse 1 489 caractères ; **leur contenu en pèse 6 142 à
+8 919** selon le tirage — et l'écart se creuse à chaque figure, parce qu'une ligne de
+catalogue est de taille constante quand un fichier de code ne l'est pas. Le prompt du
+planificateur reste à 6 % du budget (`DAA_CONTEXT_TOKEN_BUDGET=8000`) et à 6 % de la
+fenêtre servie (32 768).
+
+C'est ce que « le système de fichiers comme contexte » veut dire ici : le catalogue
+tient parce qu'il ne porte que des noms, et le contenu ne coûte qu'au tour où
+quelqu'un le demande.
+
+L'agent de rappel, lui, coûte **un appel LLM de plus par tour** — mais seulement dans
+une conversation qui a déjà produit quelque chose. Un fil neuf ne le paie pas : le
+nœud se retire avant d'appeler le modèle. C'est ce qui rend la batterie de ce
+document — une conversation neuve par question — insensible à ce chantier, et le
+[§20.8](#208-pas-de-régression--la-batterie-sur-les-deux-moteurs) le montre au token près.
+
+### 20.6 Trois défauts que la mesure a trouvés
+
+Aucun des trois n'était visible en test unitaire : ils demandent un vrai modèle
+devant un vrai catalogue.
+
+**① La sentinelle rendue APRÈS un appel d'outil.** vLLM, tour 5. L'agent a
+correctement reconnu « le premier tableau que tu m'as sorti », appelé
+`lire_un_artefact('resultat_1')`, reçu `count / 891` — puis répondu `AUTRE`, le mot
+réservé au « ce n'est pas pour moi ». L'utilisateur recevait le mot **`AUTRE`** en
+guise de réponse. Pire qu'un refus : ce n'en est même pas un. Un tour où un outil a
+répondu n'est plus « pas pour moi », et la contradiction se tranche du côté de ce qui
+a été lu.
+
+**② La formulation qui ne porte RIEN de ce que l'outil a rendu.** Même tour, tirage
+suivant. L'outil avait fait son travail — `count / 891` — et le modèle a répondu
+« Je suis désolé, mais je ne peux pas répondre à cette demande ». Il tenait la
+réponse et l'a rendue vide. La garde est la transposition de
+[`defaut_de_fondation`](#10-ce-qui-a-remplacé-le-lexique--un-outil-et-le-modèle-qui-décide) :
+la formulation doit porter au moins **un** jeton de ce que l'outil a rendu — un nom de
+colonne, une valeur, le nom de l'artefact. Volontairement généreux : on distingue
+« formulé autrement » de « n'a rien formulé du tout », on ne note pas un style. Avec
+la garde, l'utilisateur reçoit `resultat_1 (tableau de 1 ligne(s) ; colonnes : count)
+: count / 891`. Moins joli, vrai et complet.
+
+**③ Le catalogue muet sur l'éviction, et le rejeu du MAUVAIS artefact.** Le plus
+grave des trois, et le seul qu'on ne pouvait voir qu'en resserrant la fenêtre. Avec
+`DAA_CONTEXT_CODE_WINDOW=1`, le catalogue de l'agent de rappel ne portait au tour 7
+que `graphique_3` — l'histogramme des âges, le plus récent. Il a reçu « reviens au
+**tout premier** graphique, celui par classe, et repasse-le en vert », et il a rejoué
+celui qu'il voyait :
+
+> `rejeu de graphique_3 — 1 essai(s), 1 figure(s), statut ok`
+>
+> « Le graphique initial par classe a été recréé en utilisant la couleur verte. Les
+> statistiques descriptives de l'âge montrent une moyenne de 29.699118… »
+
+Un histogramme des âges repeint en vert, présenté comme le graphique par classe. **Ça
+ressemblait à un rappel et ce n'en était pas un** — exactement ce que le refus existe
+pour empêcher. Le catalogue montrait ce qui restait sans dire ce qui était sorti, donc
+le modèle croyait tout voir.
+
+Le remède est celui que le planificateur avait déjà (`planner_notice`) : dire
+l'éviction. Le catalogue de l'agent de rappel porte maintenant, quand il y a lieu :
+
+> ATTENTION : N objet(s) plus ancien(s) de cette conversation ont été ÉVINCÉS du
+> contexte (…) et ne figurent PAS au catalogue ci-dessus. […] tu ne peux ni le relire
+> ni le rejouer : DIS-LE, et ne rejoue surtout pas un autre artefact à sa place.
+
+Mesuré après, même parcours, même fenêtre : le rejeu erroné **a disparu**. L'agent
+décline, le planificateur refait une figure par classe — qui est correcte — et la
+réponse porte l'avis de troncature existant (« Contexte tronqué : 2 des 5 tableaux
+intermédiaires… »). Ce qui manque encore est que l'agent **dise** l'éviction lui-même
+plutôt que de se retirer ; ce qui est acquis est qu'il ne raconte plus le mauvais
+artefact.
+
+### 20.7 Le refus, et le cloisonnement
+
+Le refus distingue **deux cas**, et les confondre reviendrait à dire à quelqu'un
+qu'il n'a jamais demandé ce graphique :
+
+- *Aucun artefact ne s'appelle « graphique_9 » dans cette conversation. Artefacts
+  disponibles : …*
+- *L'artefact « graphique_1 » a bien été produit dans cette conversation, mais il a
+  été ÉVINCÉ du contexte de ce tour (fenêtre DAA_CONTEXT_CODE_WINDOW=1) : je ne peux
+  ni le relire ni le rejouer. Artefacts encore disponibles : …*
+
+Les deux énumèrent ce qui reste — un refus qui ne dit pas ce qu'on peut demander à la
+place oblige à deviner une deuxième fois. Et **c'est le refus qui part à
+l'utilisateur, pas la phrase du modèle** : quand tous les outils d'un tour ont refusé,
+il n'y a rien à formuler. C'est la reprise de la famille `acfd8f5` par une porte de
+plus.
+
+Côté HTTP, le cloisonnement du [§5 de l'audit](AUDIT-2026-09.md) tient sans ajout :
+le magasin d'artefacts est ouvert **sous la racine de l'appelant**, donc l'artefact
+d'un autre compte n'existe pas de là où on regarde. Les deux routes
+(`GET /conversations/{id}/artefacts` et `…/artefacts/{nom}`) rendent le **même 404**
+dans les trois cas qui doivent être indiscernables — le fil d'un autre, un fil
+inventé, un nom inconnu chez soi. Un message par cas dirait à un inconnu lequel des
+trois il vient de toucher.
+
+### 20.8 Pas de régression : la batterie sur les deux moteurs
+
+| Moteur | Questions méta | Témoins | Coût |
+|---|---|---|---|
+| vLLM (`google/gemma-4-E4B-it-qat-w4a16-ct`, port 8100) | **36/36** | **4/4** | 78 + 17 appels LLM |
+| Ollama (`gemma4:e4b`, port 11434) | **35/36** | **4/4** | 83 + 17 appels LLM |
+
+**Identiques au [§19.10](#1910-la-batterie-rejouée-sur-les-deux-moteurs), appels
+compris.** Le seul écart reste `sources-premiere-personne` sous Ollama, et c'est le
+même depuis le [§18.7](#187-pas-de-régression--la-batterie-complète-sur-les-deux-moteurs) :
+`systeme_request_limit = 4`, le *fail-open* joue son rôle. Le témoin
+`temoin-colonnes-a-trous` passe sur les deux moteurs, avec l'oracle durci au §18 —
+celui qui vérifie aussi les colonnes **interdites**. Il n'a pas été desserré.
+
+Cette identité n'est pas un heureux hasard : la batterie pose chaque question dans une
+conversation **neuve**, donc sans artefact, donc le nœud de rappel s'y retire avant
+d'appeler le modèle. Le prompt et le nombre d'appels y sont, littéralement, ceux
+d'avant.
+
+Suite complète : **922 passés, 99,54 %** (893 et 99,50 % avant le chantier), dont 26 sur le seul rappel d'artefact.
+
+### 20.9 Une ligne de prompt qui en coûtait deux
+
+Le tour 5 raté sous Ollama a une cause identifiée : le nœud **système** s'empare de
+« Le premier tableau que tu m'as sorti, redis-moi ce qu'il y avait dedans » et répond
+par l'inventaire du catalogue. C'est le défaut du [§12](#12-la-source-de-travail-dune-conversation-mesurée-de-bout-en-bout)
+par une autre porte, entre deux agents cette fois.
+
+La correction évidente était d'ajouter la frontière au prompt système : « ne te
+concerne pas une demande qui porte sur ce que CETTE CONVERSATION a déjà produit ».
+Cinq lignes. Mesurée, elle **coûtait deux questions de la batterie, sous vLLM** :
+
+| Question | Sans la ligne | Avec la ligne |
+|---|---|---|
+| `periode-indirecte` — « De quand datent les données que tu as ? » | `query` : *les âges vont de 0.42 à 80.0 ans* — **correct** | réponse système vague : *les données que j'ai datent de la période couverte par les sources titanic et iris* — **à côté** |
+| `capacites-demander-quoi` — « je peux te demander quoi ? » | l'outil de capacités appelé, l'analyse citée — **correct** | liste amputée de l'analyse — **à côté** |
+
+34/36 avec, 36/36 sans, reproduit dans les deux sens. **La ligne a été retirée.**
+L'oracle durci au §18 ne se desserre pas, et il y a un enseignement plus général :
+*un paragraphe de plus dans un prompt qui tient n'est pas gratuit*. Il déplace
+l'attention du modèle, y compris là où on ne regardait pas — et on ne l'aurait pas su
+sans rejouer la batterie entière pour une frontière de cinq lignes.
+
+La frontière reste donc portée par le seul agent de rappel, et ce qu'on y perd est
+mesuré : 1 tour sur 8, sous Ollama seulement.
+
+### 20.10 Ce qui reste ouvert après le §20
+
+- **la demande au passé d'un artefact qui n'existe pas** (tour 8, les deux moteurs).
+  « Remontre-moi le camembert des ports que tu avais fait » : le modèle décline —
+  rien au catalogue n'y ressemble — et le planificateur fabrique un camembert neuf,
+  correct. **Rien de faux n'est affirmé** et aucun artefact n'est inventé ; ce qui
+  manque est le « je ne l'avais pas fait » avant la figure. Trois formulations de
+  prompt ont été essayées, dont une qui demande explicitement d'appeler l'outil avec
+  le nom le plus proche : le modèle ne s'en saisit pas quand le catalogue ne porte
+  rien de la même famille. À reprendre autrement — peut-être en déterministe, du côté
+  du nœud, plutôt que par le prompt ;
+- **le nœud système capte encore « le tableau que tu m'as sorti » sous Ollama**
+  (§20.9). La correction par le prompt est disqualifiée, mesures à l'appui ; la
+  frontière reste à poser ailleurs ;
+- **l'éviction n'est pas DITE quand le modèle décline.** L'avis dans le catalogue a
+  supprimé le rejeu erroné (§20.6 ③), mais l'agent se retire au lieu d'annoncer
+  « celui-là est sorti du contexte ». L'utilisateur reçoit l'avis de troncature
+  générique, qui ne nomme pas ce qu'il demandait ;
+- **le rejeu ne vérifie pas que le décor est le même.** La source de l'artefact est
+  retenue et remontée ; si elle a disparu du catalogue, on remonte ce qu'on a et le
+  code échoue dans le bac à sable avec un message. C'est un choix — mieux vaut un
+  échec lisible qu'un refus prématuré — mais rien ne compare le schéma d'alors à
+  celui de maintenant ;
+- **`sources-premiere-personne` sous Ollama**, inchangé depuis le §18.7.

@@ -69,7 +69,10 @@ JSON) et la trace d'exécution.
 flowchart LR
     Q(["question"]) --> SYS["system<br/>« est-ce une question sur moi ? »<br/>5 outils de faits, le modèle décide"]
     SYS -->|"un outil appelé"| SYN["synthesize"]
-    SYS -->|"aucun outil appelé"| PLAN["plan<br/>LLM → objet Plan<br/>puis les règles nommées"]
+    SYS -->|"aucun outil appelé"| RAP["rappel<br/>« parle-t-on de ce que j'ai produit ? »<br/>2 outils, le modèle décide<br/><i>sauté si le fil n'a rien produit</i>"]
+    RAP -->|"lecture d'un artefact"| SYN
+    RAP -->|"rejeu d'un code"| ANAL
+    RAP -->|"aucun outil appelé"| PLAN["plan<br/>LLM → objet Plan<br/>puis les règles nommées"]
     PLAN -->|"query"| RETR["retrieval<br/>SQL lecture seule"]
     PLAN -->|"analyze"| ANAL["analysis<br/>code en sandbox"]
     PLAN -->|"predict"| INFE["inference<br/>valide → prédit"]
@@ -90,6 +93,14 @@ d'appelé, le tour repart au planificateur exactement comme avant. C'est la seul
 branche du graphe qui ne vient pas d'un `Plan` — `ChatAnswer.plan` reste vide pour une
 question sur le système, parce qu'il n'y a rien eu à planifier (§4.10).
 
+**Le deuxième non plus.** Avant le planificateur vient `rappel` : « la demande
+porte-t-elle sur quelque chose que cette conversation a DÉJÀ produit ? ». Même
+mécanique — deux outils, et l'appel d'un outil est le signal. Ce nœud-ci se
+**retire sans appeler le modèle** quand le fil n'a encore rien produit : le
+catalogue est vide, les outils ne pourraient que refuser, et l'appel serait payé
+pour apprendre ce que le disque dit déjà. Une conversation neuve ne le paie donc
+jamais (§4.12).
+
 Le planificateur classe la demande dans une capacité et en extrait les paramètres
 (source, dataset, features). Le plan qu'il rend est ensuite passé dans une suite de
 **règles nommées** — source imposée par l'appelant, dégradations, reprise des
@@ -103,6 +114,9 @@ pour une analyse réussie**, tout le reste est déterministe :
 | Situation | Mode de synthèse |
 |---|---|
 | Question SUR le système | la formulation du modèle, **telle quelle** — ou les faits eux-mêmes si elle ne les porte pas (§4.10) |
+| Rappel d'un artefact (lecture) | la formulation du modèle, **telle quelle** — ou le contenu lu, si elle invente un nom, rend la sentinelle ou ne porte rien de ce que l'outil a rendu (§4.12) |
+| Rappel d'un artefact absent ou évincé | le **refus**, tel quel : il dit lequel des deux cas c'est, et ce qui reste disponible |
+| Rejeu d'un code | celle d'une analyse — un rejeu **est** une analyse (§4.12) |
 | Erreur d'un nœud | phrase normalisée + référence d'incident (le détail reste dans la trace) |
 | Clarification demandée par une règle du plan | la question, telle quelle |
 | Features invalides/incomplètes | la relance structurée, telle quelle |
@@ -169,6 +183,8 @@ taille du corps (`DAA_API_MAX_BODY_BYTES`).
 | `GET` | `/` | oui | page de chat (rendu des PNG base64 et des tables JSON, zéro asset externe) |
 | `GET` | `/conversations` | oui | **ses** résumés (id, titre, horodatages, nb de messages), du plus récent au plus ancien |
 | `GET` | `/conversations/{id}` | oui | le fil complet — messages, artefacts et `pending` : de quoi reprendre où on en était |
+| `GET` | `/conversations/{id}/artefacts` | oui | le **catalogue** des artefacts du fil — nom, nature, description, question d'origine, et `retenu` (dans le contexte, ou évincé). Jamais leur contenu |
+| `GET` | `/conversations/{id}/artefacts/{nom}` | oui | le **contenu** d'un artefact : le code Python d'une analyse, la tête d'un tableau. C'est par là qu'on récupère le code d'une figure sans passer par la conversation |
 | `POST` | `/conversations/{id}/duplicate` | oui | copie sous un nouvel id |
 | `DELETE` | `/conversations/{id}` | oui | supprime le fil **et** sa mémoire |
 
@@ -178,7 +194,11 @@ taille du corps (`DAA_API_MAX_BODY_BYTES`).
 **Chacun ne voit que ses conversations** : les routes `/conversations…` et le
 `conversation_id` accepté par `POST /chat` sont résolus sous le dossier de
 l'utilisateur de la session, et il n'existe pas de vue plus large. Le fil d'un autre
-compte répond **`404`, jamais `403`** — un `403` confirmerait son existence.
+compte répond **`404`, jamais `403`** — un `403` confirmerait son existence. Les
+deux routes d'artefacts suivent la même règle et rendent **le même `404`** dans les
+trois cas qui devraient être indiscernables : le fil d'un autre, un fil inventé, un
+nom d'artefact qui n'existe pas chez soi. Un message par cas dirait à un inconnu
+lequel des trois il vient de toucher.
 
 **Multi-tours** : chaque réponse porte un `conversation_id` (généré si absent de la
 requête) ; le serveur y associe l'éventuelle *prédiction en attente de features*
@@ -215,14 +235,19 @@ les CSV, sans laisser de données orphelines.
   faits : cinq outils PydanticAI, sur le modèle des trois outils de l'agent SQL. Ici
   vit l'entrée/sortie que `introspection.py` s'interdit — seul l'outil de schéma
   ouvre une connexion (§4.10).
+- `rappel.py` — l'agent qui **retrouve** un artefact du fil désigné en langage
+  ordinaire (« le graphe de tout à l'heure »), le **relit** et le **rejoue**
+  modifié : deux outils PydanticAI, sur le modèle des cinq de `systeme.py`. Il
+  n'exécute rien lui-même — le rejeu passe par un rappel que le graphe lui
+  fournit, qui remonte le décor de données et repasse par le bac à sable (§4.12).
 - `context_budget.py` — ce qui entre dans le contexte : la fenêtre glissante et
   le budget de tokens (§7), le compteur approché, et la détection d'un
   débordement — plafonnement constaté sur `prompt_eval_count`, ou refus HTTP
   explicite d'un serveur qui rejette au lieu de tronquer.
 - `conversations.py` + `workspace.py` — la persistance d'un fil et sa mémoire
-  (transcription, manifeste des tableaux intermédiaires, contexte du tour
-  précédent, **source de travail validée**), rangées **par utilisateur** ; écritures
-  atomiques et verrou par conversation.
+  (transcription, manifeste des **artefacts nommés** — tableaux, code, figures —,
+  contexte du tour précédent, **source de travail validée**), rangées **par
+  utilisateur** ; écritures atomiques et verrou par conversation (§4.12).
 - `graph.py` — le `StateGraph` LangGraph : state typé (`TypedDict` avec accumulation
   des artefacts et de la trace), nœuds gardés, routage code, chaînage
   `fetch_then_predict` (lignes SQL → rapprochement par la correspondance **déclarée
@@ -691,6 +716,128 @@ avant, le planificateur choisissant à chaque tour. C'est le même choix que pou
 `owner`, dont la migration avait dû être écrite : ici le défaut est *le comportement
 d'avant*, il n'y a donc rien à migrer.
 
+### 4.12 Les artefacts nommés d'une conversation — relire, rejouer
+
+Le besoin, dans les mots du propriétaire :
+
+> Le code qui génère une image doit pouvoir être rappelé pour être modifié. Si la
+> personne dit « je veux que les barres soient bleues au lieu de rouges », on doit
+> être en capacité de retrouver qu'on parle de cet artefact qui est le bout de code,
+> de le récupérer en contexte, de le modifier et de le réexécuter.
+
+**Ce qui existait, et où ça s'arrêtait.** La mémoire de conversation persistait déjà
+les tableaux (§4.2) ; le code d'analyse, lui, vivait dans un unique `last_code`
+**écrasé à chaque tour**, et seulement réutilisable si la source du tour suivant était
+la même. « Mets les barres en bleu » juste après un graphique fonctionnait donc ; la
+même phrase **deux tours plus tard** ne trouvait plus rien. Les figures, elles,
+n'étaient pas persistées du tout.
+
+**Un seul magasin, trois natures.** `WorkspaceArtifact` porte désormais un `kind` :
+
+| `kind` | ce que c'est | nom | fichier |
+|---|---|---|---|
+| `table` | un résultat de requête ou un lot de prédiction | `resultat_1`, `resultat_2`… | `.csv` |
+| `figure` | le **code Python** d'une analyse qui a rendu une image | `graphique_1`… | `.py` |
+| `code` | le code Python d'une analyse sans image | `analyse_1`… | `.py` |
+
+`figure` n'est pas l'image : c'est le code qui l'a produite. C'est délibéré et c'est
+ce que demande le besoin — repeindre un PNG ne rend rien, rejouer son code rend une
+image neuve. Chaque artefact porte un **nom**, une **description d'une ligne** et la
+**question qui l'a produit** ; le code retient en plus la **source** interrogée, sans
+quoi un rejeu chercherait sous `/data/` des CSV que personne n'aurait montés.
+
+Seul le code d'une analyse **qui a abouti** entre au magasin : un code qui n'a pas
+tourné n'est pas un artefact, c'est une tentative, et le rappeler n'offrirait que de
+rejouer un échec.
+
+**Ce qui entre dans le prompt est le CATALOGUE, jamais le contenu.** Une ligne par
+artefact — son nom, ce qu'il est, la question qui l'a produit. C'est le motif « le
+système de fichiers comme contexte » : on injecte l'index, on ouvre à la demande.
+Mesuré sur le parcours de `scripts/mesure_rappel_dartefact.py` (tokens rendus par le
+serveur, pas estimés) : le prompt du planificateur passe de **1 439 tokens** au
+premier tour, magasin vide, à **1 911 au huitième**, avec sept artefacts au magasin —
+**+472 tokens pour sept objets**, là où leur contenu en pèserait plusieurs dizaines de
+milliers.
+
+**Deux fenêtres, pas une.** Les deux natures ne coûtent pas la même chose : un tableau
+retenu est monté en `--volume` dans la sandbox, ouvert comme source éphémère et décrit
+avec toutes ses colonnes — c'est ce que l'audit §3.4 a mesuré à 100 montages ; un code
+retenu coûte une ligne de catalogue. `DAA_CONTEXT_CODE_WINDOW` est donc distincte de
+`DAA_CONTEXT_ARTIFACT_WINDOW`. Partager une fenêtre de huit ferait évincer la figure
+du tour 1 au bout de quatre tours produisant chacun un tableau, c'est-à-dire
+exactement ce qu'on corrige. Le **budget de tokens**, lui, reste commun et ignore les
+natures : il coupe dans ce qui pèse, les plus anciens d'abord.
+
+**Deux outils, et c'est le modèle qui décide** — comme pour les questions sur le
+système depuis §4.10, et pour la même raison : la façon de désigner un artefact est
+une famille ouverte (« le graphe de tout à l'heure », « le camembert », « ce que tu
+m'as sorti avant »), et un lexique est une liste.
+
+- `lire_un_artefact(nom)` — rend le contenu : le code tel quel, ou la tête du tableau
+  (vingt lignes, le compte complet dit).
+- `rejouer_un_code(nom, modification)` — reprend le code, y applique la modification et
+  le **réexécute**. Le code rappelé arrive par `previous_code`, le paramètre qui
+  servait déjà à l'ajustement du tour immédiatement suivant ; ce qui change n'est pas
+  le mécanisme, c'est **d'où vient le code**.
+
+**Le rejeu repasse par le bac à sable, sans un garde-fou de moins** : même
+`run_analysis`, mêmes montages en lecture seule, même image durcie — réseau coupé,
+mémoire et PIDs bornés, capabilities retirées — et même sémaphore de places (§4.7). Le
+code vient d'un modèle, et il a été écrit pour un décor qui a pu changer : ce n'est pas
+un chemin de confiance parce qu'il vient de nous. Le décor est remonté par le même
+`_decor_de_donnees` que l'analyse ordinaire, et non par une seconde copie : deux
+montages qui divergent, c'est un code qui marchait au tour 1 et échoue au tour 4 sans
+que rien ne le dise.
+
+**Un rejeu EST une analyse**, et il est rendu comme telle : le state reçoit un `plan`
+d'analyse et un `analysis`, donc la synthèse, l'affichage des figures, la mémorisation
+du tour et l'entrée du nouveau code au catalogue passent par les chemins qui existent
+déjà. Le nouveau code est lui-même un artefact nommé : on peut rejouer un rejeu.
+
+**Le nœud ne coûte rien dans un fil qui n'a rien produit.** Ce n'est pas un lexique
+déguisé, c'est une précondition structurelle : le catalogue est vide, les deux outils
+ne pourraient que refuser. Conséquence mesurable — une question posée dans une
+conversation neuve ne paie pas ce nœud, ce qui est exactement le régime de
+`scripts/mesure_surface_conversationnelle.py` (§15 de `surface-conversationnelle.md`).
+
+**Trois façons de ne pas servir le modèle**, les mêmes qu'au §4.10 :
+
+1. **aucun outil appelé** — la demande n'était pas pour lui, le tour repart au
+   planificateur ;
+2. **tous les outils ont refusé** — c'est le refus qui part à l'utilisateur, pas la
+   phrase du modèle. Le refus distingue **« il n'existe pas »** de **« il a été évincé
+   du contexte »** : les deux sont des refus, mais les confondre reviendrait à dire à
+   quelqu'un qu'il n'a jamais demandé ce graphique. Les deux énumèrent ce qui reste ;
+3. **la formulation se disqualifie** — elle invente un nom d'artefact (famille
+   `acfd8f5`), rend la sentinelle `AUTRE` alors qu'un outil a répondu, ou ne porte
+   **rien** de ce que l'outil a rendu. Dans les trois cas ce sont les faits qui sont
+   servis. Les deux derniers sont des défauts **mesurés sur vLLM**, cf. §20 de
+   `surface-conversationnelle.md`.
+
+**Le catalogue dit aussi ce qui a été ÉVINCÉ**, et ce n'est pas un ornement : un
+catalogue qui montre ce qui reste sans dire ce qui est sorti fait croire au modèle
+qu'il voit tout. Mesuré, fenêtre de code resserrée à un : le modèle a reçu « reviens au
+tout premier graphique » avec un catalogue qui n'en portait qu'un — le plus récent — et
+il l'a rejoué. L'utilisateur a reçu un histogramme des âges repeint en vert, présenté
+comme son graphique par classe. Ça ressemblait à un rappel et ce n'en était pas un.
+L'avis d'éviction dans le prompt a fait disparaître ce cas (§20).
+
+**Récupérer le code sans passer par la conversation.** `GET
+/conversations/{id}/artefacts` rend le catalogue — tout ce que porte le disque, avec
+`retenu` pour distinguer ce qui est encore dans le contexte — et
+`/artefacts/{nom}` rend le contenu d'un artefact, évincé compris : l'éviction borne ce
+qu'on réinjecte dans un prompt, elle n'efface rien.
+
+**Un artefact ne franchit ni la frontière d'un fil, ni celle d'un compte**, et c'est
+structurel, pas filtré : le magasin est ouvert sous la racine de l'appelant, donc
+l'artefact d'un autre n'existe pas de là où on regarde. Les routes rendent le même
+`404` pour le fil d'un autre, un fil inventé, et un nom inconnu chez soi (§4.1).
+
+**Compatibilité, sans migration.** Un manifeste écrit avant ce mécanisme ne porte ni
+`kind`, ni `description`, ni `source` : il se relit tel quel en `table`, ce qu'il
+était. Comme pour la source de travail (§4.11), le défaut *est* le comportement
+d'avant.
+
 ## 5. Sécurité — récapitulatif des garde-fous
 
 1. **Identité** : hormis `GET /health`, aucune route n'est atteignable sans session
@@ -798,6 +945,8 @@ plafonds de la sandbox).
 |---|---|---|
 | `DAA_WORKSPACE_DIR` | `var/workspaces` | racine de la mémoire de conversation (par utilisateur) |
 | `DAA_CONTEXT_ARTIFACT_WINDOW` | `8` | tableaux intermédiaires réinjectés (0 = pas de fenêtre) |
+| `DAA_CONTEXT_CODE_WINDOW` | `8` | **code** d'analyse et de figure réinjecté au catalogue (0 = pas de fenêtre). Séparé des tableaux : un tableau retenu coûte un montage `--volume`, une source et ses colonnes ; un code retenu coûte une ligne (§4.12) |
+| `DAA_RAPPEL_REQUEST_LIMIT` | `5` | allers-retours de l'agent de rappel. Ne coûte rien dans un fil qui n'a rien produit : le nœud se retire avant d'appeler le modèle |
 | `DAA_CONTEXT_TOKEN_BUDGET` | `8000` | budget du prompt du planificateur, décompté avant l'appel (0 = pas de budget) |
 | `DAA_CONTEXT_MODEL_WINDOW` | `32768` | fenêtre réellement servie par le serveur — sert à **constater** un débordement (0 = inconnue) |
 | `DAA_CONTEXT_OVERFLOW_RATIO` | `0.4` | filet de détection quand la fenêtre est inconnue ou mal déclarée |
