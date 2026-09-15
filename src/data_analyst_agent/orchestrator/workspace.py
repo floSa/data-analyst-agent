@@ -1,8 +1,17 @@
-"""Mémoire de conversation : persiste les tableaux intermédiaires en CSV.
+"""Mémoire de conversation : le magasin des artefacts qu'elle a produits.
 
-Chaque conversation possède un dossier ; les tableaux produits (résultats de
-requête, lots de prédiction) y sont écrits en CSV et décrits dans un manifeste
-JSON. Aux tours suivants, ces tableaux sont réexposés :
+Chaque conversation possède un dossier ; ce qu'elle produit y est écrit et
+décrit dans un manifeste JSON. **Un seul magasin, trois natures** (``kind``) :
+
+- ``table`` — un résultat de requête ou un lot de prédiction, en CSV ;
+- ``figure`` — le **code Python** d'une analyse qui a rendu une image ;
+- ``code`` — le code Python d'une analyse qui n'en a pas rendu.
+
+Chacune porte un NOM (``resultat_2``, ``graphique_1``…), une description d'une
+ligne et la question qui l'a produite. C'est par ce nom qu'on la désigne au
+tour suivant, et le nom est stable : c'est tout l'intérêt d'en donner un.
+
+Les tableaux sont, en plus, réexposés :
 
 - comme **sources éphémères** interrogeables en SQL (DuckDB) et réutilisables
   pour une prédiction (« prédis ces lignes ») ;
@@ -10,12 +19,19 @@ JSON. Aux tours suivants, ces tableaux sont réexposés :
   (``pd.read_csv('/data/resultat_1.csv')``) ;
 - **décrits au planificateur** pour qu'il sache y faire référence.
 
-Le nom d'un objet (``resultat_1``, ``resultat_2``…) est aussi le nom de la
+Le nom d'un tableau (``resultat_1``, ``resultat_2``…) est aussi le nom de la
 source éphémère et de la table DuckDB correspondante (via le nom de fichier).
 
+Le code, lui, n'est ni monté ni interrogeable : il est **rappelable**. Ce qui
+entre dans le prompt n'est que son CATALOGUE — une ligne par artefact, jamais
+son contenu (``catalogue_du_code``). Le contenu s'ouvre à la demande, par les
+outils que le modèle appelle (cf. :mod:`data_analyst_agent.orchestrator.rappel`).
+C'est ce qui fait tenir la fenêtre de contexte quand une conversation dure.
+
 Cette réexposition est **plafonnée** : ``artifacts`` est ce que porte le disque,
-``injected`` ce qui entre réellement dans le contexte du tour (cf.
-:mod:`data_analyst_agent.orchestrator.context_budget`). Les trois usages
+``retenus`` ce qui entre réellement dans le contexte du tour (cf.
+:mod:`data_analyst_agent.orchestrator.context_budget`), dont ``injected`` est la
+part des tableaux et ``codes_injectes`` celle du code. Les trois usages
 ci-dessus lisent ``injected``, et le même ``injected`` : décrire au
 planificateur un tableau qui n'est pas monté dans la sandbox — ou l'inverse —
 produirait des erreurs incompréhensibles.
@@ -34,6 +50,7 @@ import uuid
 import weakref
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 from pydantic import BaseModel, Field
@@ -225,14 +242,73 @@ def conversation_lock(conversation_dir: Path, *, blocking: bool = True):
     return resource_lock(conversation_dir, blocking=blocking)
 
 
+# -- les trois natures d'artefact ---------------------------------------------
+
+# Un magasin unique porte les trois, et c'est le point : un tableau, le code
+# d'une analyse et le code d'une figure sont trois choses qu'on veut DÉSIGNER
+# PAR LEUR NOM au tour suivant, et rien ne gagnait à les ranger séparément.
+#
+# `figure` n'est pas l'image : c'est le CODE qui l'a produite. L'image part dans
+# la réponse et y reste ; ce qu'on veut rappeler pour « mets les barres en
+# bleu », c'est le code — le rejouer avec une modification rend une image
+# neuve, là où repeindre un PNG ne rend rien.
+KIND_TABLE = "table"
+KIND_CODE = "code"
+KIND_FIGURE = "figure"
+KindArtefact = Literal["table", "code", "figure"]
+
+# Le nom est la clé d'usage : c'est par lui que l'utilisateur et le modèle
+# désignent l'artefact, et pour un tableau c'est aussi le nom de la source
+# éphémère et de la table DuckDB. Un préfixe par nature, pour qu'un nom dise ce
+# qu'il désigne sans qu'il faille ouvrir le manifeste.
+PREFIXE = {KIND_TABLE: "resultat", KIND_CODE: "analyse", KIND_FIGURE: "graphique"}
+EXTENSION = {KIND_TABLE: ".csv", KIND_CODE: ".py", KIND_FIGURE: ".py"}
+
+# Ce qu'on rend d'un TABLEAU quand on le lit par son nom. Le fichier entier
+# peut peser des milliers de lignes ; ce qu'on met dans le contexte d'un modèle
+# pour qu'il sache de quoi on parle n'en demande pas tant.
+LIGNES_LUES = 20
+
+
 class WorkspaceArtifact(BaseModel):
-    """Métadonnées d'un tableau intermédiaire persisté."""
+    """Un objet produit dans la conversation, et qui porte un nom.
+
+    Trois natures (``kind``), un seul magasin. ``columns`` et ``row_count`` ne
+    décrivent qu'un tableau ; ``source`` ne sert qu'au code, pour remonter le
+    même décor de données au moment de le rejouer.
+
+    Les défauts ne sont pas de la commodité : un manifeste écrit AVANT ce
+    mécanisme ne porte ni ``kind``, ni ``description``, ni ``source``, et il se
+    relit tel quel en tableau — ce qu'il était. Rien à migrer.
+    """
 
     name: str  # nom d'usage = nom de source éphémère = nom de table DuckDB
-    file: str  # nom du fichier CSV, relatif au dossier de la conversation
-    columns: list[str]
-    row_count: int
+    file: str  # nom du fichier, relatif au dossier de la conversation
+    kind: KindArtefact = KIND_TABLE
+    columns: list[str] = Field(default_factory=list)
+    row_count: int = 0
     question: str  # la question qui l'a produit (aide le planificateur)
+    description: str = ""  # une ligne, ce qui permet de le reconnaître
+    source: str = ""  # la source interrogée, pour rejouer un code sur le même décor
+
+    @property
+    def est_un_tableau(self) -> bool:
+        return self.kind == KIND_TABLE
+
+    @property
+    def est_du_code(self) -> bool:
+        return self.kind in (KIND_CODE, KIND_FIGURE)
+
+    def ligne_de_catalogue(self) -> str:
+        """L'artefact en UNE ligne : son nom, ce qu'il est, ce qui l'a produit.
+
+        C'est tout ce qui entre dans le prompt. Jamais le contenu — ni les
+        lignes d'un tableau, ni le code d'une figure : c'est ce qui fait tenir
+        la fenêtre de contexte quand une conversation dure, et c'est le motif
+        « le système de fichiers comme contexte » — on injecte l'index, on
+        ouvre à la demande (cf. l'outil ``lire_un_artefact``).
+        """
+        return f"- {self.name} — {self.description} — produit par : « {self.question} »"
 
 
 class ConversationContext(BaseModel):
@@ -326,7 +402,7 @@ def user_dir(base_dir: Path, login: str) -> Path:
 
 
 class ConversationWorkspace:
-    """Dossier de travail d'une conversation (objets intermédiaires en CSV)."""
+    """Dossier de travail d'une conversation : ses tableaux et son code."""
 
     MANIFEST = "manifest.json"
     CONTEXT = "context.json"
@@ -343,33 +419,68 @@ class ConversationWorkspace:
         self._budget_cap: int | None = None
         self.artifacts: list[WorkspaceArtifact] = self._load()
         self.context: ConversationContext = self._load_context()
-        # `artifacts` est le disque, `injected` est le contexte : la fenêtre
-        # sépare les deux, et `trim` dit ce qu'elle a écarté.
+        # `artifacts` est le disque, `retenus` est le contexte : la fenêtre
+        # sépare les deux, et `trim` dit ce qu'elle a écarté. `injected` et
+        # `codes_injectes` sont deux vues de `retenus`, par nature — les
+        # tableaux seuls sont montés dans la sandbox et interrogeables, le code
+        # ne pèse qu'une ligne de catalogue.
+        self.retenus: list[WorkspaceArtifact] = []
         self.injected: list[WorkspaceArtifact] = []
+        self.codes_injectes: list[WorkspaceArtifact] = []
         self.trim: ContextTrim = ContextTrim()
         self._apply_limits()
 
     # -- plafond du contexte --------------------------------------------------
 
-    def _apply_limits(self) -> None:
-        """Recalcule ``injected`` et ``trim`` à partir de ``artifacts``.
+    @staticmethod
+    def _fenetre(artefacts: list[WorkspaceArtifact], taille: int) -> list[WorkspaceArtifact]:
+        """Les ``taille`` plus récents (0 = pas de fenêtre, on garde tout)."""
+        return artefacts[-taille:] if 0 < taille < len(artefacts) else list(artefacts)
 
-        Appelé à l'ouverture ET après chaque ``save_table`` : un tableau produit
-        au tour courant doit entrer dans la fenêtre (c'est le plus récent, donc
-        le plus susceptible d'être désigné par « ces lignes »), et l'éviction
-        qu'il provoque doit être visible tout de suite.
+    def _apply_limits(self) -> None:
+        """Recalcule ``retenus``, ses deux vues et ``trim`` à partir de ``artifacts``.
+
+        Appelé à l'ouverture ET après chaque écriture : un objet produit au tour
+        courant doit entrer dans la fenêtre (c'est le plus récent, donc le plus
+        susceptible d'être désigné par « ces lignes » ou « le graphe de tout à
+        l'heure »), et l'éviction qu'il provoque doit être visible tout de suite.
+
+        **Une fenêtre par nature**, et ce n'est pas une complication gratuite :
+        les deux ne coûtent pas la même chose. Un tableau retenu est monté en
+        ``--volume`` dans la sandbox, ouvert comme source éphémère et décrit
+        avec toutes ses colonnes — c'est ce que l'audit §3.4 a mesuré à 100
+        montages et ~13 000 caractères. Un code retenu ne coûte qu'une ligne de
+        catalogue. Les faire partager une fenêtre de huit ferait évincer la
+        figure du tour 1 au bout de quatre tours qui produisent chacun un
+        tableau, c'est-à-dire exactement le défaut qu'on corrige.
+
+        Le **budget de tokens**, lui, est commun et ignore les natures : il
+        coupe dans ce qui pèse, et les plus ANCIENS partent d'abord quelle que
+        soit leur nature.
         """
-        fenetre = self.limits.artifact_window
-        total = len(self.artifacts)
-        limite, cause = total, ""
-        if 0 < fenetre < limite:
-            limite = fenetre
-            cause = f"fenêtre DAA_CONTEXT_ARTIFACT_WINDOW={fenetre}"
-        if self._budget_cap is not None and self._budget_cap < limite:
-            limite = self._budget_cap
+        tables = [a for a in self.artifacts if a.est_un_tableau]
+        codes = [a for a in self.artifacts if a.est_du_code]
+        gardes = {
+            id(a)
+            for a in (
+                *self._fenetre(tables, self.limits.artifact_window),
+                *self._fenetre(codes, self.limits.code_window),
+            )
+        }
+        cause = ""
+        if len(gardes) < len(self.artifacts):
+            cause = (
+                f"fenêtre DAA_CONTEXT_ARTIFACT_WINDOW={self.limits.artifact_window}"
+                f" / DAA_CONTEXT_CODE_WINDOW={self.limits.code_window}"
+            )
+        retenus = [a for a in self.artifacts if id(a) in gardes]
+        if self._budget_cap is not None and self._budget_cap < len(retenus):
+            retenus = retenus[-self._budget_cap :] if self._budget_cap else []
             cause = f"budget DAA_CONTEXT_TOKEN_BUDGET={self.limits.token_budget} tokens"
-        self.injected = self.artifacts[-limite:] if limite else []
-        self.trim = ContextTrim(total=total, kept=len(self.injected), cause=cause)
+        self.retenus = retenus
+        self.injected = [a for a in retenus if a.est_un_tableau]
+        self.codes_injectes = [a for a in retenus if a.est_du_code]
+        self.trim = ContextTrim(total=len(self.artifacts), kept=len(retenus), cause=cause)
 
     def fit_to_budget(self, overhead_tokens: int) -> ContextTrim:
         """Resserre la fenêtre pour que le prompt du tour tienne dans le budget.
@@ -387,7 +498,7 @@ class ConversationWorkspace:
         budget = self.limits.token_budget
         if budget <= 0:
             return self.trim
-        cap = len(self.injected)
+        cap = len(self.retenus)
         while cap > 0 and overhead_tokens + estimate_tokens(self.describe()) > budget:
             cap -= 1
             self._budget_cap = cap
@@ -479,8 +590,8 @@ class ConversationWorkspace:
         payload = {"artifacts": [a.model_dump() for a in self.artifacts]}
         write_text_atomic(self._manifest_path(), json.dumps(payload, ensure_ascii=False, indent=2))
 
-    def _claim_artifact_name(self, taken: set[str]) -> tuple[str, Path]:
-        """Réserve le premier ``resultat_N`` libre, en créant son CSV vide.
+    def _claim_artifact_name(self, taken: set[str], kind: str) -> tuple[str, Path]:
+        """Réserve le premier ``<préfixe>_N`` libre de cette nature, fichier vide créé.
 
         Le nom était calculé par ``f"resultat_{len(self.artifacts) + 1}"`` sur
         l'état lu au DÉBUT du tour : deux tours partis du même état écrivaient
@@ -489,46 +600,90 @@ class ConversationWorkspace:
         ``O_CREAT | O_EXCL`` échoue si le fichier existe déjà, et cet échec est
         indivisible — c'est le noyau qui arbitre, pas un compteur lu à distance.
 
-        La convention de nom ne change pas (``resultat_1``, ``resultat_2``…) :
-        les workspaces déjà sur disque restent lisibles, et le nom réservé reste
-        celui de la source éphémère et de la table DuckDB.
+        La convention de nom des tableaux ne change pas (``resultat_1``,
+        ``resultat_2``…) : les workspaces déjà sur disque restent lisibles, et
+        le nom réservé reste celui de la source éphémère et de la table DuckDB.
+        Le code produit des ``graphique_N`` et des ``analyse_N`` — une
+        **numérotation par nature**, pour qu'un nom dise ce qu'il désigne sans
+        qu'il faille ouvrir le manifeste. C'est ce nom que l'utilisateur lira
+        dans le catalogue et que le modèle passera aux outils de rappel.
         """
         numero = 1
         while True:
-            name = f"resultat_{numero}"
-            path = self.dir / f"{name}.csv"
+            name = f"{PREFIXE[kind]}_{numero}"
+            path = self.dir / f"{name}{EXTENSION[kind]}"
             if name not in taken:
                 try:
                     os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
                 except FileExistsError:
-                    pass  # CSV présent sans entrée au manifeste : nom déjà pris
+                    pass  # fichier présent sans entrée au manifeste : nom déjà pris
                 else:
                     return name, path
             numero += 1
 
-    def save_table(self, columns: list[str], rows: list[list], question: str) -> WorkspaceArtifact:
-        """Écrit un tableau en CSV, l'ajoute au manifeste et le renvoie."""
+    def _enregistrer(self, kind: str, ecrire, **champs) -> WorkspaceArtifact:
+        """Réserve un nom, écrit le fichier par ``ecrire(chemin)``, publie l'entrée.
+
+        Le chemin d'écriture est le même pour les trois natures, et il ne peut
+        pas se dédoubler : c'est lui qui porte la reprise du manifeste sous
+        verrou, la réservation de nom arbitrée par le noyau et la réapplication
+        des fenêtres. Deux copies de cette séquence, c'était deux occasions d'en
+        oublier un morceau.
+        """
         make_private_dir(self.dir)
-        table = pd.DataFrame(rows, columns=columns)
         with conversation_lock(self.dir):
             # le manifeste est relu ici, et pas au début du tour : un tour
             # concurrent a pu en ajouter une entrée entre-temps, et l'écraser
-            # ferait disparaître son tableau du manifeste alors que le CSV existe.
+            # ferait disparaître son objet du manifeste alors que le fichier existe.
             persistes = self._load()
-            name, path = self._claim_artifact_name({a.name for a in persistes})
+            name, path = self._claim_artifact_name({a.name for a in persistes}, kind)
             with atomic_write_to(path) as tmp:
-                table.to_csv(tmp, index=False)
-            artifact = WorkspaceArtifact(
-                name=name,
-                file=path.name,
-                columns=list(columns),
-                row_count=len(rows),
-                question=question,
-            )
+                ecrire(tmp)
+            artifact = WorkspaceArtifact(name=name, file=path.name, kind=kind, **champs)
             self.artifacts = [*persistes, artifact]
             self._save_manifest()
             self._apply_limits()
         return artifact
+
+    def save_table(self, columns: list[str], rows: list[list], question: str) -> WorkspaceArtifact:
+        """Écrit un tableau en CSV, l'ajoute au manifeste et le renvoie."""
+        table = pd.DataFrame(rows, columns=columns)
+        return self._enregistrer(
+            KIND_TABLE,
+            lambda chemin: table.to_csv(chemin, index=False),
+            columns=list(columns),
+            row_count=len(rows),
+            question=question,
+            description=f"tableau de {len(rows)} ligne(s) ; colonnes : {', '.join(columns)}",
+        )
+
+    def save_code(
+        self, code: str, question: str, *, source: str = "", figures: int = 0
+    ) -> WorkspaceArtifact:
+        """Écrit le code d'une analyse et l'ajoute au manifeste.
+
+        **C'est ce que le propriétaire demande à pouvoir rappeler** : « le code
+        qui génère une image doit pouvoir être rappelé pour être modifié ».
+        L'image, elle, part dans la réponse et n'est pas persistée — la
+        repeindre ne rendrait rien, alors que rejouer son code en rend une
+        neuve.
+
+        ``source`` est la source qui a été interrogée. Elle est retenue parce
+        qu'un rejeu doit remonter le MÊME décor de données : sans elle, le code
+        rappelé chercherait des CSV sous ``/data/`` que personne n'aurait
+        montés.
+        """
+        return self._enregistrer(
+            KIND_FIGURE if figures else KIND_CODE,
+            lambda chemin: chemin.write_text(code, encoding="utf-8"),
+            question=question,
+            source=source,
+            description=(
+                f"code Python d'une figure ({figures} image(s))"
+                if figures
+                else "code Python d'analyse (sans figure)"
+            ),
+        )
 
     # -- réexposition ---------------------------------------------------------
 
@@ -577,7 +732,64 @@ class ConversationWorkspace:
                 "tableau (« prédis ces lignes »), utilise fetch_then_predict avec ce tableau "
                 "comme `source`."
             )
+        if self.codes_injectes:
+            blocs.append(self.catalogue_du_code())
         avis = self.trim.planner_notice()
         if avis:
             blocs.append(avis)
         return "\n\n".join(blocs) or None
+
+    # -- le catalogue, et rien que le catalogue -------------------------------
+
+    def catalogue_du_code(self) -> str:
+        """Le code retenu, UNE LIGNE par artefact — jamais son contenu.
+
+        C'est la moitié qui fait tenir la fenêtre. Injecter le code des
+        figures d'une conversation qui dure ferait exploser le prompt du
+        planificateur ; injecter leur index coûte une ligne chacune, et suffit
+        pour que « le graphe de tout à l'heure » désigne quelque chose. Le
+        contenu s'ouvre à la demande, par ``lire_un_artefact``.
+        """
+        lignes = "\n".join(a.ligne_de_catalogue() for a in self.codes_injectes)
+        return (
+            "Code déjà produit dans CETTE conversation (rappelable par son NOM, pour "
+            "être relu ou rejoué avec une modification) :\n" + lignes
+        )
+
+    def catalogue(self) -> list[WorkspaceArtifact]:
+        """Tout ce qui est RETENU ce tour-ci, tableaux et code, dans l'ordre."""
+        return list(self.retenus)
+
+    # -- désigner un artefact par son nom --------------------------------------
+
+    def sur_le_disque(self, name: str) -> WorkspaceArtifact | None:
+        """L'artefact de ce nom **parmi tout ce que porte le disque**, ou ``None``.
+
+        Distinct de :meth:`retenu` : c'est ce qui permet de dire « il a été
+        évincé » au lieu de « il n'existe pas ». Les deux sont des refus, mais
+        ils n'appellent pas la même réaction — l'un se règle en relançant la
+        question, l'autre non.
+        """
+        return next((a for a in self.artifacts if a.name == name), None)
+
+    def retenu(self, name: str) -> WorkspaceArtifact | None:
+        """L'artefact de ce nom **parmi ceux du contexte de ce tour**, ou ``None``."""
+        return next((a for a in self.retenus if a.name == name), None)
+
+    def lire(self, artifact: WorkspaceArtifact) -> str:
+        """Le CONTENU d'un artefact, tel qu'on le remet en contexte.
+
+        Le code est rendu tel quel : c'est lui qu'on va modifier, le tronquer
+        rendrait le rejeu impossible. Un tableau est rendu par sa tête
+        (``LIGNES_LUES``) — on l'ouvre pour savoir de quoi on parle, pas pour
+        recopier dix mille lignes dans une fenêtre de contexte ; le compte
+        complet est dit, pour que personne ne prenne l'extrait pour le tout.
+        """
+        texte = self.path_of(artifact).read_text(encoding="utf-8")
+        if artifact.est_du_code:
+            return texte
+        lignes = texte.splitlines()
+        tete = "\n".join(lignes[: LIGNES_LUES + 1])
+        if artifact.row_count > LIGNES_LUES:
+            tete += f"\n… ({artifact.row_count} lignes au total, {LIGNES_LUES} montrées)"
+        return tete

@@ -112,6 +112,13 @@ class Settings(BaseSettings):
     # de trop est en tête de CHAQUE question posée à l'application.
     systeme_request_limit: int = 4
 
+    # --- Agent de rappel (artefacts du fil : cf. orchestrator/rappel.py) ---
+    # Un peu plus large que celui de l'agent système, parce que sa boucle est
+    # plus longue d'un cran : reconnaître l'artefact, le relire, le rejouer,
+    # formuler. Il n'est sollicité que dans une conversation qui a DÉJÀ produit
+    # quelque chose — un fil neuf ne le paie pas.
+    rappel_request_limit: int = 5
+
     # --- Agent Analyse (docs/CADRAGE.md §7-②) ---
     analysis_max_attempts: int = 3
     # Nb max de lignes matérialisées par table quand on analyse une source SQL.
@@ -139,6 +146,16 @@ class Settings(BaseSettings):
     # Les objets évincés RESTENT sur le disque : on plafonne ce qu'on injecte,
     # pas ce qu'on conserve.
     context_artifact_window: int = 8
+    # Même fenêtre, pour le CODE des analyses et des figures. Séparée, et c'est
+    # délibéré : un tableau retenu coûte un montage `--volume`, une source
+    # éphémère et la liste de ses colonnes dans le prompt ; un code retenu coûte
+    # UNE ligne de catalogue — son contenu n'entre jamais dans le prompt, il
+    # s'ouvre à la demande par un outil. Les faire partager la fenêtre des
+    # tableaux ferait évincer la figure du tour 1 au bout de quatre tours qui
+    # produisent chacun un tableau, c'est-à-dire exactement ce qu'on corrige :
+    # « reprends le graphe de tout à l'heure » doit marcher au tour +2, pas
+    # seulement au tour +1. 0 = pas de fenêtre.
+    context_code_window: int = 8
     # Budget de tokens du prompt du planificateur, décompté AVANT l'appel. Il
     # borne ce que la fenêtre seule ne borne pas : un catalogue déclaré volumineux
     # ou une question très longue. Au dépassement, les objets intermédiaires les

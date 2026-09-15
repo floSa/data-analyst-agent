@@ -86,6 +86,10 @@ class ContextLimits(BaseModel):
     # Nombre d'objets intermédiaires réinjectés, les plus récents d'abord.
     # 0 désactive la fenêtre — le budget de tokens reste alors le seul plafond.
     artifact_window: int = 8
+    # Fenêtre du CODE retenu, séparée de celle des tableaux : il ne coûte
+    # qu'une ligne de catalogue là où un tableau coûte un montage, une source
+    # et ses colonnes (cf. `Settings.context_code_window`).
+    code_window: int = 8
     # Plafond en tokens du prompt du planificateur, décompté avant l'appel.
     # 0 désactive le budget — la fenêtre reste alors le seul plafond.
     token_budget: int = 8000
@@ -98,6 +102,7 @@ class ContextLimits(BaseModel):
     def from_settings(cls, settings: Settings) -> ContextLimits:
         return cls(
             artifact_window=settings.context_artifact_window,
+            code_window=settings.context_code_window,
             token_budget=settings.context_token_budget,
             model_window=settings.context_model_window,
             overflow_ratio=settings.context_overflow_ratio,
@@ -157,6 +162,32 @@ class ContextTrim(BaseModel):
         return (
             f"{self.dropped} tableau(x) plus ancien(s) de cette conversation ne sont PLUS "
             "accessibles (hors de la fenêtre de contexte) : ne les propose pas comme source."
+        )
+
+    def rappel_notice(self) -> str:
+        """Ce qu'on dit à l'agent de rappel : des choses ont existé que tu ne vois plus.
+
+        Sans cette phrase, le catalogue de l'agent de rappel est un mensonge par
+        omission : il montre ce qui reste et ne dit rien de ce qui est sorti.
+        Mesuré, et c'est le pire des cas — fenêtre de code resserrée à un, le
+        modèle a reçu « reviens au TOUT PREMIER graphique » avec un catalogue
+        qui n'en portait qu'un, le plus récent, et il l'a rejoué. L'utilisateur
+        a reçu un histogramme des âges repeint en vert, présenté comme son
+        graphique par classe. Ça ressemblait à un rappel et ce n'en était pas
+        un : exactement ce que le refus existe pour empêcher.
+
+        Distincte de :meth:`planner_notice` : celle-là dit « ne les propose pas
+        comme source », celle-ci dit « dis-le si on t'en désigne un ». Les deux
+        destinataires n'ont pas la même chose à faire de la même éviction.
+        """
+        if not self.truncated:
+            return ""
+        return (
+            f"ATTENTION : {self.dropped} objet(s) plus ancien(s) de cette conversation "
+            f"ont été ÉVINCÉS du contexte ({self.cause}) et ne figurent PAS au catalogue "
+            "ci-dessus. Si l'utilisateur en désigne un — « le tout premier », « celui du "
+            "début » — tu ne peux ni le relire ni le rejouer : DIS-LE, et ne rejoue "
+            "surtout pas un autre artefact à sa place."
         )
 
 
