@@ -1,0 +1,12 @@
+# Catalogue de mesure — NE PAS UTILISER EN PRODUCTION.
+#
+# Le comportement d'AVANT : la source porte deux colonnes de date et n'en
+# désigne aucune. La période est donc lue sur la première du schéma
+# (`date_commande`), par l'ordre du DDL et pas par un choix.
+sources:
+  - type: file
+    name: commandes
+    description: >-
+      Commandes d'une boutique (CSV, une table plate) — date de commande, date
+      de livraison, client, montant.
+    path: commandes.csv

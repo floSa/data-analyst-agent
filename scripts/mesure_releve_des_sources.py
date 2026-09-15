@@ -19,15 +19,22 @@ Trois bancs, trois défauts :
    dit qu'à ce moment-là c'était toujours bloqué.
 3. **L'approximation.** Une table Postgres volumineuse et une base DuckDB, comptées
    exactement puis estimées par le moteur.
+4. **La colonne de date.** Une source qui porte DEUX colonnes de date, lue sans
+   désignation, avec désignation, puis avec une désignation mal orthographiée. Ici
+   « avant » et « après » ne sont pas deux réglages mais deux **déclarations** de la
+   même source : c'est le catalogue qui a gagné le droit de dire laquelle de ses
+   dates décrit la source (`tests/catalogues/deux-dates/`).
 
 Ce que le banc écrit est jeté à la sortie : deux bases Postgres temporaires
 (supprimées) et un fichier `.duckdb` dans un dossier temporaire.
 
     uv run python scripts/mesure_releve_des_sources.py
     uv run python scripts/mesure_releve_des_sources.py --lignes 5000000 --patience 30
+    uv run python scripts/mesure_releve_des_sources.py --seulement dates
 
 Prérequis : un Postgres joignable par les variables `DAA_PG_*` du `.env`. Aucun
-serveur LLM : ce runner ne pose aucune question.
+serveur LLM : ce runner ne pose aucune question. Le quatrième banc, lui, ne
+demande ni l'un ni l'autre — il lit un CSV versionné.
 """
 
 from __future__ import annotations
@@ -48,6 +55,7 @@ from data_analyst_agent.agents.retrieval.catalog import (
     Catalog,
     DuckDBSource,
     PostgresSource,
+    load_catalog,
 )
 from data_analyst_agent.agents.retrieval.faits import (
     ReglagesDuReleve,
@@ -228,6 +236,29 @@ def _comparer(moteur: str, source, seuil: int) -> None:
         print(f"    {libelle:44s} {duree:7.1f} ms — {faits.lignes:>9} lignes ({marque})")
 
 
+CATALOGUES_DEUX_DATES = Path(__file__).resolve().parent.parent / "tests/catalogues/deux-dates"
+
+
+def banc_de_la_colonne_de_date() -> None:
+    """Deux colonnes de date, trois déclarations, trois périodes lues.
+
+    Rien à monter ni à défaire : les trois catalogues pointent le même CSV
+    versionné, dont les deux colonnes couvrent des intervalles franchement
+    distincts (l'une finit en 2024, l'autre en 2025). La période affichée dit
+    donc à elle seule quelle colonne a été lue.
+    """
+    titre("④ LA COLONNE DE DATE — deux dates dans la source, une seule qui compte")
+    for libelle, catalogue in (
+        ("AVANT (aucune désignation)", "sans-designation"),
+        ("APRÈS (date_livraison désignée)", "livraison-designee"),
+        ("APRÈS (désignation mal orthographiée)", "designation-fautive"),
+    ):
+        source = load_catalog(CATALOGUES_DEUX_DATES / f"{catalogue}.yaml").get("commandes")
+        faits = relever(source)
+        print(f"\n  {libelle:38s} date_reference : {source.date_reference or '—'}")
+        print(f"    {faits.en_clair()}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -245,7 +276,14 @@ def main() -> None:
     parser.add_argument(
         "--delai", type=float, default=3.0, help="délai maximal joué sur le banc de bornage (s)"
     )
+    parser.add_argument(
+        "--seulement",
+        choices=("fraicheur", "bornage", "approximation", "dates"),
+        nargs="*",
+        help="ne monter que ces bancs (défaut : les quatre)",
+    )
     args = parser.parse_args()
+    voulus = set(args.seulement or ("fraicheur", "bornage", "approximation", "dates"))
 
     export_env_file()
     defauts = ReglagesDuReleve()
@@ -256,9 +294,14 @@ def main() -> None:
     )
     print("Le banc joue des durées plus courtes pour ne pas durer un quart d'heure.")
 
-    banc_de_la_fraicheur(args.reprise)
-    banc_du_bornage(args.delai, args.patience)
-    banc_de_lapproximation(args.lignes, defauts.seuil_approximation)
+    if "fraicheur" in voulus:
+        banc_de_la_fraicheur(args.reprise)
+    if "bornage" in voulus:
+        banc_du_bornage(args.delai, args.patience)
+    if "approximation" in voulus:
+        banc_de_lapproximation(args.lignes, defauts.seuil_approximation)
+    if "dates" in voulus:
+        banc_de_la_colonne_de_date()
 
 
 if __name__ == "__main__":

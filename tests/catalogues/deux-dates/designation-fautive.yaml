@@ -1,0 +1,14 @@
+# Catalogue de mesure — NE PAS UTILISER EN PRODUCTION.
+#
+# La désignation mal orthographiée. Le relevé ne tombe pas — les tables, les
+# lignes et une période restent bonnes — mais la déclaration fausse se DIT,
+# avec les colonnes de date que la source porte réellement. Sans ce message, le
+# repli sur `date_commande` serait indiscernable de `sans-designation.yaml`.
+sources:
+  - type: file
+    name: commandes
+    description: >-
+      Commandes d'une boutique (CSV, une table plate) — date de commande, date
+      de livraison, client, montant.
+    path: commandes.csv
+    date_reference: date_livraision
