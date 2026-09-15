@@ -26,6 +26,10 @@ from pydantic_ai.models import Model
 
 from data_analyst_agent import prompts
 from data_analyst_agent.agents.analysis.agent import AnalysisResult, SandboxLike, run_analysis
+from data_analyst_agent.agents.inference.correspondance import (
+    Correspondance,
+    CorrespondanceIndisponible,
+)
 from data_analyst_agent.agents.inference.predict import (
     BatchInferenceOutcome,
     InferenceOutcome,
@@ -1462,30 +1466,41 @@ class Orchestrator:
             )
         return update
 
-    @staticmethod
-    def _expected_columns_hint(dataset: str) -> str:
-        """Indique à l'agent SQL les noms de colonnes attendus par le schéma de features.
-
-        Indispensable quand la feature ne porte pas le nom de la colonne en base
-        (ex. `pclass` obtenu via une jointure sur `classes.level`) : le LLM doit
-        aliaser sa requête sur les noms du schéma.
-        """
-        fields = ", ".join(get_schema(dataset).model_fields)
-        return (
-            "\nRenvoie la ou les lignes demandées (une par individu), avec des colonnes "
-            f"nommées exactement : {fields} (utilise des alias SQL si nécessaire). "
-            "Ajoute si disponible une colonne d'identification (id, nom)."
-        )
-
     def _fetch_predict_node(self, state: OrchestratorState) -> dict:
-        """Chaînage ① -> ③ : récupère une ligne, la mappe sur les features, prédit."""
+        """Chaînage ① -> ③ : récupère une ligne, la mappe sur les features, prédit.
+
+        Le rapprochement ligne -> features n'est pas deviné : il est DÉCLARÉ par
+        la source, dans le catalogue (cf. ``agents/inference/correspondance``).
+        Une source qui ne le déclare pas est refusée ici, avant d'être ouverte —
+        prédire sur une colonne choisie au hasard coûte plus cher que ne rien
+        rendre.
+        """
         start = time.monotonic()
         plan = state["plan"]
         data_question = plan.data_question or state["question"]
         source = self._resolve_source(plan, self._effective_catalog(state))
+        # Une source du CATALOGUE doit déclarer ; un tableau du tour précédent,
+        # réinjecté par l'espace de travail, n'a aucun YAML où le faire — ses
+        # colonnes sont celles que la requête précédente a nommées.
+        du_catalogue = any(declaree.name == source.name for declaree in self.catalog.sources)
+        try:
+            correspondance = (
+                Correspondance.declaree(
+                    source=source.name,
+                    dataset=plan.dataset or "",
+                    declarations=source.features,
+                )
+                if du_catalogue
+                else Correspondance.par_le_nom(source=source.name, dataset=plan.dataset or "")
+            )
+        except CorrespondanceIndisponible as exc:
+            return {
+                "error": str(exc),
+                "trace": [self._step("fetch_predict", "correspondance non déclarée", start)],
+            }
         with closing(open_source(source)) as adapter:
             retrieval = run_retrieval(
-                data_question + self._expected_columns_hint(plan.dataset or ""),
+                data_question + correspondance.consigne_sql(),
                 adapter=adapter,
                 model=self.model,
                 settings=self.settings,
@@ -1496,20 +1511,10 @@ class Orchestrator:
                 "error": "aucune ligne récupérée pour alimenter la prédiction",
                 "trace": [self._step("fetch_predict", "récupération vide", start)],
             }
-        # mapping insensible à la casse : les sources (CSV, Excel) gardent
-        # souvent des en-têtes capitalisés ("Pclass", "Sex"...)
-        schema_fields = set(get_schema(plan.dataset or "").model_fields)
-        raw_rows = [
-            {
-                str(column).lower(): value
-                for column, value in zip(retrieval.result.columns, row, strict=True)
-            }
-            for row in retrieval.result.rows
-        ]
         payloads = [
             # ce que l'utilisateur a donné explicitement prime sur la ligne lue
-            {**{k: v for k, v in raw.items() if k in schema_fields}, **plan.features}
-            for raw in raw_rows
+            {**correspondance.payload(retrieval.result.columns, row), **plan.features}
+            for row in retrieval.result.rows
         ]
 
         if len(payloads) == 1:

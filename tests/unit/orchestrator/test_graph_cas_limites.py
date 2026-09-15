@@ -21,6 +21,7 @@ from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator, PendingInference
 from data_analyst_agent.orchestrator.plan import Plan
+from helpers.correspondances import identite
 from helpers.doubles import FakeClassifier, FakeRegressor
 from helpers.scripted_llm import PLANNER, RETRIEVAL, ScriptedLLM, plan_response, text, tool_call
 
@@ -247,7 +248,9 @@ def test_ligne_recuperee_incomplete_retient_l_acquis(tmp_path: Path, registry: R
     )
     reponse = orchestrateur(
         llm,
-        catalog=Catalog(sources=[FileSource(name="partiel", path=csv)]),
+        catalog=Catalog(
+            sources=[FileSource(name="partiel", path=csv, features=identite("titanic"))]
+        ),
         registry=registry,
     ).ask("Prédis la survie du passager 1")
 
@@ -329,7 +332,9 @@ def test_lot_dont_aucune_ligne_ne_passe_la_validation(tmp_path: Path, registry: 
     )
     reponse = orchestrateur(
         llm,
-        catalog=Catalog(sources=[FileSource(name="groupe", path=csv)]),
+        catalog=Catalog(
+            sources=[FileSource(name="groupe", path=csv, features=identite("titanic"))]
+        ),
         registry=registry,
     ).ask("Prédis la survie de toutes les femmes")
 
@@ -370,7 +375,9 @@ def test_lot_de_regression_resume_par_moyenne_et_bornes(tmp_path: Path):
     )
     reponse = orchestrateur(
         llm,
-        catalog=Catalog(sources=[FileSource(name="ilots", path=csv)]),
+        catalog=Catalog(
+            sources=[FileSource(name="ilots", path=csv, features=identite("california_housing"))]
+        ),
         registry=registre(tmp_path, CALIFORNIA_YAML, "california.joblib", FakeRegressor()),
         settings=make_settings(retrieval_max_rows=2),
     ).ask("Prédis le prix de tous les îlots")

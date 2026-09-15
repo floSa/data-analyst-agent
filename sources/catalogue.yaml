@@ -9,6 +9,18 @@
 # DDL dit les types ; le dictionnaire dit ce que les données VEULENT dire — c'est lui
 # qu'on cite quand on demande le sens d'une colonne. Aucune source d'ici n'en déclare :
 # titanic et iris se décrivent entièrement par leur ontologie.
+#
+# `features` (facultatif) : quelles colonnes de CETTE source alimentent quel modèle du
+# registre — `{dataset: {feature: colonne}}`. Le dictionnaire s'adresse au modèle de
+# langage ; `features` s'adresse au code : il fabrique la consigne SQL, rapproche la
+# ligne lue du schéma, et REFUSE ce qui n'est pas déclaré. Sans lui, `fetch_then_predict`
+# devinait la colonne — trois candidates pour `pclass` (class_id, level, label), trois
+# réponses selon le moteur. Forme longue quand la source ne représente pas la feature
+# comme le schéma l'attend :
+#
+#     pclass:
+#       column: classes.label
+#       values: {"1re classe": 1, "2e classe": 2, "3e classe": 3}
 sources:
   - type: postgres
     name: titanic
@@ -16,6 +28,19 @@ sources:
       Base Titanic multi-tables (passengers + classes jointes par clé
       étrangère class_id) — survie, sexe, âge, tarif, classe.
     dsn: postgresql+pg8000://${DAA_PG_USER}:${DAA_PG_PASSWORD}@${DAA_PG_HOST}:${DAA_PG_PORT}/titanic
+    features:
+      # `pclass` est le nom du dataset d'entraînement ; la base, elle, porte la
+      # classe du billet dans `classes`, jointe par `class_id`. `level` en est
+      # l'ENTIER — `label` en est le libellé (« 3e classe »), qui ne vaudrait
+      # rien pour un modèle attendant 1, 2 ou 3.
+      titanic:
+        sex: passengers.sex
+        pclass: classes.level
+        age: passengers.age
+        sibsp: passengers.sibsp
+        parch: passengers.parch
+        fare: passengers.fare
+        embarked: passengers.embarked
 
   - type: file
     name: iris
@@ -24,3 +49,12 @@ sources:
       (sepal_length, sepal_width, petal_length, petal_width) et espèce
       (setosa, versicolor, virginica).
     path: iris.csv
+    features:
+      # Une table à plat dont les en-têtes portent déjà les noms du schéma. La
+      # déclaration est donc l'identité — et elle reste écrite : c'est elle qui
+      # dit que ce fichier-ci alimente ce modèle-là.
+      iris:
+        sepal_length: sepal_length
+        sepal_width: sepal_width
+        petal_length: petal_length
+        petal_width: petal_width

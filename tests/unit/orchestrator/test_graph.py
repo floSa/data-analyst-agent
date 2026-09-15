@@ -21,6 +21,7 @@ from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan, planner_template
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import MimeOutput, SandboxResult
+from helpers.correspondances import identite
 from helpers.doubles import FakeClassifier, ScriptedSandbox
 from helpers.scripted_llm import (
     ANALYSIS,
@@ -1127,7 +1128,9 @@ def test_chainage_fetch_then_predict(passager_csv: Path, registry: Registry):
             ],
         )
     )
-    catalog = Catalog(sources=[FileSource(name="passagers", path=passager_csv)])
+    catalog = Catalog(
+        sources=[FileSource(name="passagers", path=passager_csv, features=identite("titanic"))]
+    )
     orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
     answer = orchestrator.ask("Prédis la survie du passager 1")
     assert answer.error is None
@@ -1169,7 +1172,9 @@ def test_chainage_colonnes_capitalisees(tmp_path: Path, registry: Registry):
             ],
         )
     )
-    catalog = Catalog(sources=[FileSource(name="passagers", path=csv)])
+    catalog = Catalog(
+        sources=[FileSource(name="passagers", path=csv, features=identite("titanic"))]
+    )
     orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
     answer = orchestrator.ask("Prédis la survie du passager 1")
     assert answer.error is None
@@ -1177,7 +1182,13 @@ def test_chainage_colonnes_capitalisees(tmp_path: Path, registry: Registry):
 
 
 def test_chainage_indice_de_colonnes_dans_le_prompt(passager_csv: Path, registry: Registry):
-    """L'agent SQL reçoit la liste exacte des features attendues (alias forcés)."""
+    """L'agent SQL reçoit les colonnes DÉCLARÉES de la source, et leurs alias.
+
+    Nommer les features suffisait tant qu'une colonne les portait sous leur nom.
+    Dès que la source modélise autrement — `classes.level` pour `pclass` — la
+    liste des features laisse choisir, et le choix observé dépendait du moteur.
+    La consigne nomme donc la colonne source ET son alias.
+    """
     llm = (
         ScriptedLLM()
         .script(
@@ -1209,13 +1220,19 @@ def test_chainage_indice_de_colonnes_dans_le_prompt(passager_csv: Path, registry
             ],
         )
     )
-    catalog = Catalog(sources=[FileSource(name="passagers", path=passager_csv)])
+    declaration = {**identite("titanic")["titanic"], "pclass": "classes.level"}
+    catalog = Catalog(
+        sources=[FileSource(name="passagers", path=passager_csv, features={"titanic": declaration})]
+    )
     orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
     orchestrator.ask("Prédis la survie du passager 1")
     retrieval_prompt = llm.prompts_for(RETRIEVAL)[0]
-    assert "nommées exactement" in retrieval_prompt
-    for field in ("sex", "pclass", "age", "sibsp", "parch", "fare", "embarked"):
-        assert field in retrieval_prompt
+    assert "classes.level AS pclass" in retrieval_prompt
+    for field in ("sex", "age", "sibsp", "parch", "fare", "embarked"):
+        assert f"{field} AS {field}" in retrieval_prompt
+    # la consigne porte sur les colonnes, et le dit : sans cette phrase, mesuré
+    # sous Ollama, « les cinq premiers » repartait sans LIMIT.
+    assert "le filtre et le nombre de lignes restent ceux de la demande" in retrieval_prompt
 
 
 def test_chainage_en_lot_avec_lignes_invalides(tmp_path: Path, registry: Registry):
@@ -1251,7 +1268,7 @@ def test_chainage_en_lot_avec_lignes_invalides(tmp_path: Path, registry: Registr
             ],
         )
     )
-    catalog = Catalog(sources=[FileSource(name="groupe", path=csv)])
+    catalog = Catalog(sources=[FileSource(name="groupe", path=csv, features=identite("titanic"))])
     orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
     answer = orchestrator.ask("Prédis la survie de toutes les femmes")
 
@@ -1297,12 +1314,51 @@ def test_fetch_then_predict_sans_ligne(passager_csv: Path, registry: Registry):
             ],
         )
     )
-    catalog = Catalog(sources=[FileSource(name="passagers", path=passager_csv)])
+    catalog = Catalog(
+        sources=[FileSource(name="passagers", path=passager_csv, features=identite("titanic"))]
+    )
     orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
     answer = orchestrator.ask("Prédis la survie du passager 999")
     assert answer.error is not None
     assert "aucune ligne" in answer.error
     assert answer.answer.startswith("Je n'ai pas pu répondre")
+
+
+def test_une_source_sans_correspondance_declaree_refuse_sans_interroger(
+    passager_csv: Path, registry: Registry
+):
+    """Le refus est lisible, et il tombe AVANT la requête.
+
+    La source est ici alignée par hasard — ses en-têtes portent déjà les noms des
+    features. Prédire dessus « marcherait », et c'est précisément ce qu'on
+    refuse : ce qui a marché une fois par coïncidence se trompera sur la source
+    suivante, où `pclass` vit dans une autre table sous un autre nom.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(
+                Plan(
+                    capability="fetch_then_predict",
+                    source="passagers",
+                    dataset="titanic",
+                    data_question="Le passager 1",
+                )
+            )
+        ],
+    )
+    catalog = Catalog(sources=[FileSource(name="passagers", path=passager_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+    answer = orchestrator.ask("Prédis la survie du passager 1")
+
+    assert answer.error is not None
+    assert "ne déclare pas quelles colonnes alimentent le modèle 'titanic'" in answer.error
+    assert "pclass" in answer.error  # les features attendues sont nommées
+    assert answer.answer.startswith("Je n'ai pas pu répondre")
+    # aucune requête n'a été envoyée : l'agent SQL n'a même pas été sollicité
+    assert llm.prompts_for(RETRIEVAL) == []
+    etape = next(s for s in answer.trace if s.node == "fetch_predict")
+    assert etape.detail == "correspondance non déclarée"
 
 
 # --- chemins d'erreur -----------------------------------------------------------

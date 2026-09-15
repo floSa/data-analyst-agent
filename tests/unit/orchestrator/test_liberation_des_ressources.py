@@ -23,6 +23,7 @@ from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.sandbox.client import SandboxResult
+from helpers.correspondances import identite
 from helpers.doubles import FakeClassifier, ScriptedSandbox
 from helpers.scripted_llm import (
     ANALYSIS,
@@ -219,7 +220,9 @@ def test_le_noeud_fetch_predict_referme_sa_source(
             ],
         )
     )
-    catalog = Catalog(sources=[FileSource(name="passagers", path=passager_csv)])
+    catalog = Catalog(
+        sources=[FileSource(name="passagers", path=passager_csv, features=identite("titanic"))]
+    )
     orchestrateur = Orchestrator(
         model=llm.model(), catalog=catalog, registry=registry, settings=make_settings()
     )

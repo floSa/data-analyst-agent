@@ -19,6 +19,7 @@ from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.sandbox.client import ensure_image
+from helpers.correspondances import TITANIC_POSTGRES, identite
 from helpers.scripted_llm import (
     ANALYSIS,
     PLANNER,
@@ -99,11 +100,13 @@ def catalog(settings: Settings):
                     name="titanic",
                     description="Base Titanic multi-tables (passengers + classes)",
                     dsn=url,
+                    features=TITANIC_POSTGRES,
                 ),
                 FileSource(
                     name="iris",
                     description="Dataset Iris (CSV local)",
                     path=IRIS_CSV,
+                    features=identite("iris"),
                 ),
             ]
         )

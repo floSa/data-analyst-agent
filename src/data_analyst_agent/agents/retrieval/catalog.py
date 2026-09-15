@@ -15,6 +15,7 @@ from typing import Annotated, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from data_analyst_agent.agents.inference.correspondance import Declarations
 from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter
 from data_analyst_agent.agents.retrieval.sql import DatabaseAdapter, PostgresAdapter
 
@@ -30,11 +31,21 @@ class SourceBase(BaseModel):
 
     Facultatif : une source qui n'en déclare pas se décrit par son ontologie
     seule.
+
+    ``features`` déclare quelles colonnes de CETTE source alimentent quel modèle
+    de prédiction — ``{dataset: {feature: colonne}}``. C'est la source qui le
+    sait, et elle seule : le même modèle ``titanic`` est alimenté ici par
+    ``classes.level`` (Postgres, deux tables) et là par ``Pclass`` (un CSV à
+    plat). Sans cette déclaration, `fetch_then_predict` devinait la colonne, et
+    se trompait (cf. ``agents/inference/correspondance``).
+
+    Facultatif aussi : une source dont on ne prédit rien n'a rien à déclarer.
     """
 
     name: str
     description: str = ""
     dictionary: Path | None = None
+    features: Declarations = Field(default_factory=dict)
 
     def dictionary_text(self) -> str | None:
         """Contenu du dictionnaire, ou ``None`` si la source n'en déclare pas."""
