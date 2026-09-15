@@ -1978,3 +1978,237 @@ colonnes). C'est un défaut de l'agent SQL, antérieur à ce chantier et
   aujourd'hui. Le jour où un schéma portera une énumération hors `Literal` — ou
   où `describe_features` montrera les bornes — il faudra **remesurer** plutôt
   que supposer que la règle couvre le nouveau cas.
+
+## 18. Le témoin qui bouclait : une question sur les COLONNES, dans un prompt qui n'en connaissait pas
+
+`temoin-colonnes-a-trous` — « Quelles colonnes de la table `passengers`
+contiennent des valeurs manquantes ? » — est le seul témoin de la batterie qui
+échouait. Il est relevé sans être corrigé depuis trois chantiers
+([§15.6](#156-les-témoins-et-les-deux-questions-de-données-qui-restent),
+[§16.7](#167-les-témoins), [§17](#17-la-4e-classe-nexiste-pas-et-lagent-prédisait-quand-même)),
+chaque fois renvoyé au suivant comme « un défaut de l'agent SQL, antérieur ».
+
+### 18.1 La boucle, capturée avant de toucher à quoi que ce soit
+
+Les relevés précédents décrivaient le symptôme — « il boucle », « 97 à 112 s » —
+sans jamais montrer les requêtes. C'est ce qui manquait pour corriger autrement
+qu'à l'aveugle. Les voici, relevées dans la batterie elle-même, adaptateur
+instrumenté (`var/chantier-c22/`).
+
+**Ollama — 10 allers-retours, plafond `retrieval_request_limit` épuisé, 73,4 s.**
+Six requêtes :
+
+| # | Requête | Rendu |
+|---|---|---|
+| 1 | `SELECT CASE WHEN COUNT(name) < COUNT(*) THEN 'name' ELSE NULL END AS name_missing, …` | `column "name" does not exist` |
+| 2 | `SELECT (COUNT(*) - COUNT(name)) > 0 AS name_missing, …` | idem |
+| 3 | identique à la 2 | idem |
+| 4 | `SELECT COUNT(name) FROM passengers;` | `891` |
+| 5 | `SELECT COUNT(*) FROM passengers;` | `891` |
+| 6 | `SELECT COUNT(name) AS name_count, COUNT(age) AS age_count, …` | `column "name" does not exist` |
+
+Deux choses s'y lisent. D'abord **l'agrégat large est perdu en route** : les
+requêtes 1, 2, 3 et 6 n'ont plus de `FROM passengers` — le modèle écrit une
+expression par colonne, la ligne s'allonge, et la clause finale tombe. Ensuite,
+à la 4ᵉ, il **abandonne l'agrégat large pour une requête par colonne** : c'est
+la boucle. Dix colonnes, deux requêtes chacune, et le plafond arrive avant la
+réponse.
+
+La réponse rendue ne venait alors plus des données du tout :
+
+> Les colonnes suivantes de la table `passengers` contiennent des valeurs
+> manquantes : `name`, `age`, `fare`, et `embarked`. Ces colonnes sont les
+> seules qui ne sont pas définies comme `NOT NULL` dans le schéma […]
+
+`name` et `fare` n'ont **aucun trou**. Le modèle, à court d'allers-retours,
+répond par la nullabilité du SCHÉMA — ce qui est *possible* — là où la question
+porte sur ce qui *est*.
+
+**vLLM — une seule requête, et 179 lignes de données :**
+
+```sql
+SELECT * FROM passengers WHERE age IS NULL OR sibsp IS NULL OR parch IS NULL
+  OR fare IS NULL OR embarked IS NULL;
+```
+
+La synthèse déterministe multi-lignes rend alors « 179 lignes retournées — voir
+le tableau ci-dessous ». La liste des colonnes n'apparaît nulle part.
+
+### 18.2 Ce qui distingue le cas qui aboutit
+
+Rejoué seul, l'agent écrit parfois la bonne requête : le §15.6 le notait sans
+l'expliquer. Quatre rejeux sous Ollama donnent l'explication, et elle est dans
+la **forme du résultat**, pas dans le SQL :
+
+| Requête écrite | Forme | Synthèse | Verdict |
+|---|---|---|---|
+| `CASE WHEN COUNT(col) < COUNT(*) …` | **1 ligne**, 6 colonnes | « résumé de la récupération » | nomme `age` et `embarked` ✓ |
+| `SELECT 'name', COUNT(…) … UNION ALL …` | **6 lignes**, 2 colonnes | « résumé déterministe (multi-lignes) » | « 6 lignes retournées » ✗ |
+
+Le même agrégat, juste dans les deux cas, passe ou tombe selon qu'il tient sur
+une ligne. `_synthesize_query` jette la phrase du modèle dès qu'il y a plusieurs
+lignes — une règle écrite contre la recopie d'un LISTING, qui frappe ici un
+agrégat dont la phrase EST la réponse.
+
+### 18.3 La cause : le prompt ne connaissait que deux sortes de question
+
+`prompts/retrieval.txt` distinguait **lister des lignes** (« en pratique
+`SELECT *` ») et **calculer un agrégat**, et il ajoutait :
+
+> Réserve les projections restreintes (une seule colonne) et les agrégats
+> (COUNT, AVG…) aux questions qui les demandent **explicitement**.
+
+Mesurer CHAQUE colonne d'une table n'est ni l'une ni l'autre, et aucune
+question de cette famille ne réclame un `COUNT` « explicitement ». La consigne
+poussait donc activement vers le `SELECT *` — ce que vLLM a fait — ou laissait
+le modèle improviser une requête par colonne — ce qu'Ollama a fait. **Rien ne
+lui disait qu'il pouvait compter plusieurs colonnes d'un coup.**
+
+### 18.4 Le remède, en deux moitiés — et ce qu'il n'est pas
+
+Une réponse spéciale pour « valeurs manquantes » aurait été le retour du
+gabarit retiré au §13. La correction nomme la **famille** : compter, agréger,
+décrire une table sans la lire ligne à ligne.
+
+**① Le prompt apprend la mesure par colonne.** Un troisième cas, à côté des deux
+qui existaient : une seule requête, **une seule ligne**, **toutes** les colonnes
+de la table — avec la raison, qui est celle du prompt depuis toujours : *le
+schéma dit ce qui est POSSIBLE, la mesure seule dit ce qui EST*. Et
+l'interdiction explicite d'une requête par colonne, avec son coût nommé.
+
+**② `QueryResult.to_markdown` rend une ligne unique verticalement.** C'est la
+moitié qu'on n'avait pas prévue, et elle a été trouvée en mesurant. Le prompt
+corrigé donnait déjà le bon SQL et la bonne donnée :
+
+```
+| name_missing | age_missing | sibsp_missing | parch_missing | fare_missing | embarked_missing |
+| 0            | 177         | 0             | 0             | 0            | 2                |
+```
+
+…et la réponse restait fausse : le modèle nommait `name`, mesuré à 0, à côté de
+`age` et `embarked`. **Deux reformulations successives du prompt n'ont rien
+changé**, de façon parfaitement stable. Le défaut n'était pas dans la consigne
+mais dans ce qu'on donnait à lire : un tableau d'une seule ligne oblige à
+aligner de tête un en-tête et une rangée de valeurs sur toute leur largeur.
+Rendue `name_missing : 0`, la même valeur ne demande plus aucun alignement, et
+la réponse devient exacte du premier coup.
+
+Un agrégat rend presque toujours UNE ligne : c'est la forme normale de tout ce
+qui compte, agrège ou décrit — pas un cas particulier. `to_markdown` n'a qu'un
+seul consommateur en production, l'outil `run_sql`, c'est-à-dire ce que le
+modèle LIT ; le tableau affiché à l'utilisateur est un artefact construit
+ailleurs et ne bouge pas.
+
+**Les garde-fous ne bougent pas** : `assert_read_only` est intact,
+`retrieval_request_limit` reste à 10, `retrieval_max_rows` reste à 200. La
+correction ne desserre rien — elle fait tenir la réponse dans le budget au lieu
+d'agrandir le budget.
+
+### 18.5 L'oracle avait un bord manquant, et il comptait juste une réponse fausse
+
+En capturant l'état d'avant, la batterie a rendu **4/4 sous Ollama** sur la
+réponse citée au §18.1 — celle qui nomme `name` et `fare`. `attendus_tous` ne
+vérifiait que la PRÉSENCE de `age` et `embarked` ; deux colonnes pleines
+nommées en plus ne coûtaient rien.
+
+Une question dont l'oracle est une liste exhaustive se juge sur les deux bords.
+`QuestionMeta` gagne donc `interdits`, dérivés de la source comme le reste — les
+colonnes SANS trou de `passengers`, jamais écrites à la main. La comparaison se
+fait sur un mot entier et non en sous-chaîne : la colonne `sex` vit à
+l'intérieur du mot « sexe », que toute réponse française écrit, et un interdit
+cherché en sous-chaîne déclarerait fausse une réponse juste.
+
+Le §18.6 est donc mesuré contre un oracle **plus sévère** que celui des §15 à 17.
+
+### 18.6 Le témoin, après — et trois questions voisines
+
+Trois répétitions par question et par moteur, conversation neuve à chaque fois.
+
+| Question | Moteur | Requêtes | Temps | Réponse |
+|---|---|---|---|---|
+| valeurs manquantes / `passengers` | vLLM | 1 | 3,5 s | `age` et `embarked` — 3/3 |
+| | Ollama | 1 | 25–30 s | `age` et `embarked` — 3/3 |
+| valeurs distinctes par colonne | vLLM | 1 | 5,3 s | les 10 comptes exacts — 3/3 |
+| | Ollama | 1 | 27 s | corrects — 3/3 |
+| la colonne la plus remplie | vLLM | 1 | 4,8 s | les colonnes sans trou — 3/3 |
+| | Ollama | 1 à 2 | 33 s | 1/3 propre ; 2/3 répondent `passenger_id` |
+| valeurs manquantes / `iris` | vLLM | 1 | 3,4 s | « aucune » — 3/3 |
+| | Ollama | 1 à 2 | 23–26 s | « aucune » — 3/3 |
+
+Le SQL produit, identique dans sa forme sur les deux moteurs :
+
+```sql
+SELECT COUNT(*) - COUNT(name) AS name_missing, COUNT(*) - COUNT(age) AS age_missing,
+       COUNT(*) - COUNT(sibsp) AS sibsp_missing, COUNT(*) - COUNT(parch) AS parch_missing,
+       COUNT(*) - COUNT(fare) AS fare_missing, COUNT(*) - COUNT(embarked) AS embarked_missing
+FROM passengers
+```
+
+**De 10 allers-retours et 73,4 s à une seule requête.** Et `iris` — une source
+fichier, dialecte DuckDB, sans aucun trou — est répondue par la même mécanique :
+la correction ne connaît ni la table ni la question.
+
+Reste un écart, honnête : sous Ollama, « la colonne la plus remplie » repart
+deux fois sur trois vers un second `run_sql` à 891 lignes et conclut
+`passenger_id`. Ce n'est pas faux — `passenger_id` est bien pleine — mais c'est
+le dernier endroit de la famille où le modèle relit des lignes au lieu de lire
+sa mesure.
+
+### 18.7 Pas de régression : la batterie complète, sur les deux moteurs
+
+Batterie complète, conversation neuve à chaque question, oracle durci du §18.5.
+
+| | vLLM avant | vLLM après | Ollama avant | Ollama après |
+|---|---|---|---|---|
+| Questions méta | 36 / 36 | **36 / 36** | 36 / 36 | **35 / 36** |
+| Témoins | 3 / 4 | **4 / 4** | 4 / 4 *(faux vert)* | **4 / 4** |
+| Coût, méta | 78 appels | 78 appels | 78 appels | 83 appels |
+| `temoin-colonnes-a-trous` | 5 appels | 5 appels | **10 appels, 73,4 s** | **5 appels** |
+
+Le « 4 / 4 » d'Ollama AVANT est celui du §18.5 : la réponse nommait `name` et
+`fare`. Sous l'oracle durci, cette réponse-là compte désormais à côté — la
+colonne « Ollama avant » est donc plus flatteuse que la réalité, et la seule
+comparaison honnête est celle du texte rendu, donnée au §18.1.
+
+**L'écart d'Ollama après — `sources-premiere-personne`, et il n'est pas d'ici.**
+« sur quoi je peux travailler ? » tombe dans le repli, 3 fois sur 3, avec la
+trace `agent système écarté (incident 7d753f5a) — passe au planificateur`. Le
+chemin est celui de l'agent système, que ce chantier ne touche pas : ni le
+prompt SQL ni `to_markdown` n'y passent. Vérifié plutôt que supposé — **les
+mêmes trois rejeux avec les deux fichiers corrigés remis dans leur version
+d'avant donnent les mêmes trois replis**. C'est le `systeme_request_limit = 4`
+déjà signalé comme serré au [§15.7](#157-ce-qui-reste-ouvert-après-le-15), et
+le *fail-open* joue son rôle : le tour repart au planificateur au lieu
+d'échouer. À traiter pour lui-même.
+
+### 18.8 Ce que la suite garde
+
+Trois tests, et chacun tient une moitié de ce qui a été mesuré :
+
+- le rendu vertical d'une ligne unique, sur l'exemple exact qui a fait la
+  découverte — `0 | 177 | 0 | 0 | 0 | 2` ;
+- le rendu tabulaire d'un résultat à UNE colonne, inchangé : il n'y a rien à
+  aligner, et le cas qui marchait ne devait pas bouger ;
+- la famille nommée dans le prompt — mesure par colonne, une requête, une
+  ligne, toutes les colonnes, et la lecture d'un 0.
+
+Suite complète : **875 passés, 99,49 %** (872 avant le chantier).
+
+### 18.9 Ce qui reste ouvert après le §18
+
+- **`sources-premiere-personne` sous Ollama** — l'agent système écarté sur
+  incident, 3 fois sur 3, indépendamment de ce chantier (§18.7). C'est le
+  `systeme_request_limit = 4` du §15.7 qui remonte ;
+- **« la colonne la plus remplie » sous Ollama** — deux fois sur trois, un
+  second `run_sql` à 891 lignes et une conclusion tirée des lignes plutôt que
+  de la mesure. La réponse n'est pas fausse ; le chemin n'est pas celui qu'on
+  voulait ;
+- **la synthèse déterministe multi-lignes reste un couperet.** Le §18.2 montre
+  qu'un agrégat juste, mis en `UNION ALL`, perd sa phrase. Le remède retenu
+  contourne le problème — on demande une ligne unique, et on la rend lisible —
+  il ne le supprime pas. Le jour où une question de la famille voudra
+  légitimement plusieurs lignes, `_synthesize_query` jettera de nouveau la
+  réponse ;
+- **`fetch_then_predict`** — la source Postgres rend `'3e classe'` là où le
+  schéma attend `pclass`. Antérieur, distinct, sur les deux moteurs ;
+  explicitement hors du périmètre de ce chantier.
