@@ -613,3 +613,90 @@ def test_le_catalogue_du_rappel_DIT_ce_qui_a_ete_evince(tmp_path: Path):
     assert "graphique_1" not in catalogue  # évincé : il n'est PAS au catalogue
     assert "ÉVINCÉS" in catalogue  # mais son éviction, elle, est dite
     assert "ne rejoue surtout pas un autre artefact à sa place" in catalogue
+
+
+# --- les trois défauts trouvés en mesure live --------------------------------
+
+
+def test_la_sentinelle_apres_un_appel_doutil_fait_servir_les_faits(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """Mesuré sur vLLM : outil appelé, tableau lu — puis « AUTRE » en guise de réponse.
+
+    L'utilisateur recevait le mot `AUTRE`. Pire qu'un refus : ce n'en est même
+    pas un. Un tour où un outil a répondu n'est plus « pas pour moi », et la
+    contradiction se tranche du côté de ce qui a été lu.
+    """
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_table(["count"], [[891]], "combien de passagers ?")
+    llm = ScriptedLLM().script(
+        RAPPEL,
+        [
+            tool_call("lire_un_artefact", {"nom": "resultat_1"}),
+            text(ScriptedLLM.REFUS_DU_SYSTEME),
+        ],
+    )
+    orch = orchestrateur(llm, iris_csv, tmp_path, None, registry)
+    reponse = orch.ask("le tableau que tu m'as sorti, il disait quoi ?", conversation_id="fil")
+
+    assert reponse.answer.strip() != ScriptedLLM.REFUS_DU_SYSTEME
+    assert "891" in reponse.answer  # les faits, servis tels quels
+    trace = next(s for s in reponse.trace if s.node == "rappel")
+    assert "sentinelle rendue alors qu'un outil a été appelé" in trace.detail
+
+
+def test_une_formulation_sans_aucun_fait_de_loutil_fait_servir_les_faits(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """Mesuré sur vLLM : l'outil rend `count / 891`, le modèle répond qu'il ne peut pas.
+
+    Il tenait la réponse et l'a rendue vide. La garde est généreuse — UN seul
+    jeton commun suffit : on distingue « formulé autrement » de « n'a rien
+    formulé du tout », on ne note pas un style.
+    """
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_table(["count"], [[891]], "combien de passagers ?")
+    llm = ScriptedLLM().script(
+        RAPPEL,
+        [
+            tool_call("lire_un_artefact", {"nom": "resultat_1"}),
+            text("Je suis désolé, mais je ne peux pas répondre à cette demande."),
+        ],
+    )
+    orch = orchestrateur(llm, iris_csv, tmp_path, None, registry)
+    reponse = orch.ask("le tableau que tu m'as sorti, il disait quoi ?", conversation_id="fil")
+
+    assert "désolé" not in reponse.answer
+    assert "891" in reponse.answer
+    trace = next(s for s in reponse.trace if s.node == "rappel")
+    assert "formulation sans aucun fait de l'outil" in trace.detail
+
+
+def test_une_formulation_qui_porte_un_seul_fait_est_servie_telle_quelle(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """La garde est une ceinture, pas un goût : une phrase juste passe."""
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_table(["count"], [[891]], "combien de passagers ?")
+    llm = ScriptedLLM().script(
+        RAPPEL,
+        [
+            tool_call("lire_un_artefact", {"nom": "resultat_1"}),
+            text("Il y avait 891 passagers."),
+        ],
+    )
+    orch = orchestrateur(llm, iris_csv, tmp_path, None, registry)
+    reponse = orch.ask("le tableau que tu m'as sorti, il disait quoi ?", conversation_id="fil")
+
+    assert reponse.answer == "Il y avait 891 passagers."
+
+
+def test_une_reponse_vide_se_disqualifie_aussi(tmp_path: Path):
+    """Le troisième cas de la ceinture, sans passer par un tour entier."""
+    from data_analyst_agent.orchestrator.rappel import defaut_de_formulation
+
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_code(CODE_ROUGE, "un graphe", figures=1)
+
+    assert defaut_de_formulation("   ", ws) == "réponse vide"
+    assert defaut_de_formulation("J'ai relu `graphique_1`.", ws) == ""
