@@ -208,9 +208,10 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 - **Corrigé** (C26) : `Correspondance.confronter(schema)`, appelée dans
   `_fetch_predict_node` une fois la connexion ouverte et **avant la requête**. Le
   refus nomme la colonne introuvable, propose la colonne réelle qui lui ressemble
-  (distance d'édition sur les deux écritures, qualifiée et nue, la plus
-  ressemblante l'emportant ; muette si rien ne ressemble — une suggestion tirée au
-  hasard coûterait la confiance qu'on gagne à ne rien deviner), liste les colonnes
+  (distance d'édition sur les noms **nus** des deux côtés — la table qualifiante
+  gonfle la ressemblance de ce qui partage son préfixe et noie celle d'une
+  déclaration nue ; muette si rien ne ressemble, une suggestion tirée au hasard
+  coûterait la confiance qu'on gagne à ne rien deviner), liste les colonnes
   de la source et dit que rien n'a été interrogé. Une déclaration **qualifiée** est
   lue sur ses deux derniers segments et les deux doivent tomber juste :
   `classes.sex` est refusé comme `passengers.levelx`, parce que ce n'est pas cette

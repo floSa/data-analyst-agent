@@ -307,27 +307,20 @@ def _peut_etre(declaree: str, connues: list[str]) -> str:
     la pointe pas du doigt. Muet quand rien ne ressemble : proposer au hasard
     coûterait la confiance qu'on gagne à ne rien deviner.
 
-    Comparé sous les DEUX écritures, qualifiée et nue, et c'est la plus
-    ressemblante qui gagne. Chacune attrape ce que l'autre manque : une
-    déclaration nue (`pclas`) ne ressemble à aucun `table.colonne`, la distance
-    d'édition étant mangée par le préfixe ; et `classes.sex`, dont la table est
-    fausse et la colonne juste, ressemble plus à `classes.level` qu'à
-    `passengers.sex` si on ne regarde que la forme qualifiée — alors que c'est
-    `passengers.sex` qu'on voulait écrire.
+    Comparé sur les noms **nus**, des deux côtés, et c'est mesuré : la table
+    qualifiante fausse la ressemblance dans les deux sens. Elle la gonfle —
+    ``classes.rang_du_billet`` et ``classes.label`` partagent dix caractères de
+    préfixe et passent le seuil, alors qu'ils n'ont rien à voir — et elle la
+    noie : ``pclas`` ne ressemble à aucun ``table.colonne``, la distance d'édition
+    étant mangée par le préfixe. Sur les noms nus, les deux tombent juste :
+    ``rang_du_billet`` ne ressemble à rien, ``pclas`` ressemble à ``pclass``.
     """
     nu = declaree.rsplit(".", 1)[-1].lower()
-    meilleure, score = "", 0.0
-    for connue in connues:
-        for cible, candidate in (
-            (declaree.lower(), connue.lower()),
-            (nu, connue.rsplit(".", 1)[-1].lower()),
-        ):
-            ressemblance = difflib.SequenceMatcher(None, cible, candidate).ratio()
-            if ressemblance > score:
-                meilleure, score = connue, ressemblance
-    # Le seuil de `difflib.get_close_matches`, gardé tel quel : c'est celui qui
-    # sépare une faute de frappe d'une autre colonne.
-    return f" (peut-être {meilleure} ?)" if score >= 0.6 else ""
+    nus = [connue.rsplit(".", 1)[-1].lower() for connue in connues]
+    proches = difflib.get_close_matches(nu, nus, n=1)
+    if not proches:
+        return ""
+    return f" (peut-être {connues[nus.index(proches[0])]} ?)"
 
 
 __all__ = [
