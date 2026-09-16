@@ -118,10 +118,16 @@ class SystemeDeps:
         argument : le modèle demande le détail d'une chose, l'outil n'a que le
         tout à rendre, et c'est l'utilisateur qui paie la différence.
 
+        **Quand rien n'est nommé et qu'une source est LIÉE, c'est d'elle qu'on
+        parle.** « et elle contient quoi ? » ne nomme personne : le sujet de la
+        phrase est la source de travail, et rendre le catalogue entier à cette
+        question-là, c'est répondre à quelqu'un d'autre. Même règle que
+        `schema_d_une_source`, qui la tient déjà.
+
         Un nom INCONNU rend le catalogue entier plutôt qu'une erreur, comme
         partout ici : celui qui se trompe de nom a besoin de voir les vrais.
         """
-        vise = cible.strip().strip("\"`'").lower()
+        vise = (cible.strip().strip("\"`'") or self.source_de_travail).lower()
         faits = self.releves.tous() if self.releves is not None else None
         if vise:
             trouvee = next(
@@ -225,10 +231,13 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
     def sources_de_donnees(ctx: RunContext[SystemeDeps], cible: str = "") -> str:
         """Les sources déclarées : nom, type, description, volume et période couverte.
 
+        Cet outil ne donne NI les tables, NI les colonnes, NI les types de
+        données : pour cela, c'est `schema_d_une_source`.
+
         `cible` : le nom d'UNE source, quand la question ne porte que sur
-        celle-là (« de quoi parle interventions ? », « elle est de quel
-        type ? »). Laisse vide pour le catalogue entier (« quelles sources
-        as-tu ? »).
+        celle-là (« de quoi parle interventions ? »). Laisse vide pour le
+        catalogue entier (« quelles sources as-tu ? ») — sauf si une source de
+        travail est déjà liée, auquel cas c'est d'elle qu'on parle.
 
         Le volume et la période sont LUS dans chaque source, jamais déduits de
         son nom : c'est la différence entre décrire un catalogue et le raconter.

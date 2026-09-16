@@ -332,3 +332,27 @@ def test_une_cible_inconnue_rend_le_catalogue_plutot_qu_une_erreur(
 
     assert "ventes" in rendu
     assert "stocks" in rendu
+
+
+def test_sans_cible_mais_avec_une_source_liee_c_est_d_elle_qu_on_parle(
+    deux_sources: Catalog, registre: Registry
+):
+    """« et elle contient quoi ? » ne nomme personne — le sujet est la source liée.
+
+    Rendre le catalogue entier à cette question-là, c'est répondre à quelqu'un
+    d'autre : l'utilisateur vient de lier une source et poursuit dessus. Mesuré
+    au troisième tour d'une conversation d'ouverture, sur le catalogue de
+    démonstration. Même règle que `schema_d_une_source`, qui la tenait déjà.
+    """
+    deps = SystemeDeps(
+        catalogue_declare=deux_sources,
+        catalogue_effectif=deux_sources,
+        registre=registre,
+        question="et elle contient quoi ?",
+        source_de_travail="stocks",
+    )
+
+    rendu = deps.decrire_les_sources()
+
+    assert "stocks" in rendu
+    assert "ventes" not in rendu
