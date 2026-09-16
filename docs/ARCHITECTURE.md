@@ -1053,7 +1053,7 @@ tests/
 ## 7. Configuration (`DAA_*`)
 
 Tout se règle par variable d'environnement ou par `.env` ; `Settings`
-(pydantic-settings) est la source de vérité, ce tableau la reflète : **49 champs**,
+(pydantic-settings) est la source de vérité, ce tableau la reflète : **51 champs**,
 tous présents ci-dessous. Les tables sont découpées par domaine parce qu'ils sont
 devenus trop nombreux pour un tableau plat — celui-ci en avait ignoré seize
 (authentification, surface HTTP, débit, plafonds de la sandbox).
@@ -1085,6 +1085,18 @@ devenus trop nombreux pour un tableau plat — celui-ci en avait ignoré seize
 | `DAA_RELEVE_PEREMPTION` | `900.0` | durée de validité d'un relevé **réussi** (s). Une volumétrie bouge à l'échelle du chargement nocturne, pas de la minute. `0` = aucune mise en cache |
 | `DAA_RELEVE_REPRISE` | `30.0` | délai avant de re-tenter une source **injoignable** (s). Bien plus court : une panne se répare en minutes, et le coût d'une reprise inutile est une connexion refusée. `0` = aucune mise en cache |
 | `DAA_RELEVE_SEUIL_APPROXIMATION` | `100000` | au-dessus de ce nombre de lignes, la table est **estimée** par le moteur (`reltuples`) au lieu d'être comptée, et le chiffre est affiché avec un `~`. Sans effet sur DuckDB, qui compte depuis ses métadonnées (mesuré). `0` = jamais d'estimation |
+
+### Dictionnaire de source
+
+Le dictionnaire d'une source — le Markdown qui dit ce que ses valeurs veulent
+dire — est recopié dans le prompt système de **chaque agent qui va s'en servir** :
+celui qui écrit le SQL et celui qui écrit le Python. Comment le rédiger pour
+qu'il tienne devant eux : [rediger-un-dictionnaire-de-source.md](rediger-un-dictionnaire-de-source.md).
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `DAA_DICTIONARY_MAX_CHARS` | `8000` | plafond, en **caractères**, du dictionnaire injecté. Un seul plafond pour les deux lecteurs : il règle ce qu'une **source** transmet de son sens, pas le coût d'un agent. Au-delà, la coupe garde des **sections entières** dans l'ordre du document, et l'amputation est dite au modèle **et** à l'utilisateur. ≈ 2 550 tokens ; le plus gros dictionnaire de la démonstration en pèse 6 797. `0` = pas de plafond |
+| `DAA_RETRIEVAL_DICTIONARY_MAX_CHARS` | — | **déprécié** : ancien nom du précédent, du temps où seul l'agent SQL lisait le dictionnaire ; encore honoré (avertissement au démarrage) |
 
 ### Mémoire de conversation et contexte du modèle
 

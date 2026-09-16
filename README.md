@@ -95,6 +95,8 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 | [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
 | [docs/VLLM.md](docs/VLLM.md) | banc d'essai vLLM : le tool calling mesuré, ce qui casse sans les bonnes options, ce qui reste à vérifier |
 | [docs/surface-conversationnelle.md](docs/surface-conversationnelle.md) | ce que l'agent sait répondre **sur lui-même** : la batterie de mesure, les comptes avant/après, le coût en appels LLM, et les décisions déjà mesurées et retirées |
+| [docs/sources-de-demonstration.md](docs/sources-de-demonstration.md) | le catalogue de démonstration : cinq sources, quatre pièges de modélisation, les questions métier et leurs oracles, et ce que ce catalogue a fait apparaître dans le socle |
+| [docs/rediger-un-dictionnaire-de-source.md](docs/rediger-un-dictionnaire-de-source.md) | comment écrire le dictionnaire d'une source pour qu'il tienne devant l'agent : six règles, le relevé qui les fonde, et ce que l'ambiguïté coûte en chiffres faux |
 | [docs/axes-amelioration.md](docs/axes-amelioration.md) | dette technique et chantiers ouverts, ancrés `fichier:ligne`, avec un récapitulatif priorisé |
 
 ## Démarrage
@@ -129,7 +131,7 @@ docker build -t data-analyst-agent-sandbox:0.1 src/data_analyst_agent/sandbox/im
 
 ## Configuration
 
-Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`). 49 réglages, groupés par domaine dans **[docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-configuration-daa_)** : LLM, sources et capacités, mémoire de conversation et contexte, authentification et sessions, surface HTTP et débit, sandbox. Les plus souvent touchés :
+Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`). 51 réglages, groupés par domaine dans **[docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-configuration-daa_)** : LLM, sources et capacités, mémoire de conversation et contexte, authentification et sessions, surface HTTP et débit, sandbox. Les plus souvent touchés :
 
 | Réglage | Défaut | Quand y toucher |
 |---|---|---|

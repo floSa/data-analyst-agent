@@ -88,7 +88,7 @@ Chacun est décrit dans le dictionnaire de sa source
 | # | Source | Piège | Ce qu'on rate sans le dictionnaire |
 |---|---|---|---|
 | 1 | `interventions` | **Un libellé là où on attendrait un code.** `station_libelle` porte `« Ville — Quartier »`, pas `ST-nnn`. | Aucune jointure directe avec le reste du catalogue. Le passage obligé est `referentiel`, qui est la **table de correspondance**. Et 177 des 900 interventions portent sur des stations démontées, qu'`exploitation` ne connaît pas : joindre par le code depuis là en perd une part **silencieusement**. |
-| 2 | `telemetrie` | **Une valeur sentinelle.** `puissance_kw = -1` veut dire « le compteur n'a rien remonté ». | 16 447 relevés sur 547 200 (3,0 %). `avg(puissance_kw)` rend **66,67** ; la moyenne juste, `WHERE puissance_kw >= 0`, rend **68,76**. Et `0` est une vraie puissance — la borne répond, elle ne charge personne : 44 187 relevés (8,1 %). |
+| 2 | `telemetrie` | **Une valeur sentinelle.** `puissance_kw = -1` veut dire « le compteur n'a rien remonté ». | 16 447 relevés sur 547 200 (3,0 %). `avg(puissance_kw)` rend **66,67** ; la moyenne juste, `WHERE puissance_kw >= 0`, rend **68,76**. Et `0` est une vraie puissance — la borne répond, elle ne charge personne : 44 197 relevés (8,1 %). |
 | 3 | `exploitation` | **Un code d'état.** `sessions.statut` vaut `T`, `I` ou `E`. | `count(*)` rend 48 000 : c'est le nombre de **tentatives**. Le nombre de recharges abouties est 42 281. Plus de 10 % d'écart. |
 | 4 | `interventions` | **Une seconde sentinelle, d'un autre format.** `duree_indispo_min = -1` veut dire « non renseigné ». | 108 lignes sur 900 (12,0 %). Durée moyenne naïve : **1 284,63 min** ; durée moyenne juste : **1 459,95 min**. |
 
@@ -197,8 +197,8 @@ pandas sur le classeur.
 
 **16 tours sur 16 justes, 69 appels LLM.**
 
-Ce parcours a été **rejoué intégralement** après la réparation des deux défauts
-du socle, sur vLLM : **16/16, 56 appels LLM**
+Ce parcours est **rejoué intégralement** après chaque réparation du socle, sur
+vLLM, et par un runner : **16/16, 56 appels LLM**
 (cf. [Les garde-fous, et ce qui n'a pas bougé](#les-garde-fous-et-ce-qui-na-pas-bougé)).
 Les oracles de ce tableau ont été recalculés hors de l'agent à cette occasion :
 ils sont inchangés.
@@ -277,11 +277,18 @@ une demande d'inventaire et a rendu la liste des tables.
 
 ## Ce que ce catalogue a fait apparaître dans le socle, et ce qu'on en a fait
 
-Un catalogue réaliste éprouve le socle, et il a trouvé deux choses que
+Un catalogue réaliste éprouve le socle, et il a trouvé plusieurs choses que
 `titanic` et `iris` ne déclenchaient pas. Le chantier qui a fourni le catalogue
-les a **constatées sans les réparer** ; celui-ci les a réparées. Les deux
-sections qui suivent gardent le constat d'origine et lui ajoutent la mesure
+en a **constaté deux sans les réparer** ; le suivant les a réparées, et la
+réparation en a découvert une troisième — le même défaut à l'agent suivant. Les
+sections qui suivent gardent chaque constat d'origine et lui ajoutent la mesure
 d'après.
+
+Elles se lisent dans cet ordre : le dictionnaire jusqu'à l'agent SQL (1),
+`get_schema` et son argument refusé (2), le dictionnaire jusqu'à celui qui écrit
+le Python (3), puis les deux questions que ces réparations ont posées — un
+dictionnaire écrit pour un humain tient-il, et la colonne des comptes qui
+disparaissait d'un classement.
 
 **Le moteur en service est vLLM, seul** — `google/gemma-4-E4B-it-qat-w4a16-ct`
 sur `http://localhost:8100/v1`. Tout ce qui est chiffré ici a été joué contre
@@ -365,8 +372,11 @@ Le prompt quadruple au pire, et il reste petit : 3 324 tokens pour une fenêtre
 servie de 32 768, soit **10 %**. Une source sans dictionnaire reste à 824.
 
 **Le plafond, et la règle de coupe.** Le catalogue de démonstration tient ;
-celui d'un client peut peser dix fois plus. `DAA_RETRIEVAL_DICTIONARY_MAX_CHARS`
-(8 000 caractères, ≈ 2 500 tokens) borne ce qui entre dans le prompt. Au-delà,
+celui d'un client peut peser dix fois plus. `DAA_DICTIONARY_MAX_CHARS`
+(8 000 caractères, ≈ 2 550 tokens) borne ce qui entre dans le prompt. *(Il
+s'appelait `DAA_RETRIEVAL_DICTIONARY_MAX_CHARS` tant qu'un seul agent lisait le
+dictionnaire ; l'ancien nom reste accepté et se signale comme déprécié — voir la
+section 3.)* Au-delà,
 la coupe garde des **sections Markdown entières**, parcourues dans l'ordre du
 document, et passe son chemin quand l'une ne tient pas dans ce qui reste. Jamais
 au milieu d'une phrase : « la valeur -1 est une sentinelle » amputé de « à
@@ -570,11 +580,187 @@ est le tableau des trois comptes et non leur somme : les valeurs sont justes,
 l'agrégation est laissée à l'utilisateur — « en tout » sur une source à trois
 tables n'a pas de lecture unique.
 
+### 3. Le dictionnaire ne descendait pas non plus jusqu'à l'agent d'analyse
+
+Réparé pour celui qui écrit le SQL, le défaut restait entier pour celui qui
+écrit le **Python**. L'agent d'analyse recevait les CSV matérialisés, le schéma,
+l'avis de troncature — et rien de ce que les valeurs veulent dire.
+
+**Et c'est pire ici, pour une raison qui tient au support du résultat.** Une
+requête fausse laisse son texte dans la conversation : on la relit, on voit le
+`WHERE` manquant. Un `df['puissance_kw'].mean()` faux ne laisse qu'un nombre —
+ou une courbe, et personne ne relit une courbe.
+
+#### Les oracles, établis en SQL direct avant toute mesure d'agent
+
+Le piège nº 2 : `telemetrie.releves_puissance.puissance_kw` vaut `-1.0` quand le
+compteur n'a rien remonté, et `0.0` quand la borne est à l'arrêt — la première
+est une absence de mesure, la seconde une mesure vraie.
+
+**Deux assiettes, et il faut les deux** : l'agent SQL interroge la table
+entière, le code d'analyse ne reçoit que ce que `analysis_table_max_rows`
+(10 000) a matérialisé en CSV. Confondre leurs oracles ferait passer pour faux
+un chiffre juste.
+
+| Assiette | Lignes | `= -1` | `= 0` | Moyenne naïve | Moyenne juste (`-1` écartés, `0` gardés) | Sur-corrigée (`> 0`) |
+|---|---|---|---|---|---|---|
+| table entière | 547 200 | 16 447 | 44 197 | 66,6663 | **68,7631** | 75,0093 |
+| tranche montée | 10 000 | 290 | 806 | 66,3215 | **68,3321** | 74,5176 |
+
+*(44 197 et non 44 187 : le tirage force 44 187 relevés à zéro, et dix autres
+tombent sur `0.00` d'eux-mêmes. Le compte du semis se lit maintenant dans la
+donnée écrite, pas dans le masque qui l'a produite — c'est la base que l'agent
+interroge.)*
+
+#### Avant et après, cinq tirages par question
+
+Runner : [`scripts/mesure_dictionnaire_analyse.py`](../scripts/mesure_dictionnaire_analyse.py).
+Chaque tirage est une conversation neuve, sur `telemetrie`.
+
+| Question | Nœud | Avant | Après |
+|---|---|---|---|
+| « quelle est la puissance moyenne relevée ? » | `retrieval` | **5/5 juste** — 68,76 | **5/5 juste** — 68,76 |
+| « trace-moi la puissance moyenne par heure » | `analysis` | **0/5** — sentinelle gardée, réponse à 66,32 | **5/5** — sentinelle écartée, zéros gardés, réponse à 68,332 |
+
+La première question **ne passe jamais par l'agent d'analyse** : le
+planificateur la route vers le SQL, qui a son dictionnaire depuis le chantier
+précédent. Elle est mesurée quand même, et c'est utile — elle montre que le
+défaut n'est pas dans la question, mais dans l'agent qui la traite.
+
+Le code d'avant faisait `releves.dropna(...)` puis `.mean()` : `dropna` ne voit
+pas un `-1`, ce n'est pas un NaN, c'est un nombre. Le code d'après écrit le
+filtre en clair et cite la règle en commentaire — c'est ce que l'en-tête lui
+demande :
+
+<!-- Balisé `text` et non `python` : c'est une CITATION du code rendu par le
+     modèle, et `ruff format` reformate les blocs Python des fichiers Markdown —
+     il réécrirait les apostrophes, et la citation cesserait d'être exacte. -->
+
+```text
+# Règle : "-1 est une valeur sentinelle ... à écarter de toute moyenne."
+# Règle : "0 en est une, elle : la borne répond et ne charge personne." (à conserver)
+releves_filtre = releves[releves['puissance_kw'] != -1.0].copy()
+```
+
+**Les figures ont été regardées, pas seulement leur code.** Cinq sur cinq sont
+tracées et non vides, avant comme après ; ce qui change est le niveau de la
+courbe, deux kilowatts plus haut. Un `statut ok` du bac à sable ne dit rien de
+ce qui est dessiné.
+
+**Ce que ça coûte, en allers-retours.** Le dictionnaire déplace aussi
+l'interprétation : sans lui, quatre tirages sur cinq lisaient « par heure »
+comme l'heure du jour (`groupby(dt.hour)`, 24 points) ; avec lui — il désigne
+`horodatage` comme colonne de référence, au pas horaire — les cinq lisent une
+série temporelle (`resample('h')`, 1 440 points). Cette seconde lecture bute une
+fois sur l'alias `'H'` déprécié de pandas et se corrige d'elle-même : **deux
+essais au lieu d'un**, dans une boucle qui en autorise trois. La réponse est
+juste dans les deux lectures ; la question est ambiguë et le coût est réel.
+
+#### Le module de coupe est partagé, pas dupliqué
+
+`agents/retrieval/dictionnaire` est devenu
+[`agents/dictionnaire`](../src/data_analyst_agent/agents/dictionnaire.py) : il a
+deux lecteurs. `preparer` taille, `bloc_de_prompt` colle, et **l'en-tête est
+passé par l'appelant** — `EN_TETE_SQL` parle de requête et de `WHERE`,
+`EN_TETE_CODE` de `mean()`, de `dropna` et de courbe.
+
+La machinerie est commune ; le vocabulaire ne l'est pas, et ce n'est pas une
+politesse. Un en-tête qui dit « avant d'écrire ta requête » devant un agent qui
+n'écrit jamais de requête lui demande de transposer, et la transposition est
+l'opération qu'il rate : il lit « à écarter de toute moyenne », pense SQL, et
+écrit `df['x'].mean()` sans filtre.
+
+**Le plafond est partagé lui aussi, et renommé pour le dire.**
+`DAA_DICTIONARY_MAX_CHARS` règle ce qu'une **source** transmet de son sens, pas
+le coût d'un agent : deux valeurs distinctes diraient qu'un même dictionnaire
+est amputé dans un prompt et entier dans l'autre — donc que « combien de
+recharges ? » et « trace-moi les recharges » ne s'appuient pas sur le même
+texte. L'ancien nom, `DAA_RETRIEVAL_DICTIONARY_MAX_CHARS`, reste lu et se
+signale comme déprécié : un plafond qui redeviendrait son défaut en silence,
+c'est un contexte qui gonfle sans que personne l'ait décidé.
+
+#### Ce que ça coûte, en tokens rendus par le serveur
+
+Mesuré au `/tokenize` de vLLM, comme pour l'agent SQL.
+
+| Prompt système | Nu | + `telemetrie` | + `exploitation` (le plus gros) |
+|---|---|---|---|
+| agent d'analyse | 300 tokens | **2 199** | **2 943** |
+| agent SQL | 824 | 2 580 | 3 324 |
+
+Le prompt de l'analyse est le plus court des deux à vide et le reste chargé. Au
+plafond de 8 000 caractères (≈ 2 550 tokens sur ce Markdown), il est borné à
+~3 400 tokens et celui du SQL à ~3 800 — pour une fenêtre servie de 32 768.
+
+#### L'amputation remonte des deux côtés, et les deux se cumulent
+
+Le nœud d'analyse peut désormais livrer **deux** dégradations : des LIGNES
+coupées à la matérialisation (`analysis_table_max_rows`) et des SECTIONS coupées
+du dictionnaire. L'une fait compter sur un échantillon, l'autre fait compter
+sans la règle ; elles s'additionnent dans la trace et dans la réponse, et un
+test le tient.
+
+### Un dictionnaire écrit pour un humain tient-il ? — la contrainte de produit
+
+C'est la question qui décide si le produit tient chez un client : **un client
+n'écrira jamais son dictionnaire pour notre agent.** Il l'écrira comme celui
+d'`exploitation` avant sa réécriture.
+
+Le texte d'avant a donc été remis en place — en mémoire, sans rien écrire dans
+le dépôt — et mesuré tel quel, avec la consigne en service. Quatre questions,
+trois tirages chacune, verdict lu dans le chiffre ET dans le SQL :
+
+| Question | Oracle | Obtenu | Tirages justes |
+|---|---|---|---|
+| « combien de sessions en tout ? » | 48 000 | 48 000 | **3/3** |
+| « quelle énergie totale, en kWh ? » | 1 757 519,23 | **1 730 823,72**, avec `WHERE statut = 'T'` | **0/3** |
+| « les trois stations avec le plus de sessions » | 1 015 / 911 / 872 | les trois, dans l'ordre, sans leurs comptes | 3/3 au SQL |
+| « combien de recharges ont abouti ? » | 42 281 | 42 281 | **3/3** |
+
+Puis quatre formulations de consigne ont été essayées sur la question fausse,
+après les trois du chantier précédent — **sept en tout, 0/3 chacune**. La
+sixième est pire que le défaut : sommée de dérouler une procédure en
+commentaires, le modèle l'écrit et **n'appelle plus l'outil**. La septième,
+placée APRÈS le dictionnaire là où la récence joue, fait disparaître le filtre
+sur `statut` et le remplace par un filtre sur l'année en cours — la réponse
+devient « énergie nulle ». **Le prompt décide de quelle faute est commise ; il
+ne décide pas qu'aucune ne l'est.**
+
+Le témoin qui tranche : même consigne, même question, même moteur, seul le
+dictionnaire change — **0/3 sur le texte d'avant, 3/3 sur le texte réécrit**.
+
+C'est donc **(b)** : ce n'est plus un défaut de code, c'est une contrainte de
+produit, et elle est écrite dans un document à part —
+[**Rédiger un dictionnaire de source pour cet agent**](rediger-un-dictionnaire-de-source.md).
+Six règles, le relevé complet des sept formulations, ce que l'ambiguïté coûte en
+chiffres faux, et une liste de contrôle. Le dictionnaire d'`exploitation` est
+resté dans sa version réécrite.
+
+### La colonne des comptes qui disparaissait
+
+`Q4` demande « les trois stations avec le plus de sessions ? **donne leur code
+et leur nom** », et le modèle s'y tenait à la lettre : code et nom dans le
+`SELECT`, le compte seulement dans le `ORDER BY`. Mesuré 5 fois sur 5, sur le
+dictionnaire en service. L'ordre et les stations étaient justes, le SQL n'était
+pas filtré — une réponse littérale, pas un chiffre faux.
+
+Le remède tient en une ligne du prompt de l'agent SQL : la grandeur qui **classe**
+va dans le `SELECT`, et les colonnes que la question énumère sont un minimum,
+pas un maximum. **0/5 avant, 5/5 après**, avec 1 015 / 911 / 872 dans le
+tableau. Le parcours métier et la surface conversationnelle ne bougent pas.
+
+Il valait la peine d'être corrigé parce qu'un palmarès sans ses chiffres ne dit
+pas de combien le premier devance le second, et ne se vérifie pas. Un test de
+CONTENU tient cette ligne — le seul du fichier des prompts, parce qu'elle a un
+avant et un après chiffrés et que la retirer ferait revenir le défaut sans que
+rien n'échoue.
+
 ### Les garde-fous, et ce qui n'a pas bougé
 
-`assert_read_only`, `retrieval_request_limit` et `retrieval_max_rows` sont
-inchangés. La suite complète passe : **1 074 tests, 99,56 % de couverture**
-(référence d'avant : 1 046 et 99,55 %).
+`assert_read_only`, `retrieval_request_limit`, `retrieval_max_rows` et le bac à
+sable au réseau coupé sont inchangés. La suite complète passe : **1 089 tests,
+99,56 % de couverture** (référence d'avant : 1 074 et 99,56 % ; avant elle,
+1 046 et 99,55 %).
 
 La surface conversationnelle, rejouée sur vLLM contre `sources/catalogue.yaml`
 (`titanic` + `iris`, qui ne déclarent aucun dictionnaire et dont le prompt est
@@ -586,6 +772,14 @@ vLLM, 56 appels LLM** — contre 69 à la campagne d'origine. L'économie vient 
 trois tours d'ouverture, désormais servis sans aucun appel au modèle par le
 court-circuit de choix de source.
 
+Il se rejoue maintenant d'une commande :
+[`scripts/mesure_parcours_de_demonstration.py`](../scripts/mesure_parcours_de_demonstration.py).
+Il se refaisait à la main d'un chantier à l'autre, et une campagne qu'on refait
+à la main ne se compare qu'à ce dont on se souvient. Chaque tour y est jugé sur
+ce que l'utilisateur voit vraiment — **la phrase de réponse ET le tableau** : le
+prompt de l'agent SQL lui interdit de recopier les lignes dans sa phrase, et ne
+lire que la phrase ferait passer pour muet un tour qui a rendu ses chiffres.
+
 **Un piège de protocole, trouvé en rejouant.** Les trois tours d'ouverture
 échouaient d'abord, et c'était le banc de mesure qui avait tort : il passait
 `source_de_travail=None` au premier tour d'un fil, là où l'API passe toujours
@@ -596,11 +790,9 @@ ne prend pas. Un banc qui n'imite pas fidèlement l'appelant réel fabrique des
 défauts qui n'existent que pour lui, et fait perdre le temps qu'on croyait
 gagner.
 
-**Ce qui reste à traiter, et qui ne vient pas d'ici.** Le modèle ne projette pas
-toujours la colonne des comptes sur Q4 : la question dit « donne leur code et
-leur nom », et il s'y tient parfois à la lettre. Les trois stations et leur
-ordre sont justes dans tous les cas, et le SQL n'est pas filtré — c'est une
-réponse littérale, pas un chiffre faux.
+**Ce qui restait à traiter est traité.** La colonne des comptes absente de Q4
+était la réserve laissée par le chantier précédent ; elle est mesurée et
+corrigée plus haut, 0/5 avant et 5/5 après.
 
 ## Jouer la démonstration
 

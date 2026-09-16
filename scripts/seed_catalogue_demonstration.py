@@ -556,8 +556,13 @@ def semer_telemetrie(tirage: random.Random, bornes: list[tuple], stations: list[
         )
     connexion.executemany("INSERT INTO incidents_reseau VALUES (?, ?, ?, ?, ?)", incidents)
 
-    muets_total = int(muets.sum())
-    arrets_total = int(arrets.sum())
+    # Comptés dans la DONNÉE écrite, et non dans les masques qui l'ont produite :
+    # `np.round(uniform(0, 150), 2)` rend parfois 0.00 tout seul, et ces relevés-là
+    # sont des bornes à l'arrêt comme les autres. Le masque en annonçait 44 187,
+    # la base en contient 44 197 — et c'est la base qui a raison, puisque c'est
+    # elle que l'agent interroge.
+    muets_total = int((releves["puissance_kw"] == -1.0).sum())
+    arrets_total = int((releves["puissance_kw"] == 0.0).sum())
     connexion.close()
     fin = depart + np.timedelta64(RELEVES_PAR_BORNE - 1, "h")
     return {

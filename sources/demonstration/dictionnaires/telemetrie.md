@@ -65,7 +65,7 @@ précaution vaut pour `min`, pour les percentiles, et pour toute somme d'énergi
 reconstituée à partir de cette colonne.
 
 Une borne à l'arrêt, elle, remonte bien `0.0` — et c'est une information
-différente : le matériel répond, il ne charge personne. 44 187 relevés, soit
+différente : le matériel répond, il ne charge personne. 44 197 relevés, soit
 8,1 %, sont dans ce cas. Les deux valeurs se ressemblent dans un tableau ; elles
 ne se traitent pas de la même façon, et c'est tout le piège.
 
