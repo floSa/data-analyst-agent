@@ -356,3 +356,25 @@ def test_sans_cible_mais_avec_une_source_liee_c_est_d_elle_qu_on_parle(
 
     assert "stocks" in rendu
     assert "ventes" not in rendu
+
+
+def test_un_nom_ecrit_comme_un_mot_francais_est_reconnu(deux_sources: Catalog, registre: Registry):
+    """« C'est quoi la source Télémétrie ? » — accents et majuscules compris.
+
+    L'utilisateur écrit le nom d'une source comme un mot de sa langue ; le
+    catalogue l'écrit comme un identifiant. Comparer les deux tels quels exige
+    de lui qu'il tape comme un fichier de configuration. Mesuré : `télémétrie`
+    ne trouvait pas `telemetrie`, l'outil repliait sur les cinq fiches — et la
+    source, elle, SE LIAIT, parce que ce chemin-là repliait déjà les accents.
+    """
+    deps = SystemeDeps(
+        catalogue_declare=deux_sources,
+        catalogue_effectif=deux_sources,
+        registre=registre,
+        question="c'est quoi la source Ventes ?",
+    )
+
+    rendu = deps.decrire_les_sources("Vêntes")
+
+    assert "ventes" in rendu
+    assert "stocks" not in rendu

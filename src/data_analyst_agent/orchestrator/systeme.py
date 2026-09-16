@@ -58,9 +58,28 @@ from pydantic_ai.usage import UsageLimits
 
 from data_analyst_agent import prompts
 from data_analyst_agent.agents.inference.registry import Registry
-from data_analyst_agent.agents.retrieval.catalog import Catalog, open_source
+from data_analyst_agent.agents.retrieval.catalog import Catalog, Source, open_source
 from data_analyst_agent.agents.retrieval.faits import RelevesDuCatalogue
 from data_analyst_agent.orchestrator import introspection
+
+
+def _trouver_la_source(catalogue: Catalog, nom: str) -> Source | None:
+    """La source dont le nom est CELUI-LÀ, à la typographie près.
+
+    `replie` et non `.lower()`, et c'est un défaut mesuré : « C'est quoi la
+    source Télémétrie ? » ne trouvait rien — `télémétrie` n'est pas `telemetrie`
+    pour une comparaison littérale — et l'outil repliait sur le catalogue
+    entier. L'utilisateur écrit le nom d'une source comme un mot français, avec
+    ses accents et ses majuscules ; le catalogue l'écrit comme un identifiant.
+    Comparer les deux tels quels, c'est exiger de l'utilisateur qu'il tape comme
+    un fichier de configuration.
+
+    Le reste du socle repliait déjà (`introspection._nomme`), ce qui donnait le
+    pire des cas : la source SE LIAIT (« je travaille sur telemetrie ») et la
+    description, elle, ne la reconnaissait pas.
+    """
+    vise = introspection.replie(nom)
+    return next((s for s in catalogue.sources if introspection.replie(s.name) == vise), None)
 
 
 @dataclass
@@ -127,12 +146,10 @@ class SystemeDeps:
         Un nom INCONNU rend le catalogue entier plutôt qu'une erreur, comme
         partout ici : celui qui se trompe de nom a besoin de voir les vrais.
         """
-        vise = (cible.strip().strip("\"`'") or self.source_de_travail).lower()
+        vise = cible.strip().strip("\"`'") or self.source_de_travail
         faits = self.releves.tous() if self.releves is not None else None
-        if vise:
-            trouvee = next(
-                (s for s in self.catalogue_declare.sources if s.name.lower() == vise), None
-            )
+        if vise.strip():
+            trouvee = _trouver_la_source(self.catalogue_declare, vise)
             if trouvee is not None:
                 releve = self.releves.de(trouvee.name) if self.releves is not None else None
                 return self.retenir(
@@ -171,7 +188,7 @@ class SystemeDeps:
                 "travailler_sur_une_source",
                 introspection.decrire_les_sources(self.catalogue_declare, faits),
             )
-        trouvee = next((s for s in self.catalogue_declare.sources if s.name.lower() == vise), None)
+        trouvee = _trouver_la_source(self.catalogue_declare, vise)
         if trouvee is None:
             # Les noms entre accents graves, comme partout dans `introspection` :
             # c'est ainsi que la vérification d'après-coup reconnaît ce qu'un
