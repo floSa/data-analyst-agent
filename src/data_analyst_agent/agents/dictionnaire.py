@@ -128,6 +128,15 @@ demande.
 
 Un filtre oublié et un filtre de trop rendent le même genre de résultat : un
 chiffre faux et plausible, que personne ne verra passer.
+
+QUAND TU RÉPONDS AVEC CE QU'IL DIT, DIS D'OÙ ÇA VIENT. Si ta phrase énonce ce
+qu'une colonne VEUT DIRE — un code, une unité, une valeur sentinelle, une
+correspondance — et que tu le tiens de ce dictionnaire, écris-le : « selon le
+dictionnaire de la source ». C'est ce qui distingue une lecture de CETTE
+installation d'un savoir général sur des codes répandus, et l'utilisateur n'a
+aucun autre moyen de faire la différence. N'écris JAMAIS cette mention pour
+autre chose : un chiffre que tu as compté vient de ta requête, un type de
+colonne vient du schéma, et une source sans dictionnaire n'en a aucun à citer.
 """.strip()
 
 
