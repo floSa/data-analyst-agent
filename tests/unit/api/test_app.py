@@ -568,8 +568,17 @@ def test_choisir_la_source_d_un_fil_inconnu_repond_404(client: TestClient):
     assert reponse.status_code == 404
 
 
-def test_la_page_porte_l_indicateur_de_source(client: TestClient):
+def test_la_page_ne_porte_aucun_bandeau_de_source(client: TestClient):
+    """La source de travail ne s'affiche pas et ne se clique pas : on la demande.
+
+    Un menu déroulant a été monté ici, puis un témoin en lecture seule ; les deux
+    posaient à l'écran une question que le dialogue pose mieux. L'agent annonce
+    ses sources quand on les lui demande et lie celle qu'on lui nomme, et c'est
+    le FIL qui en garde la trace. `/sources` reste servi par l'API — il n'est
+    simplement plus lu par la page.
+    """
     page = client.get("/").text
 
-    assert "Source de travail" in page
-    assert "/sources" in page  # la page sait peupler son menu
+    assert "Source de travail" not in page
+    assert "<select" not in page
+    assert 'id="source-liee"' not in page
