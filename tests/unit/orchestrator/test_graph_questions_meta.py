@@ -24,7 +24,7 @@ from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Capability, Plan
-from data_analyst_agent.orchestrator.systeme import build_systeme_agent
+from data_analyst_agent.orchestrator.systeme import SystemeDeps, build_systeme_agent
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from helpers.doubles import FakeClassifier
 from helpers.scripted_llm import (
@@ -487,6 +487,42 @@ def test_l_outil_de_schema_annonce_qu_il_porte_le_SENS_et_pas_que_la_structure()
     # et la structure reste annoncée : le correctif ajoute, il ne remplace pas
     assert "colonnes" in description.lower()
     assert "types" in description.lower()
+
+
+def test_chercher_une_source_est_un_outil_a_part_et_rend_les_descriptions(registre: Registry):
+    """Chercher par sujet et réciter l'inventaire sont deux métiers.
+
+    Mesuré le 2026-09-16 : fondus dans un seul outil, l'argument de recherche
+    désarmait la ceinture d'exhaustivité sur des questions qui n'avaient rien à
+    voir — « de quand datent tes données ? » repassait de juste à vague, deux
+    campagnes sur deux. Séparés, la surface conversationnelle revient à 36/36 et
+    « as-tu une source qui parle de maintenance ? » rend UNE source.
+    """
+    from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
+
+    (toolset,) = build_systeme_agent().toolsets
+    description = toolset.tools["chercher_une_source"].description or ""
+
+    assert "sujet" in description.lower()
+    assert "une seule" in description.lower()
+
+    catalogue = Catalog(
+        sources=[
+            FileSource(name="ventes", path=Path("v.csv"), description="Les ventes du mois."),
+            FileSource(name="stocks", path=Path("s.csv"), description="L'état des stocks."),
+        ]
+    )
+    deps = SystemeDeps(
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        question="tu as quelque chose sur ce qu'on a vendu ?",
+    )
+
+    rendu = deps.decrire_les_sources(a_enumerer=False)
+
+    assert "ventes" in rendu
+    assert deps.faits_a_enumerer == []
 
 
 def test_l_agent_systeme_lie_la_source_que_le_message_nomme(mini_csv: Path, registre: Registry):

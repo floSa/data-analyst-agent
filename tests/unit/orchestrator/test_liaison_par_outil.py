@@ -378,3 +378,50 @@ def test_un_nom_ecrit_comme_un_mot_francais_est_reconnu(deux_sources: Catalog, r
 
     assert "ventes" in rendu
     assert "stocks" not in rendu
+
+
+def test_chercher_par_sujet_rend_de_la_matiere_a_choisir(deux_sources: Catalog, registre: Registry):
+    """« As-tu une source qui parle de maintenance ? » se répond par UNE source.
+
+    Les faits d'une recherche ne sont pas une liste à réciter : la ceinture
+    interdit toujours d'inventer un nom, elle n'exige plus qu'on les redise
+    tous. Sans ça — mesuré le 2026-09-16 — le modèle répondait juste (« la
+    source `interventions` »), `defaut_de_fondation` criait « fait(s) omis :
+    les quatre autres » et servait les 2 200 caractères du catalogue entier :
+    quatre questions différentes recevaient le même pavé.
+    """
+    deps = SystemeDeps(
+        catalogue_declare=deux_sources,
+        catalogue_effectif=deux_sources,
+        registre=registre,
+        question="tu as une source qui parle de ce qu'on a vendu ?",
+    )
+
+    rendu = deps.decrire_les_sources(a_enumerer=False)
+
+    # la matière, elle, est entière : c'est l'obligation de la RÉCITER qui tombe
+    assert "ventes" in rendu
+    assert "stocks" in rendu
+    assert deps.faits == [rendu]
+    assert deps.faits_a_enumerer == []  # rien à réciter
+
+
+def test_l_inventaire_reste_a_reciter_en_entier(deux_sources: Catalog, registre: Registry):
+    """« Quelles sources as-tu ? » : une liste incomplète est une réponse fausse.
+
+    C'est le pendant du test précédent, et il tient la frontière entre les deux.
+    Mêler la recherche et l'inventaire dans un seul outil a un coût mesuré :
+    deux questions de la surface conversationnelle sont passées de justes à
+    vagues, deux campagnes sur deux, parce que la ceinture ne réclamait plus
+    rien dès que le modèle disait chercher.
+    """
+    deps = SystemeDeps(
+        catalogue_declare=deux_sources,
+        catalogue_effectif=deux_sources,
+        registre=registre,
+        question="quelles sources as-tu ?",
+    )
+
+    rendu = deps.decrire_les_sources()
+
+    assert deps.faits_a_enumerer == [rendu]

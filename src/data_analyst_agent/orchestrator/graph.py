@@ -1344,7 +1344,9 @@ class Orchestrator:
         if liaison is not None:
             return liaison
         outils = ", ".join(resultat.outils_appeles)
-        defaut = introspection.defaut_de_fondation(resultat.reponse, resultat.faits)
+        defaut = introspection.defaut_de_fondation(
+            resultat.reponse, resultat.faits, resultat.faits_a_enumerer
+        )
         servie = resultat.faits if defaut else resultat.reponse
         detail = (
             f"{outils} — faits servis tels quels ({defaut})"

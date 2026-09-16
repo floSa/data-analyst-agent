@@ -111,6 +111,10 @@ class SystemeDeps:
     # Ce que chaque outil a rendu, dans l'ordre des appels. C'est la matière de
     # la vérification d'après-coup, et le repli servi si elle échoue.
     faits: list[str] = field(default_factory=list)
+    # La part des faits qu'une réponse doit reprendre EN ENTIER. Tout, sauf ce
+    # qu'un outil a servi pour que le modèle y CHOISISSE — « as-tu une source
+    # qui parle de maintenance ? » se répond par une source, pas par cinq.
+    faits_a_enumerer: list[str] = field(default_factory=list)
     outils_appeles: list[str] = field(default_factory=list)
     # La source que l'outil de liaison a retenue ("" = aucune demande). L'outil
     # ne CHANGE rien de lui-même : il enregistre une demande que l'appelant
@@ -120,12 +124,20 @@ class SystemeDeps:
     # celle qu'on QUITTE. "" = aucune, ce qui est le premier tour d'un fil.
     source_de_travail: str = ""
 
-    def retenir(self, outil: str, texte: str) -> str:
+    def retenir(self, outil: str, texte: str, *, a_enumerer: bool = True) -> str:
+        """Garde ce qu'un outil a rendu — et dit s'il faut le redire en entier.
+
+        ``a_enumerer=False`` quand les faits sont de la MATIÈRE À CHOISIR et non
+        une liste à réciter. La ceinture continue d'interdire d'inventer ; elle
+        cesse d'exiger qu'on récite.
+        """
         self.outils_appeles.append(outil)
         self.faits.append(texte)
+        if a_enumerer:
+            self.faits_a_enumerer.append(texte)
         return texte
 
-    def decrire_les_sources(self, cible: str = "") -> str:
+    def decrire_les_sources(self, cible: str = "", *, a_enumerer: bool = True) -> str:
         """Le catalogue, ou UNE source quand la question ne porte que sur elle.
 
         **Un outil qui ne sait pas se restreindre fait déballer tout le reste.**
@@ -146,7 +158,7 @@ class SystemeDeps:
         Un nom INCONNU rend le catalogue entier plutôt qu'une erreur, comme
         partout ici : celui qui se trompe de nom a besoin de voir les vrais.
         """
-        vise = cible.strip().strip("\"`'") or self.source_de_travail
+        vise = cible.strip().strip("\"`'") or (self.source_de_travail if a_enumerer else "")
         faits = self.releves.tous() if self.releves is not None else None
         if vise.strip():
             trouvee = _trouver_la_source(self.catalogue_declare, vise)
@@ -158,6 +170,7 @@ class SystemeDeps:
         return self.retenir(
             "sources_de_donnees",
             introspection.decrire_les_sources(self.catalogue_declare, faits),
+            a_enumerer=a_enumerer,
         )
 
     def retenir_la_liaison(self, demandee: str) -> str:
@@ -219,6 +232,9 @@ class ResultatSysteme:
 
     reponse: str
     faits: str
+    # La part de ``faits`` qu'une réponse doit reprendre en entier (cf.
+    # ``SystemeDeps.retenir``). Vide = le modèle avait à CHOISIR, pas à réciter.
+    faits_a_enumerer: str
     outils_appeles: tuple[str, ...]
     # La source que l'outil de liaison a retenue ("" = aucune demande).
     source_a_lier: str = ""
@@ -229,7 +245,7 @@ class ResultatSysteme:
 
 
 def build_systeme_agent() -> Agent[SystemeDeps, str]:
-    """L'agent et ses six outils : cinq sujets que le dépôt documente, et la liaison."""
+    """L'agent et ses sept outils : cinq sujets documentés, la recherche par sujet, la liaison."""
     agent: Agent[SystemeDeps, str] = Agent(deps_type=SystemeDeps, output_type=str)
 
     @agent.system_prompt
@@ -256,10 +272,38 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         catalogue entier (« quelles sources as-tu ? ») — sauf si une source de
         travail est déjà liée, auquel cas c'est d'elle qu'on parle.
 
+        Pour CHERCHER une source par ce dont elle parle, sans en connaître le
+        nom, c'est `chercher_une_source`.
+
         Le volume et la période sont LUS dans chaque source, jamais déduits de
         son nom : c'est la différence entre décrire un catalogue et le raconter.
         """
         return ctx.deps.decrire_les_sources(cible)
+
+    @agent.tool
+    def chercher_une_source(ctx: RunContext[SystemeDeps], sujet: str) -> str:
+        """Trouve LA source qui parle d'un sujet, quand la question ne la nomme pas.
+
+        « As-tu quelque chose sur la maintenance ? », « des données sur ce que
+        les clients ont payé ? », « tu as des trucs sur les pannes ? » : recopie
+        dans `sujet` les mots de l'utilisateur. Tu reçois les descriptions de
+        toutes les sources et tu désignes CELLE qui répond — une seule, ou
+        aucune si aucune ne convient. Tu n'as pas à réciter les autres.
+
+        Un outil à part et non un argument de `sources_de_donnees`, parce que
+        mêler les deux a un coût mesuré : l'inventaire doit être repris EN
+        ENTIER par la réponse (une liste de sources incomplète est une réponse
+        fausse), et une recherche ne le doit pas. Le même outil pour les deux
+        désarmait la ceinture sur des questions qui n'avaient rien à voir —
+        « de quand datent tes données ? » est repassée de juste à vague, deux
+        campagnes sur deux.
+        """
+        # `sujet` n'est pas lu ici : il sert à dire au MODÈLE quand appeler cet
+        # outil, et à écrire dans la trace ce qu'il cherchait. La recherche,
+        # c'est lui qui la fait — il a les descriptions sous les yeux, et il
+        # reconnaît « ce que les clients ont payé » dans « factures clients »
+        # là où une correspondance de mots ne le ferait pas.
+        return ctx.deps.decrire_les_sources(a_enumerer=False)
 
     @agent.tool
     def schema_d_une_source(ctx: RunContext[SystemeDeps], cible: str = "") -> str:
@@ -386,6 +430,7 @@ def run_systeme(
     return ResultatSysteme(
         reponse=run.output,
         faits="\n\n".join(deps.faits),
+        faits_a_enumerer="\n\n".join(deps.faits_a_enumerer),
         outils_appeles=tuple(deps.outils_appeles),
         source_a_lier=deps.source_a_lier,
     )

@@ -804,7 +804,7 @@ def _actions(faits: str) -> list[str]:
     return list(radicaux)
 
 
-def defaut_de_fondation(reponse: str, faits: str) -> str:
+def defaut_de_fondation(reponse: str, faits: str, a_enumerer: str | None = None) -> str:
     """Ce qui interdit de servir la formulation du modèle — ``""`` si rien.
 
     Le modèle formule, mais il ne décide pas de ce qui est vrai. Deux défauts
@@ -828,6 +828,23 @@ def defaut_de_fondation(reponse: str, faits: str) -> str:
       faire ; une reformulation qui garde le sens et laisse tomber l'impératif
       rend un utilisateur informé et une moyenne fausse.
 
+    ``a_enumerer`` : la part des faits qui doit être reprise EN ENTIER. Par
+    défaut, tout — c'est le cas d'une question sur le catalogue (« quelles
+    sources as-tu ? »), où une liste incomplète est une réponse fausse.
+
+    **Elle ne vaut pas pour une question qui CHOISIT.** « As-tu une source qui
+    parle de maintenance ? » appelle une réponse à UNE source ; exiger qu'elle
+    reprenne les quatre autres, c'est jeter la bonne réponse. Mesuré le
+    2026-09-16 : le modèle répondait « la source `interventions` », la ceinture
+    criait « fait(s) omis : exploitation, telemetrie, referentiel, facturation »
+    et servait les 2 200 caractères du catalogue entier. Quatre questions
+    différentes recevaient le même pavé, et l'agent passait pour incapable de
+    lire ses propres descriptions alors qu'il les avait lues.
+
+    L'interdit d'INVENTER, lui, ne bouge jamais : il porte sur tous les faits.
+    Ce qui est relâché, c'est l'obligation de tout redire — pas celle de ne
+    rien ajouter.
+
     Le message rendu est destiné à la **trace**, pas à l'utilisateur : ce qu'il
     lit, lui, est la réponse déterministe, qui ne dit pas qu'elle est un repli.
     """
@@ -840,10 +857,11 @@ def defaut_de_fondation(reponse: str, faits: str) -> str:
     if inventes:
         return "nom(s) qu'aucun fait ne porte : " + ", ".join(sorted(inventes))
     plat = replie(reponse)
-    omis = [n for n in _enumeres(faits) if f" {n} " not in plat]
+    exhaustifs = faits if a_enumerer is None else a_enumerer
+    omis = [n for n in _enumeres(exhaustifs) if f" {n} " not in plat]
     if omis:
         return "fait(s) omis : " + ", ".join(omis)
-    tues = [a for a in _actions(faits) if a not in plat]
+    tues = [a for a in _actions(exhaustifs) if a not in plat]
     if tues:
         return "action(s) omise(s) : " + ", ".join(tues)
     return _attribution_qui_ne_colle_pas(reponse, faits) or _consigne_qui_ne_colle_pas(
