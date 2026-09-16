@@ -15,6 +15,7 @@ voir **[EXPLOITATION.md](EXPLOITATION.md)**.
 - [5. Déclarer une première source](#5-déclarer-une-première-source)
 - [6. Construire les deux images](#6-construire-les-deux-images)
 - [7. Installer le service](#7-installer-le-service)
+- [7 bis. Le certificat, et l'exposition](#7-bis-le-certificat-et-lexposition)
 - [8. Créer le premier compte](#8-créer-le-premier-compte)
 - [9. Vérifier que tout marche](#9-vérifier-que-tout-marche)
 - [10. Ce qui manquait à cette procédure](#10-ce-qui-manquait-à-cette-procédure)
@@ -173,9 +174,53 @@ curl http://127.0.0.1:8000/health
 À partir d'ici, **`systemctl` commande**, et `daactl start|stop|restart` lui
 passe la main de lui-même (§10, manque n° 3).
 
-Le port n'est ouvert que sur `127.0.0.1`, exprès : le cookie de session est
-`Secure` dès que `DAA_SESSION_COOKIE_SECURE=true`, donc une exposition au réseau
-passe par une terminaison TLS devant (nginx, Caddy), pas par ce port.
+Le port `8000` n'est ouvert que sur `127.0.0.1`, et **il le reste** : ce qui est
+joignable depuis une autre machine, c'est la terminaison TLS de l'étape
+suivante. Ce port-ci ne sert plus qu'à la sonde et au diagnostic depuis la
+machine elle-même.
+
+## 7 bis. Le certificat, et l'exposition
+
+Le `compose` porte **deux** conteneurs : l'application, en clair sur
+`127.0.0.1:8000`, et un mandataire `nginx` qui termine TLS et la relaie. Le
+mandataire ne démarre pas sans son certificat — et `daactl start` refuse avant
+lui, plutôt que de laisser lire l'erreur dans les journaux de nginx.
+
+```bash
+sudo deploy/daactl tls          # autorité locale + certificat de cette machine
+```
+
+La commande fabrique, sous `/etc/data-analyst-agent/tls` (jamais dans le dépôt,
+clés en `0600 root`) :
+
+| Fichier | Ce que c'est |
+|---|---|
+| `ca.crt` | l'**autorité locale**. Public. C'est lui, et lui seul, qu'on installe une fois sur les postes |
+| `ca.key` | sa clé privée. Ne sort jamais de la machine |
+| `serveur.crt` / `serveur.key` | le certificat réellement présenté, signé par l'autorité, valable 825 jours |
+
+Le nom porté par le certificat est celui de la machine, et **toutes ses adresses
+IPv4 y sont ajoutées** : sur un parc sans DNS interne, on joint le service par
+son adresse, et un certificat sans SAN d'adresse serait refusé avant même
+l'avertissement d'autorité inconnue. Pour d'autres noms :
+`sudo deploy/daactl tls daa.interne.exemple autre-nom`.
+
+**Pourquoi une autorité locale, et pas Let's Encrypt ni un auto-signé nu** — le
+raisonnement complet est dans
+[EXPLOITATION.md § Exposer le service](EXPLOITATION.md#exposer-le-service),
+avec ce qu'il faut faire à la place si l'organisation a déjà une autorité
+interne ou un nom public.
+
+Puis démarrer, et vérifier que la chaîne entière répond :
+
+```bash
+sudo systemctl restart daa
+curl --cacert /etc/data-analyst-agent/tls/ca.crt https://$(hostname -f):8443/health
+```
+
+Le service écoute alors sur **8443** (HTTPS) et **8080** (clair, qui ne fait que
+rediriger vers 8443). Ces ports, le nom présenté, ce qu'on ouvre au pare-feu et
+ce qu'on n'ouvre pas : [EXPLOITATION.md](EXPLOITATION.md#exposer-le-service).
 
 ## 8. Créer le premier compte
 
@@ -197,8 +242,8 @@ est lisible par tout compte local (`ps`) et reste dans l'historique du shell.
 
 ## 9. Vérifier que tout marche
 
-Ouvrir **http://127.0.0.1:8000/**, se connecter, choisir la source `titanic`
-(ou la vôtre), et poser **deux** questions. Deux, et pas une : elles n'éprouvent
+Ouvrir **https://\<le-nom-de-la-machine\>:8443/**, se connecter, choisir la
+source `titanic` (ou la vôtre), et poser **deux** questions. Deux, et pas une : elles n'éprouvent
 pas la même moitié du système.
 
 **La première — la source répond.**
@@ -222,10 +267,17 @@ ci-dessous.
 En ligne de commande, la même vérification sans navigateur :
 
 ```bash
-curl -s http://127.0.0.1:8000/health          # {"status":"ok","version":"0.1.0"}
-sudo deploy/daactl status                     # le conteneur, et « healthy »
+# la chaîne entière, telle qu'un poste la voit
+curl --cacert /etc/data-analyst-agent/tls/ca.crt \
+     -s https://$(hostname -f):8443/health     # {"status":"ok","version":"0.1.0"}
+# l'application seule, sans traverser TLS : pour départager les deux quand ça coince
+curl -s http://127.0.0.1:8000/health
+sudo deploy/daactl status                     # les DEUX conteneurs, et « healthy »
 sudo deploy/daactl logs --tail 20
 ```
+
+Un certificat refusé par `curl` sans `--cacert` est **le comportement attendu** :
+l'autorité est locale, et rien ne la connaît tant qu'on ne l'a pas installée.
 
 ## 10. Ce qui manquait à cette procédure
 

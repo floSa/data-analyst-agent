@@ -22,12 +22,20 @@ services:
     env_file:
       - ${DAA_ENV_FILE:-/etc/data-analyst-agent/daa.env}
 
-    # 127.0.0.1 par défaut, et c'est une décision : le cookie de session est
-    # `Secure` en service, donc l'exposition publique passe par un terminaison
-    # TLS devant, pas par ce port. DAA_HTTP_BIND=0.0.0.0 pour l'ouvrir en
-    # connaissance de cause.
+    # 127.0.0.1, et ça le reste : ce qui expose, c'est le service `proxy`
+    # ci-dessous. Ce port-ci n'existe plus que pour la sonde et le diagnostic
+    # depuis la machine — `curl http://127.0.0.1:8000/health` sans traverser
+    # TLS. L'ouvrir (DAA_HTTP_BIND=0.0.0.0) publierait l'application en clair À
+    # CÔTÉ du mandataire, et rendrait tout le reste décoratif.
     ports:
       - "${DAA_HTTP_BIND:-127.0.0.1}:${DAA_HTTP_PORT:-8000}:8000"
+
+    # Les mandataires dont l'application croit les en-têtes. Par défaut le
+    # réseau du compose, et RIEN d'autre : c'est là, et seulement là, que vit le
+    # mandataire ci-dessous. Une valeur plus large — « tout le privé » — rendrait
+    # l'anti-force brute contournable par quiconque atteindrait le port 8000.
+    environment:
+      DAA_TRUSTED_PROXIES: ${DAA_TRUSTED_PROXIES:-${DAA_NETWORK_SUBNET:-172.30.0.0/24}}
 
     # LE point délicat, et la raison pour laquelle il n'y a qu'UN volume.
     #
@@ -72,6 +80,62 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  # LA TERMINAISON TLS. C'est elle, et elle seule, qui est joignable depuis
+  # l'extérieur de la machine.
+  #
+  # Dans le MÊME compose que l'application, et non à côté : les deux tombent et
+  # reviennent ensemble, une seule unité systemd les commande, et `app` n'a
+  # besoin d'aucun port publié pour être atteinte — le mandataire la joint par
+  # le réseau du projet, sous son nom de service.
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+
+    # Le port exposé. 8443 par défaut et non 443, parce que la machine héberge
+    # d'autres services et qu'un port privilégié est une ressource qu'on ne
+    # s'attribue pas en silence : DAA_HTTPS_PORT=443 est une décision qui se
+    # prend, pas un défaut qu'on subit.
+    ports:
+      - "${DAA_HTTPS_BIND:-0.0.0.0}:${DAA_HTTPS_PORT:-8443}:443"
+      - "${DAA_HTTPS_BIND:-0.0.0.0}:${DAA_HTTP_REDIRECT_PORT:-8080}:80"
+
+    volumes:
+      # Le gabarit de configuration. L'entrée de l'image le passe dans
+      # `envsubst` et écrit /etc/nginx/conf.d/default.conf.
+      - ./proxy:/etc/nginx/templates:ro
+      # Le certificat et sa clé, HORS DU DÉPÔT (cf. tls-cert.sh). En lecture
+      # seule : le mandataire n'a aucune raison d'y écrire.
+      - ${DAA_TLS_DIR:-/etc/data-analyst-agent/tls}:/etc/nginx/tls:ro
+
+    environment:
+      # Limite la substitution aux variables de ce projet : sans ce filtre,
+      # `envsubst` remplacerait aussi tout $NOM du gabarit qui se trouverait
+      # exister dans l'environnement du conteneur.
+      NGINX_ENVSUBST_FILTER: "^DAA_"
+      # Lue par le gabarit, pour la cible de la redirection http -> https.
+      DAA_HTTPS_PORT: ${DAA_HTTPS_PORT:-8443}
+
+    healthcheck:
+      # On interroge la sonde de l'application À TRAVERS TLS : c'est la chaîne
+      # entière qu'on veut voir verte, pas nginx tout seul. `--insecure` parce
+      # que le certificat est signé par une autorité locale, et que la sonde
+      # n'a pas à connaître le magasin de confiance des postes.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--no-check-certificate",
+             "--spider", "https://127.0.0.1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   # L'image du bac à sable. Ce service ne DÉMARRE jamais : il n'est là que pour
   # que `docker compose --profile outils build sandbox` sache la construire à
   # partir du contexte qui existe déjà, celui-là même que la CI construit. Le
@@ -82,3 +146,18 @@ services:
     build:
       context: ../src/data_analyst_agent/sandbox/image
     command: ["/bin/true"]
+
+# Le sous-réseau est FIXÉ, et ce n'est pas de la coquetterie : `app` ne croit
+# `X-Forwarded-For` que des adresses déclarées dans DAA_TRUSTED_PROXIES, et un
+# sous-réseau que Docker attribue au hasard rendrait cette déclaration
+# invérifiable — donc fausse un jour, en silence, avec pour seul symptôme un
+# anti-force brute qui compte tout le monde sur une seule adresse.
+#
+# À changer si 172.30.0.0/24 est déjà pris sur la machine
+# (`docker network inspect`) : DAA_NETWORK_SUBNET suffit, DAA_TRUSTED_PROXIES
+# suit tout seul.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${DAA_NETWORK_SUBNET:-172.30.0.0/24}

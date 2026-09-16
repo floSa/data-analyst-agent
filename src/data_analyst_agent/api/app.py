@@ -31,6 +31,7 @@ Lancement : uv run uvicorn data_analyst_agent.api.app:app
 
 from __future__ import annotations
 
+import logging
 import secrets
 from collections.abc import Callable
 from typing import Annotated
@@ -41,6 +42,11 @@ from pydantic import BaseModel
 
 import data_analyst_agent
 from data_analyst_agent.api import pages
+from data_analyst_agent.api.forwarded import (
+    adresse_client,
+    reseaux_de_confiance,
+    schema_client,
+)
 from data_analyst_agent.auth.accounts import AccountStore, normalize_login
 from data_analyst_agent.auth.current_user import CurrentUser, current_user
 from data_analyst_agent.auth.rate_limit import RateLimiter
@@ -55,6 +61,8 @@ from data_analyst_agent.orchestrator.conversations import (
 )
 from data_analyst_agent.orchestrator.graph import ChatAnswer, Orchestrator, SourceDuCatalogue
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
+
+logger = logging.getLogger("data_analyst_agent.api")
 
 # Les seules routes atteignables sans session. `/health` parce qu'une sonde n'en
 # a pas ; `/login` parce qu'il faut bien une porte pour en obtenir une.
@@ -147,6 +155,35 @@ class SourceDeTravailResponse(BaseModel):
     message: str
 
 
+def _annoncer_lexposition(reglages: Settings, reseaux: tuple) -> None:
+    """Dit, au démarrage, ce que l'application croit de son exposition.
+
+    Deux réglages se répondent et se trahissent en silence quand ils divergent :
+    le cookie `Secure`, qui suppose du HTTPS jusqu'au navigateur, et les
+    mandataires de confiance, sans lesquels tout le monde partage une adresse.
+    Les avoir dans le journal au démarrage évite le diagnostic long : un
+    « impossible de se connecter, la page revient au formulaire » en http avec
+    un cookie `Secure` ne laisse aucune trace ailleurs — le navigateur jette le
+    cookie sans rien dire à personne.
+    """
+    if reseaux:
+        logger.info(
+            "mandataires de confiance : %s — X-Forwarded-For y est cru",
+            ", ".join(str(reseau) for reseau in reseaux),
+        )
+    else:
+        logger.info(
+            "aucun mandataire de confiance : l'adresse de l'appelant est celle du pair. "
+            "Derrière une terminaison TLS, renseigner DAA_TRUSTED_PROXIES — sans quoi "
+            "l'anti-force brute compterait tout le monde sur l'adresse du mandataire."
+        )
+    if not reglages.session_cookie_secure:
+        logger.warning(
+            "DAA_SESSION_COOKIE_SECURE=false : le cookie de session part en clair. "
+            "Réglage de développement — en service, une terminaison TLS et `true`."
+        )
+
+
 def create_app(
     orchestrator_factory: Callable[[], Orchestrator] | None = None,
     settings: Settings | None = None,
@@ -186,6 +223,12 @@ def create_app(
         reglages.chat_rate_limit_requests,
         reglages.chat_rate_limit_window,
     )
+    # Compilés UNE fois : la résolution d'adresse a lieu à chaque connexion, et
+    # relire des CIDR à chaque requête serait payer un réglage qui ne bouge pas.
+    app.state.trusted_proxies = reseaux_de_confiance(reglages.trusted_proxies)
+    # L'avertissement d'exposition n'est dit qu'une fois (cf. plus bas).
+    app.state.exposition_signalee = False
+    _annoncer_lexposition(reglages, app.state.trusted_proxies)
 
     def get_orchestrator() -> Orchestrator:
         if app.state.orchestrator is None:
@@ -222,6 +265,43 @@ def create_app(
             path="/",
             secure=reglages.session_cookie_secure,
             max_age=int(reglages.session_absolute_timeout),
+        )
+
+    def avertir_si_cookie_secure_en_clair(request: Request) -> None:
+        """La seule panne de cette exposition qui ne laisse AUCUNE trace ailleurs.
+
+        Cookie `Secure` servi en clair : le navigateur reçoit le jeton
+        anti-CSRF, le jette sans rien dire, et renvoie un formulaire sans jeton.
+        L'application répond « Formulaire expiré. Recommencez. » — à quelqu'un
+        qui vient justement de le remplir pour la première fois. Aucune trace
+        côté serveur, aucune erreur côté navigateur, et un diagnostic qui prend
+        la journée. Cette ligne-là le rend immédiat.
+
+        Posée sur la PAGE de connexion et non sur la connexion réussie : dans la
+        configuration cassée, il n'y a jamais de connexion réussie — c'est
+        précisément le symptôme.
+
+        Le schéma est celui vu de l'APPELANT, pas celui de l'application :
+        derrière le mandataire elle est toujours en clair, et son propre schéma
+        ne dirait rien. D'où `X-Forwarded-Proto`, cru aux mêmes conditions que
+        l'adresse.
+
+        Une fois par process : c'est un défaut de configuration, pas un
+        événement. Le répéter à chaque ouverture de la page noierait le journal
+        des requêtes sous l'avertissement.
+        """
+        if app.state.exposition_signalee or not reglages.session_cookie_secure:
+            return
+        if schema_client(request, app.state.trusted_proxies) == "https":
+            return
+        app.state.exposition_signalee = True
+        logger.warning(
+            "page de connexion servie en clair à %s alors que le cookie de session est "
+            "`Secure` : le navigateur le jettera, et le formulaire reviendra avec "
+            "« %s ». Soit la terminaison TLS manque, soit elle ne pose pas "
+            "X-Forwarded-Proto, soit son réseau n'est pas dans DAA_TRUSTED_PROXIES.",
+            adresse_client(request, app.state.trusted_proxies),
+            ECHEC_FORMULAIRE,
         )
 
     def poser_cookies_de_session(reponse: Response, jeton: str, session: Session) -> None:
@@ -307,6 +387,7 @@ def create_app(
 
     @app.get("/login", response_class=HTMLResponse)
     def afficher_connexion(request: Request) -> Response:
+        avertir_si_cookie_secure_en_clair(request)
         deja = app.state.sessions.resolve(request.cookies.get(reglages.session_cookie_name))
         return RedirectResponse("/", status_code=302) if deja else page_de_connexion()
 
@@ -317,7 +398,7 @@ def create_app(
         motdepasse: Annotated[str, Form()],
         csrf: Annotated[str, Form()] = "",
     ) -> Response:
-        adresse = request.client.host if request.client else "inconnue"
+        adresse = adresse_client(request, app.state.trusted_proxies)
         # Forme canonique dès la porte : sans ça, l'anti-force brute compterait
         # `alice`, `Alice` et ` alice ` sur trois compteurs distincts, et le
         # verrouillage se contournerait en changeant la casse.

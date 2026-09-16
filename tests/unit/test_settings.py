@@ -317,3 +317,36 @@ def test_chaque_reglage_est_documente_dans_env_example():
     attendus = {f"DAA_{nom.upper()}" for nom in Settings.model_fields}
 
     assert not attendus - cites
+
+
+# -- mandataires de confiance --------------------------------------------------
+
+
+def test_aucun_mandataire_nest_cru_par_defaut():
+    """Le défaut sûr : sans déclaration, `X-Forwarded-For` ne vaut rien.
+
+    L'inverse offrirait à n'importe qui le choix du compteur d'anti-force brute
+    sur lequel inscrire ses échecs — donc l'exemption du verrouillage.
+    """
+    assert make_settings().trusted_proxies == []
+
+
+def test_les_mandataires_secrivent_separes_par_des_virgules(monkeypatch):
+    """Un fichier d'environnement s'écrit à la main : exiger du JSON y ferait échouer
+    le DÉMARRAGE sur une valeur parfaitement lisible."""
+    monkeypatch.setenv("DAA_TRUSTED_PROXIES", "172.30.0.0/24, 10.1.3.9")
+
+    assert Settings(_env_file=None).trusted_proxies == ["172.30.0.0/24", "10.1.3.9"]
+
+
+def test_un_seul_mandataire_sans_virgule(monkeypatch):
+    monkeypatch.setenv("DAA_TRUSTED_PROXIES", "172.30.0.0/24")
+
+    assert Settings(_env_file=None).trusted_proxies == ["172.30.0.0/24"]
+
+
+def test_une_valeur_vide_ne_declare_aucun_mandataire(monkeypatch):
+    """`DAA_TRUSTED_PROXIES=` laissé vide dans le fichier ne doit pas déclarer `['']`."""
+    monkeypatch.setenv("DAA_TRUSTED_PROXIES", "")
+
+    assert Settings(_env_file=None).trusted_proxies == []

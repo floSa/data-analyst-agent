@@ -5,10 +5,11 @@ import os
 import warnings
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from dotenv import dotenv_values
-from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Nom du fichier d'environnement, relu à CHAQUE lecture (jamais figé dans un
 # argument par défaut ni dans `model_config`) : c'est le seul point par lequel
@@ -250,6 +251,18 @@ class Settings(BaseSettings):
     login_max_failures: int = 5
     login_lockout_seconds: float = 300.0
 
+    # --- Mandataires de confiance (terminaison TLS devant l'application) ---
+    # Les réseaux depuis lesquels `X-Forwarded-For` et `X-Forwarded-Proto` sont
+    # crus. VIDE par défaut, et ce défaut est le sûr : ces en-têtes sont posés
+    # par un client, donc falsifiables, et les croire sans condition offrirait à
+    # un attaquant le choix du compteur d'anti-force brute sur lequel inscrire
+    # ses échecs. Cf. `api/forwarded.py`.
+    #
+    # À renseigner UNIQUEMENT avec le réseau du mandataire — celui du compose,
+    # pas « tout le privé ». Liste séparée par des virgules, adresse nue ou CIDR :
+    #     DAA_TRUSTED_PROXIES=172.30.0.0/24
+    trusted_proxies: Annotated[list[str], NoDecode] = []
+
     # --- Surface HTTP exposée (docs/AUDIT-2026-09.md §6.3) ---
     # Documentation interactive (/docs, /redoc, /openapi.json). ÉTEINTE par
     # défaut : elle décrit la surface d'attaque à qui atteint le port, et ses
@@ -295,6 +308,21 @@ class Settings(BaseSettings):
     # que mise en attente indéfinie : un utilisateur préfère un refus net à un
     # onglet qui tourne. Tenu sous le budget d'une requête HTTP.
     sandbox_queue_timeout: float = 60.0
+
+    @field_validator("trusted_proxies", mode="before")
+    @classmethod
+    def _liste_separee_par_virgules(cls, valeur):
+        """Accepte `a,b` en plus du JSON, parce qu'un fichier d'environnement s'écrit à la main.
+
+        `NoDecode` désactive le décodage JSON que pydantic-settings applique
+        d'office aux champs composés : sans lui, `DAA_TRUSTED_PROXIES=172.30.0.0/24`
+        ferait échouer le DÉMARRAGE sur une erreur de parsing, là où la valeur
+        est parfaitement lisible. Une liste Python passe telle quelle : les tests
+        et le code appelant ne sont pas obligés d'écrire une chaîne.
+        """
+        if not isinstance(valeur, str):
+            return valeur
+        return [morceau.strip() for morceau in valeur.split(",") if morceau.strip()]
 
     @model_validator(mode="after")
     def _reprendre_url_du_moteur_depreciee(self) -> "Settings":

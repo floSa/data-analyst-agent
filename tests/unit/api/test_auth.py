@@ -8,7 +8,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from data_analyst_agent.api.app import ECHEC_CONNEXION, create_app
+from data_analyst_agent.api.app import ECHEC_CONNEXION, ECHEC_FORMULAIRE, create_app
 from data_analyst_agent.auth.accounts import AccountStore
 from data_analyst_agent.auth.sessions import SessionStore
 from data_analyst_agent.config import Settings
@@ -433,6 +433,174 @@ def test_verrouillage_par_adresse_sur_dautres_comptes(tmp_path):
 # L'EXPIRATION du verrou n'est pas testée ici : elle demande de faire avancer
 # l'horloge, ce que `tests/unit/auth/test_throttle.py` fait avec une horloge
 # pilotée. La reproduire à travers l'API n'ajouterait qu'un `sleep` fragile.
+
+
+# -- anti-force brute DERRIÈRE UNE TERMINAISON TLS --------------------------------
+#
+# C'est là que le compteur par adresse se perd le plus facilement : toutes les
+# requêtes arrivent du mandataire, donc d'une seule adresse, et cinq mots de
+# passe ratés par n'importe qui verrouilleraient tout le monde. Les deux tests
+# qui suivent mesurent la même chose dans les deux configurations — mandataire
+# déclaré ou non — parce que seul l'écart entre les deux prouve que la
+# déclaration sert à quelque chose.
+
+MANDATAIRE = ("172.30.0.2", 45678)
+RESEAU_DU_MANDATAIRE = "172.30.0.0/24"
+
+
+def echouer_depuis(client: TestClient, reglages: Settings, adresse: str, login: str) -> int:
+    """Une tentative ratée, telle que le mandataire la présente à l'application."""
+    client.get("/login", headers={"X-Forwarded-For": adresse})
+    reponse = client.post(
+        "/login",
+        data={
+            "login": login,
+            "motdepasse": "un-mot-de-passe-quelconque",
+            "csrf": client.cookies.get(reglages.csrf_cookie_name, ""),
+        },
+        headers={"X-Forwarded-For": adresse},
+    )
+    return reponse.status_code
+
+
+def test_derriere_le_mandataire_deux_adresses_ne_se_confondent_pas(tmp_path):
+    """Cinq échecs d'une machine ne doivent rien coûter à la machine d'à côté.
+
+    Chaque adresse vise des logins DIFFÉRENTS : sinon c'est le compteur par
+    compte qui verrouillerait, et le test ne dirait rien du compteur par adresse.
+    """
+    reglages = reglages_de_test(
+        tmp_path, login_max_failures=5, trusted_proxies=[RESEAU_DU_MANDATAIRE]
+    )
+    client = TestClient(
+        create_app(orchestrator_factory=FakeOrchestrator, settings=reglages),
+        base_url=BASE_URL,
+        client=MANDATAIRE,
+    )
+
+    for i in range(5):
+        assert echouer_depuis(client, reglages, "203.0.113.7", f"victime-a{i}") == 401
+
+    # la première adresse est bien arrêtée : le verrouillage fonctionne toujours
+    assert echouer_depuis(client, reglages, "203.0.113.7", "victime-a-suivante") == 429
+    # la seconde n'a rien fait et ne paie rien : cinq tentatives de plus, aucune
+    # refusée pour cause de verrou
+    for i in range(5):
+        assert echouer_depuis(client, reglages, "198.51.100.4", f"victime-b{i}") == 401
+
+
+def test_sans_mandataire_declare_les_deux_adresses_se_confondent(tmp_path):
+    """Le témoin. Sans déclaration, l'application ne voit que le mandataire.
+
+    Ce test dit ce qui se passe si l'on pose la terminaison TLS et qu'on oublie
+    `DAA_TRUSTED_PROXIES` : la seconde adresse est verrouillée par les échecs de
+    la première, et personne ne se connecte plus.
+    """
+    reglages = reglages_de_test(tmp_path, login_max_failures=5)
+    client = TestClient(
+        create_app(orchestrator_factory=FakeOrchestrator, settings=reglages),
+        base_url=BASE_URL,
+        client=MANDATAIRE,
+    )
+
+    for i in range(5):
+        echouer_depuis(client, reglages, "203.0.113.7", f"victime-a{i}")
+
+    assert echouer_depuis(client, reglages, "198.51.100.4", "victime-b") == 429
+
+
+def test_le_mandataire_ne_peut_pas_etre_contourne_par_un_appelant_direct(tmp_path):
+    """Un `X-Forwarded-For` posé par qui n'est pas mandataire ne choisit aucun compteur.
+
+    Sans ce refus, un attaquant changerait d'adresse annoncée à chaque essai et
+    ne rencontrerait jamais le verrou.
+    """
+    reglages = reglages_de_test(
+        tmp_path, login_max_failures=3, trusted_proxies=[RESEAU_DU_MANDATAIRE]
+    )
+    client = TestClient(
+        create_app(orchestrator_factory=FakeOrchestrator, settings=reglages),
+        base_url=BASE_URL,
+        client=("203.0.113.7", 45678),  # pas dans le réseau du mandataire
+    )
+
+    for i in range(3):
+        echouer_depuis(client, reglages, f"10.0.0.{i}", f"victime-{i}")
+
+    assert echouer_depuis(client, reglages, "10.0.0.99", "encore-une-victime") == 429
+
+
+# -- cookie `Secure` et connexion en clair ----------------------------------------
+
+
+def test_en_clair_le_cookie_secure_rend_la_connexion_impossible(tmp_path):
+    """D'abord la panne elle-même, pour qu'on sache de quoi l'avertissement parle.
+
+    Le navigateur — ici httpx, qui applique la même règle — jette un cookie
+    `Secure` reçu en clair. Le formulaire repart donc sans jeton, et l'on reçoit
+    « Formulaire expiré » à la PREMIÈRE tentative, avec le bon mot de passe.
+    """
+    reglages = reglages_de_test(tmp_path, session_cookie_secure=True)
+    mot_de_passe = creer_compte(reglages)
+    app = create_app(orchestrator_factory=FakeOrchestrator, settings=reglages)
+    client = TestClient(app, base_url="http://testserver")
+
+    reponse = connecter(client, reglages, LOGIN, mot_de_passe, follow_redirects=False)
+
+    assert reponse.status_code == 403
+    assert ECHEC_FORMULAIRE in reponse.text
+
+
+def test_la_page_en_clair_avec_cookie_secure_est_signalee(tmp_path, caplog):
+    """La panne ci-dessus ne laisse AUCUNE autre trace : ce journal est le seul point de départ."""
+    reglages = reglages_de_test(tmp_path, session_cookie_secure=True)
+    app = create_app(orchestrator_factory=FakeOrchestrator, settings=reglages)
+    client = TestClient(app, base_url="http://testserver")
+
+    with caplog.at_level("WARNING", logger="data_analyst_agent.api"):
+        client.get("/login")
+
+    assert "`Secure`" in caplog.text
+    assert "DAA_TRUSTED_PROXIES" in caplog.text
+
+
+def test_lavertissement_nest_dit_quune_fois(tmp_path, caplog):
+    """C'est un défaut de configuration, pas un événement : une ligne, pas une par requête."""
+    reglages = reglages_de_test(tmp_path, session_cookie_secure=True)
+    app = create_app(orchestrator_factory=FakeOrchestrator, settings=reglages)
+    client = TestClient(app, base_url="http://testserver")
+
+    with caplog.at_level("WARNING", logger="data_analyst_agent.api"):
+        for _ in range(3):
+            client.get("/login")
+
+    assert caplog.text.count("`Secure`") == 1
+
+
+def test_une_page_annoncee_https_par_le_mandataire_ne_signale_rien(tmp_path, caplog):
+    """La configuration en service : clair jusqu'à l'application, TLS jusqu'au navigateur."""
+    reglages = reglages_de_test(
+        tmp_path, session_cookie_secure=True, trusted_proxies=[RESEAU_DU_MANDATAIRE]
+    )
+    app = create_app(orchestrator_factory=FakeOrchestrator, settings=reglages)
+    client = TestClient(app, base_url="http://testserver", client=MANDATAIRE)
+
+    with caplog.at_level("WARNING", logger="data_analyst_agent.api"):
+        client.get("/login", headers={"X-Forwarded-Proto": "https"})
+
+    assert "`Secure`" not in caplog.text
+
+
+def test_le_cookie_en_clair_assume_ne_signale_rien(tmp_path, caplog):
+    """`DAA_SESSION_COOKIE_SECURE=false` est un choix : on ne le reproche pas à qui l'a fait."""
+    reglages = reglages_de_test(tmp_path, session_cookie_secure=False)
+    app = create_app(orchestrator_factory=FakeOrchestrator, settings=reglages)
+    client = TestClient(app, base_url="http://testserver")
+
+    with caplog.at_level("WARNING", logger="data_analyst_agent.api"):
+        client.get("/login")
+
+    assert "`Secure`" not in caplog.text
 
 
 def test_connexion_reussie_efface_le_compteur(tmp_path):

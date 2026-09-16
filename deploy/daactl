@@ -8,6 +8,7 @@
 # `daactl start` font donc exactement la même chose.
 #
 #     sudo deploy/daactl init             # cree l'arborescence du dossier de donnees
+#     sudo deploy/daactl tls [nom…]       # (re)fabrique le certificat du mandataire
 #     sudo deploy/daactl start|stop|restart|status|logs
 #     sudo deploy/daactl build            # (re)construit l'image de l'application
 #     sudo deploy/daactl sandbox          # construit l'image du bac à sable si absente
@@ -101,6 +102,30 @@ arborescence() {
         "$DAA_DATA_DIR/models"
 }
 
+# Le mandataire ne démarre pas sans sa paire de fichiers, et nginx qui refuse de
+# se lancer donne un message que personne ne lit au bon endroit. On le dit ici,
+# avant, avec la commande qui répare.
+certificat() {
+    local dossier="${DAA_TLS_DIR:-/etc/data-analyst-agent/tls}"
+    [[ -r "$dossier/serveur.crt" && -r "$dossier/serveur.key" ]] \
+        || mourir "aucun certificat sous $dossier — \`sudo $0 tls\` le fabrique."
+}
+
+# L'échéance, pendant qu'on y est : un certificat expiré ne casse rien côté
+# serveur, il casse la confiance côté navigateur, et sans avertissement
+# préalable on l'apprend des utilisateurs.
+echeance_du_certificat() {
+    local dossier="${DAA_TLS_DIR:-/etc/data-analyst-agent/tls}"
+    local crt="$dossier/serveur.crt"
+    [[ -r "$crt" ]] || return 0
+    command -v openssl >/dev/null 2>&1 || return 0
+    if ! openssl x509 -in "$crt" -noout -checkend 2592000 >/dev/null 2>&1; then
+        echo "daactl: ATTENTION — le certificat expire dans moins de 30 jours" >&2
+        echo "  $(openssl x509 -in "$crt" -noout -enddate)" >&2
+        echo "  \`sudo $0 tls\` le renouvelle sans toucher aux postes." >&2
+    fi
+}
+
 case "${1:-}" in
     init)
         # Créer l'arborescence AVANT le premier démarrage, pour pouvoir y
@@ -125,11 +150,15 @@ case "${1:-}" in
             echo "  L'application démarrera sans aucune source à interroger." >&2
             echo "  Cf. docs/INSTALLATION.md, etape 5 (declarer une premiere source)." >&2
         fi
+        certificat
+        echeance_du_certificat
         sandbox_si_absente
-        # `--wait` rend la main quand la sonde /health répond, pas quand le
-        # conteneur est créé : l'unité systemd peut donc dépendre de ce retour.
+        # `--wait` rend la main quand les sondes répondent, pas quand les
+        # conteneurs sont créés : l'unité systemd peut donc dépendre de ce
+        # retour, et la sonde du mandataire traverse TLS jusqu'à /health.
         compose up --detach --wait
-        echo "en service sur http://${DAA_HTTP_BIND:-127.0.0.1}:${DAA_HTTP_PORT:-8000}/"
+        echo "en service sur https://$(hostname -f 2>/dev/null || hostname):${DAA_HTTPS_PORT:-8443}/"
+        echo "  (en clair, depuis la machine seulement : http://${DAA_HTTP_BIND:-127.0.0.1}:${DAA_HTTP_PORT:-8000}/)"
         ;;
     stop)
         par_systemd stop
@@ -152,6 +181,10 @@ case "${1:-}" in
         ;;
     sandbox)
         sandbox_si_absente
+        ;;
+    tls)
+        shift
+        exec "$DEPLOY_DIR/tls-cert.sh" "$@"
         ;;
     users)
         shift
