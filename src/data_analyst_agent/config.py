@@ -23,6 +23,12 @@ logger = logging.getLogger("data_analyst_agent.config")
 URL_MOTEUR_DEPRECIEE = "DAA_OLLAMA_BASE_URL"
 URL_MOTEUR = "DAA_LLM_BASE_URL"
 
+# Même histoire pour le plafond du dictionnaire : il ne bornait que le prompt de
+# l'agent SQL, il borne maintenant celui de tout agent qui lit le dictionnaire
+# d'une source. Le nom d'avant survit en lecture seule.
+PLAFOND_DICTIONNAIRE_DEPRECIE = "DAA_RETRIEVAL_DICTIONARY_MAX_CHARS"
+PLAFOND_DICTIONNAIRE = "DAA_DICTIONARY_MAX_CHARS"
+
 
 class Settings(BaseSettings):
     """Réglages globaux, surchargeables par variables d'environnement (``DAA_*``) ou ``.env``."""
@@ -69,25 +75,38 @@ class Settings(BaseSettings):
     retrieval_max_rows: int = 200
     # Borne d'allers-retours LLM (tools compris) : coupe les boucles infinies.
     retrieval_request_limit: int = 10
-    # Plafond, EN CARACTÈRES, du dictionnaire de source injecté dans le prompt
-    # de l'agent SQL (cf. `agents/retrieval/dictionnaire`). Le dictionnaire est
-    # du Markdown libre : celui d'un client peut peser dix fois celui de la
-    # démonstration, et le prompt de cet agent repart en ENTIER à chaque
-    # aller-retour de sa boucle de correction — c'est le prompt du système qui
-    # se paie le plus de fois par tour.
+    # --- Dictionnaire de source, injecté dans les prompts -------------------
+    # Plafond, EN CARACTÈRES, du dictionnaire d'une source recopié dans le
+    # prompt système de l'agent qui va s'en servir (cf. `agents/dictionnaire`).
+    #
+    # UN SEUL plafond pour DEUX lecteurs — celui qui écrit le SQL et celui qui
+    # écrit le Python — et c'est un choix mesuré, pas une économie. Ce nombre ne
+    # règle pas un agent : il règle ce qu'une SOURCE est capable de transmettre
+    # de son sens. Deux valeurs distinctes diraient qu'un même dictionnaire est
+    # amputé dans un prompt et entier dans l'autre — donc que « combien de
+    # recharges ? » et « trace-moi les recharges » ne s'appuient pas sur le même
+    # texte, alors que la règle de comptage est la même. Les deux prompts pèsent
+    # d'ailleurs le même ordre de grandeur — mesuré au `/tokenize` de vLLM, avec
+    # le dictionnaire de `telemetrie` : 2 580 tokens pour l'agent SQL, 2 199
+    # pour celui d'analyse — et les deux boucles sont bornées
+    # (`retrieval_request_limit` à 10, `analysis_max_attempts` à 3).
     #
     # 8 000 est choisi AU-DESSUS du plus gros dictionnaire du catalogue de
     # démonstration (6 797 caractères, `exploitation`) : les cinq passent
     # entiers, et la coupe reste un filet plutôt qu'un régime. Mesuré contre le
-    # tokeniseur de vLLM, 8 000 caractères de Markdown français valent ~2 500
-    # tokens — le plafond borne donc le prompt de cet agent à ~3 350 tokens,
-    # pour une fenêtre servie de 32 768.
+    # tokeniseur de vLLM, 8 000 caractères de ce Markdown valent ~2 550 tokens :
+    # le plafond borne donc le prompt système de l'agent SQL à ~3 800 tokens et
+    # celui de l'agent d'analyse à ~3 400, pour une fenêtre servie de 32 768.
     #
     # En caractères et non en tokens, comme `context_token_budget` compte des
     # caractères : il n'y a pas de tokeniseur côté client, et en embarquer un
     # ferait dépendre ce plafond du modèle servi.
     # 0 = pas de plafond (le dictionnaire passe entier, quelle que soit sa taille).
-    retrieval_dictionary_max_chars: int = 8000
+    dictionary_max_chars: int = 8000
+    # Ancien nom, du temps où seul l'agent SQL lisait le dictionnaire. Gardé en
+    # lecture pour ne pas casser un `.env` en service ; à retirer une fois les
+    # fichiers migrés.
+    retrieval_dictionary_max_chars: int | None = None
 
     # Relevé d'une source — volumétrie et période LUES dedans (cf.
     # `agents/retrieval/faits.py`). Quatre bornes, parce que sans elles un
@@ -301,6 +320,32 @@ class Settings(BaseSettings):
             message = (
                 f"{URL_MOTEUR_DEPRECIEE} est dépréciée : renommez-la {URL_MOTEUR}. "
                 "Sa valeur est reprise pour cette exécution."
+            )
+        warnings.warn(message, DeprecationWarning, stacklevel=2)
+        logger.warning(message)
+        return self
+
+    @model_validator(mode="after")
+    def _reprendre_le_plafond_deprecie(self) -> "Settings":
+        """Même mécanique pour le plafond du dictionnaire, et pour la même raison.
+
+        Le réglage existait sous un nom d'agent parce qu'un seul agent lisait le
+        dictionnaire. Un `.env` posé entre-temps ne doit pas cesser d'agir parce
+        que le second lecteur est arrivé — un plafond qui redevient son défaut
+        en silence, c'est un contexte qui gonfle sans que personne l'ait décidé.
+        """
+        if self.retrieval_dictionary_max_chars is None:
+            return self
+        if "dictionary_max_chars" in self.model_fields_set:
+            message = (
+                f"{PLAFOND_DICTIONNAIRE_DEPRECIE} est déprécié et IGNORÉ ici : "
+                f"{PLAFOND_DICTIONNAIRE} est renseigné et l'emporte. Retirez l'ancien."
+            )
+        else:
+            self.dictionary_max_chars = self.retrieval_dictionary_max_chars
+            message = (
+                f"{PLAFOND_DICTIONNAIRE_DEPRECIE} est déprécié : renommez-le "
+                f"{PLAFOND_DICTIONNAIRE}. Sa valeur est reprise pour cette exécution."
             )
         warnings.warn(message, DeprecationWarning, stacklevel=2)
         logger.warning(message)

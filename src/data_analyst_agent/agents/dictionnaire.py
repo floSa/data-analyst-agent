@@ -1,4 +1,12 @@
-"""Ce que l'agent SQL reçoit du dictionnaire de sa source, et ce qu'il en perd.
+"""Ce qu'un agent reçoit du dictionnaire de sa source, et ce qu'il en perd.
+
+**Deux lecteurs, un seul module.** Celui qui écrit le SQL et celui qui écrit le
+PYTHON ont besoin du même texte, avec la même règle de coupe et le même
+plafond ; ils n'en ont pas besoin avec les mêmes verbes. La machinerie est donc
+partagée — ``preparer`` taille, ``bloc_de_prompt`` colle — et l'EN-TÊTE est
+passé par l'appelant : ``EN_TETE_SQL`` parle de requête et de ``WHERE``,
+``EN_TETE_CODE`` de ``mean()`` et de courbe. Un en-tête unique aurait dû
+choisir un vocabulaire, et il aurait parlé à côté pour l'un des deux.
 
 Le dictionnaire était servi à l'agent SYSTÈME — celui qui répond « que signifie
 cette colonne ? » — et pas à celui qui écrit la requête. Mesuré sur le catalogue
@@ -6,6 +14,16 @@ de démonstration, dans une même conversation et à un tour d'écart : l'agent 
 « seules les sessions au statut `T` ont abouti », puis écrit ``WHERE statut =
 'E'`` et rend 1 405 au lieu de 42 281. Pas d'exception, pas de log — un chiffre
 faux et plausible, c'est-à-dire exactement ce contre quoi un dictionnaire existe.
+
+**Le même défaut, une seconde fois, et en pire.** Réparé pour l'agent SQL, il
+restait entier pour l'agent d'ANALYSE — celui qui écrit le code exécuté dans le
+bac à sable. Mesuré sur ``telemetrie`` (``puissance_kw = -1`` est une sentinelle,
+``0`` une puissance vraie), « trace-moi la puissance moyenne par heure » : **0
+fois sur 5** le code écarte la sentinelle, et la réponse cite 66,32 kW là où la
+moyenne juste vaut 68,33. Pire que le SQL pour une raison tenant au support : une
+requête fausse laisse son texte dans la conversation, où on peut la relire ligne
+à ligne ; un ``df['puissance_kw'].mean()`` faux ne laisse qu'un nombre, ou une
+courbe — et personne ne relit une courbe.
 
 **Pourquoi le prompt système et pas un outil.** Un sixième outil
 (``lire_le_dictionnaire``) n'aurait rien réparé : le défaut n'est pas que le
@@ -81,11 +99,11 @@ from dataclasses import dataclass
 # moins lisible, pas plus.
 TITRE = re.compile(r"^(#{1,2}) +(.*)$", re.MULTILINE)
 
-# Ce qu'on écrit au-dessus du dictionnaire dans le prompt. La consigne compte
-# autant que le texte : recopier un Markdown descriptif sans dire qu'il FAIT
-# AUTORITÉ laisse le modèle arbitrer entre ce qu'il lit et ce qu'il croit, et
-# c'est l'arbitrage qu'il rate.
-EN_TETE = """
+# Ce qu'on écrit au-dessus du dictionnaire dans le prompt de l'agent SQL. La
+# consigne compte autant que le texte : recopier un Markdown descriptif sans
+# dire qu'il FAIT AUTORITÉ laisse le modèle arbitrer entre ce qu'il lit et ce
+# qu'il croit, et c'est l'arbitrage qu'il rate.
+EN_TETE_SQL = """
 DICTIONNAIRE DE LA SOURCE — il fait autorité sur le SENS des données, et il
 prime sur ce que tu crois savoir. Le schéma dit les TYPES ; lui dit ce que les
 valeurs VEULENT DIRE : les codes, les valeurs sentinelles, les unités, et les
@@ -110,6 +128,55 @@ demande.
 
 Un filtre oublié et un filtre de trop rendent le même genre de résultat : un
 chiffre faux et plausible, que personne ne verra passer.
+""".strip()
+
+
+# Le même contrat, pour celui qui écrit le PYTHON. Ce n'est pas une traduction
+# de politesse : le vocabulaire du texte décide de ce que le modèle y reconnaît.
+# Un en-tête qui dit « avant d'écrire ta requête » devant un agent qui n'écrit
+# jamais de requête lui demande de transposer, et la transposition est
+# exactement l'opération qu'il rate — il lit « à écarter de toute moyenne »,
+# pense SQL, et écrit `df['x'].mean()` sans filtre.
+#
+# Deux choses de plus ici, qui n'ont pas lieu d'être côté SQL :
+#
+# - la MOYENNE est nommée avec ses cousines (`mean`, `sum`, `plot`, `describe`,
+#   `resample`, `groupby`), parce que le piège d'une sentinelle se referme sur
+#   n'importe laquelle et que le modèle ne généralise pas de l'une à l'autre ;
+# - le GRAPHIQUE est traité pour ce qu'il est : un résultat que personne ne
+#   relit. Une courbe fausse se regarde sans déplaisir, là où un tableau de
+#   chiffres faux finit par se faire remarquer.
+EN_TETE_CODE = """
+DICTIONNAIRE DE LA SOURCE — il fait autorité sur le SENS des données, et il
+prime sur ce que tu crois savoir. Le schéma et les CSV montés sous /data/
+donnent les COLONNES et leurs types ; lui seul dit ce que les VALEURS veulent
+dire : les codes, les valeurs sentinelles, les unités.
+
+Avant d'écrire ton code, lis-le EN ENTIER et cherche ce qu'il prescrit POUR LA
+GRANDEUR QU'ON TE DEMANDE. Applique ce qu'il dit, exactement ce qu'il dit :
+
+- une VALEUR SENTINELLE (-1, 999, une date à 1900…) n'est pas une mesure :
+  c'est l'absence de mesure, écrite dans la colonne. Elle doit être écartée
+  AVANT tout calcul — mean, sum, min, max, median, describe, groupby, resample
+  — et avant tout tracé. `dropna()` ne la voit pas : ce n'est pas un NaN, c'est
+  un nombre, et pandas la moyennera sans broncher ;
+- n'écarte QUE ce que le dictionnaire désigne comme sentinelle. Une valeur qui
+  lui ressemble peut être une mesure VRAIE — un 0 qui dit « à l'arrêt » est une
+  donnée, pas un trou — et la jeter fausse le résultat dans l'autre sens ;
+- respecte ses exceptions, et lis-les jusqu'au bout : un code qu'il faut
+  écarter d'un COMPTAGE peut devoir être gardé dans une SOMME ;
+- n'invente aucune règle qu'il ne porte pas, et n'en généralise aucune d'une
+  colonne à une autre.
+
+ÉPREUVE À PASSER AVANT DE FILTRER, ET AVANT DE NE PAS FILTRER : pour chaque
+colonne que ton code agrège ou trace, tu dois pouvoir citer ce que le
+dictionnaire en dit. S'il la dit porteuse d'une sentinelle, ton code doit
+l'écarter explicitement ; s'il n'en dit rien, ne filtre pas.
+
+Écris ce filtre en clair dans ton code, avec un commentaire qui cite la règle :
+le code est relu, la courbe ne l'est pas. Un graphique faux ne lève aucune
+exception, ne déclenche aucun essai de correction, et se regarde sans déplaisir
+pendant des mois.
 """.strip()
 
 
@@ -202,20 +269,31 @@ def _avis(ecartees: tuple[str, ...], budget: int) -> str:
     Un seul texte pour les deux destinataires, et c'est voulu : ce que le
     modèle n'a pas lu est exactement ce que l'utilisateur doit savoir qu'il n'a
     pas lu.
+
+    L'avis ne nomme PAS l'agent qui a lu, et c'est un choix : ``preparer`` taille
+    le même texte pour les deux, l'utilisateur n'a pas à savoir lequel des deux
+    l'a reçu tronqué, et une phrase qui dit « l'agent SQL » quand c'est le code
+    d'analyse qui a été amputé serait fausse pour l'un des deux appels.
     """
     return (
-        f"Dictionnaire tronqué : {len(ecartees)} section(s) non transmise(s) à "
-        f"l'agent SQL — {', '.join(ecartees)} — le dictionnaire dépasse "
-        f"{budget} caractères (réglage DAA_RETRIEVAL_DICTIONARY_MAX_CHARS). "
-        "Les règles qu'elles portent ne sont PAS appliquées à la requête."
+        f"Dictionnaire tronqué : {len(ecartees)} section(s) non transmise(s) au "
+        f"modèle — {', '.join(ecartees)} — le dictionnaire dépasse "
+        f"{budget} caractères (réglage DAA_DICTIONARY_MAX_CHARS). "
+        "Les règles qu'elles portent ne sont PAS appliquées au résultat."
     )
 
 
-def bloc_de_prompt(injecte: DictionnaireInjecte) -> str:
-    """Le fragment prêt à coller au prompt système ("" s'il n'y a rien à dire)."""
+def bloc_de_prompt(injecte: DictionnaireInjecte, en_tete: str) -> str:
+    """Le fragment prêt à coller au prompt système ("" s'il n'y a rien à dire).
+
+    ``en_tete`` est passé et non choisi ici : le module ne sait pas lequel de
+    ses deux lecteurs l'appelle, et un défaut le ferait deviner. Un en-tête qui
+    parle de requêtes à celui qui écrit du pandas est une consigne perdue, et
+    elle se perdrait en silence.
+    """
     if not injecte.texte:
         return ""
-    morceaux = [EN_TETE, injecte.texte]
+    morceaux = [en_tete, injecte.texte]
     if injecte.avis:
         # Dans le prompt AUSSI : un modèle qui sait son dictionnaire incomplet
         # peut le dire dans sa réponse ; un modèle qui l'ignore affirme.

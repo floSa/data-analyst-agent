@@ -187,7 +187,7 @@ def test_un_dictionnaire_trop_long_est_coupe_et_l_amputation_remonte(adapter):
         "Combien ?",
         adapter=adapter,
         model=model,
-        settings=make_settings(retrieval_dictionary_max_chars=60),
+        settings=make_settings(dictionary_max_chars=60),
         dictionary=DICO_DE_SOURCE,
     )
     assert outcome.dictionary_notice

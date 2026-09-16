@@ -1,4 +1,4 @@
-"""La règle qui décide ce que l'agent SQL lit du dictionnaire de sa source.
+"""La règle qui décide ce qu'un agent lit du dictionnaire de sa source.
 
 Ce qui est tenu ici : le dictionnaire passe ENTIER tant qu'il tient dans le
 budget ; au-delà, il est amputé par sections entières et l'amputation est
@@ -10,8 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from data_analyst_agent.agents.retrieval.dictionnaire import (
-    EN_TETE,
+from data_analyst_agent.agents.dictionnaire import (
+    EN_TETE_CODE,
+    EN_TETE_SQL,
     bloc_de_prompt,
     preparer,
 )
@@ -39,7 +40,7 @@ def test_sans_dictionnaire_rien_n_est_injecte():
         prepare = preparer(rien, 8000)
         assert prepare.texte == ""
         assert not prepare.tronque
-        assert bloc_de_prompt(prepare) == ""
+        assert bloc_de_prompt(prepare, EN_TETE_SQL) == ""
 
 
 def test_sous_le_budget_le_dictionnaire_passe_entier():
@@ -75,7 +76,7 @@ def test_au_dela_du_budget_on_coupe_par_sections_entieres():
 def test_l_amputation_est_nommee_section_par_section():
     prepare = preparer(DICO, 120)
     assert "Les pièges de cette source" in prepare.avis
-    assert "DAA_RETRIEVAL_DICTIONARY_MAX_CHARS" in prepare.avis
+    assert "DAA_DICTIONARY_MAX_CHARS" in prepare.avis
     assert "120" in prepare.avis
 
 
@@ -112,19 +113,36 @@ def test_un_markdown_sans_aucun_titre_reste_traitable():
     assert len(prepare.texte) <= 100
 
 
-def test_le_bloc_de_prompt_porte_la_consigne_et_le_texte():
+@pytest.mark.parametrize("en_tete", [EN_TETE_SQL, EN_TETE_CODE])
+def test_le_bloc_de_prompt_porte_la_consigne_et_le_texte(en_tete: str):
     """Recopier le Markdown sans dire qu'il FAIT AUTORITÉ laisse le modèle arbitrer."""
-    bloc = bloc_de_prompt(preparer(DICO, 8000))
-    assert EN_TETE in bloc
+    bloc = bloc_de_prompt(preparer(DICO, 8000), en_tete)
+    assert en_tete in bloc
     assert "commandes annulées" in bloc
     assert "ATTENTION" not in bloc  # rien n'a été coupé, rien à signaler
 
 
-def test_le_bloc_de_prompt_dit_au_modele_ce_qu_il_ne_voit_pas():
+@pytest.mark.parametrize("en_tete", [EN_TETE_SQL, EN_TETE_CODE])
+def test_le_bloc_de_prompt_dit_au_modele_ce_qu_il_ne_voit_pas(en_tete: str):
     """Un modèle qui sait son dictionnaire incomplet peut le dire ; sinon il affirme."""
-    bloc = bloc_de_prompt(preparer(DICO, 120))
+    bloc = bloc_de_prompt(preparer(DICO, 120), en_tete)
     assert "ATTENTION" in bloc
     assert "Les pièges de cette source" in bloc
+
+
+def test_les_deux_en_tetes_parlent_a_leur_lecteur():
+    """Un en-tête qui parle de requête à celui qui écrit du pandas est perdu.
+
+    C'est le seul endroit où la distinction se vérifie mécaniquement : la
+    machinerie est commune, le vocabulaire ne l'est pas, et c'est le vocabulaire
+    qui décide de ce que le modèle reconnaît dans le texte qu'il lit.
+    """
+    assert "requête" in EN_TETE_SQL
+    assert "ton code" not in EN_TETE_SQL
+    assert "ton code" in EN_TETE_CODE
+    assert "dropna" in EN_TETE_CODE  # la sentinelle n'est pas un NaN, et il faut le dire
+    for en_tete in (EN_TETE_SQL, EN_TETE_CODE):
+        assert "FAIT AUTORITÉ" in en_tete or "fait autorité" in en_tete
 
 
 @pytest.mark.parametrize(
@@ -140,6 +158,6 @@ def test_les_cinq_dictionnaires_de_la_demonstration_passent_entiers(nom: str):
     from data_analyst_agent.config import Settings
 
     chemin = Path("sources/demonstration/dictionnaires") / f"{nom}.md"
-    budget = Settings(_env_file=None).retrieval_dictionary_max_chars
+    budget = Settings(_env_file=None).dictionary_max_chars
     prepare = preparer(chemin.read_text(encoding="utf-8"), budget)
     assert not prepare.tronque, f"{nom} déborde le budget de {budget} caractères"

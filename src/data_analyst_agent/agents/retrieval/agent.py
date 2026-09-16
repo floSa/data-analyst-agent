@@ -7,7 +7,7 @@ le nombre total d'allers-retours est borné (retrieval_request_limit).
 Le prompt système porte aussi le DICTIONNAIRE de la source quand elle en déclare
 un : le schéma dit les types, le dictionnaire dit ce que les valeurs veulent
 dire, et c'est au moment d'écrire le WHERE qu'on en a besoin
-(cf. `agents/retrieval/dictionnaire`).
+(cf. `agents/dictionnaire`).
 """
 
 from __future__ import annotations
@@ -20,7 +20,8 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
 from data_analyst_agent import prompts
-from data_analyst_agent.agents.retrieval.dictionnaire import (
+from data_analyst_agent.agents.dictionnaire import (
+    EN_TETE_SQL,
     DictionnaireInjecte,
     bloc_de_prompt,
     preparer,
@@ -132,7 +133,7 @@ def composer_le_prompt(dialect: str, dictionnaire: DictionnaireInjecte | None) -
     déclare rien — le prompt est alors, au caractère près, celui d'avant.
     """
     base = prompts.render(prompts.RETRIEVAL, dialect=dialect)
-    bloc = bloc_de_prompt(dictionnaire) if dictionnaire is not None else ""
+    bloc = bloc_de_prompt(dictionnaire, EN_TETE_SQL) if dictionnaire is not None else ""
     return f"{base}\n\n{bloc}" if bloc else base
 
 
@@ -181,7 +182,7 @@ def run_retrieval(
     l'oublierait renverrait un prompt sans plafond sans s'en apercevoir.
     """
     settings = settings or get_settings()
-    dictionnaire = preparer(dictionary, settings.retrieval_dictionary_max_chars)
+    dictionnaire = preparer(dictionary, settings.dictionary_max_chars)
     deps = RetrievalDeps(
         adapter=adapter,
         max_rows=settings.retrieval_max_rows,

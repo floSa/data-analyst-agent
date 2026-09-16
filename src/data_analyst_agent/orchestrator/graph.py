@@ -1435,6 +1435,11 @@ class Orchestrator:
                 model=self.model,
                 settings=self.settings,
                 sandbox=self._sandbox_override,
+                # Un rejeu réécrit le code : il doit lire le dictionnaire comme
+                # le premier jet. Un tableau intermédiaire du fil n'en déclare
+                # pas — `dictionary_text()` rend alors `None`, et le prompt est
+                # celui d'avant.
+                dictionary=source.dictionary_text(),
             )
 
     @staticmethod
@@ -1620,11 +1625,15 @@ class Orchestrator:
         artefact = self._memoriser_le_code(workspace, resultat, state["question"], source)
         if artefact is not None:
             detail += f" — retenu sous le nom {artefact.name}"
+        # Un rejeu réécrit du code, donc il a lu le dictionnaire, donc il a pu
+        # le lire amputé : l'avis remonte ici comme il remonte du premier jet.
+        mesures = {"truncated": False, "truncation": ""}
+        self._ajoute_avis(mesures, resultat.dictionary_notice)
         return {
             "plan": Plan(capability="analyze", source=source or None),
             "analysis": resultat,
             "artifacts": images,
-            "trace": [self._step("rappel", detail, start)],
+            "trace": [self._step("rappel", detail, start, **mesures)],
         }
 
     def _retrieval_node(self, state: OrchestratorState) -> dict:
@@ -1773,6 +1782,10 @@ class Orchestrator:
                 model=self.model,
                 settings=self.settings,
                 sandbox=self._sandbox_override,
+                # Ce que la source DÉCLARE vouloir dire. Le schéma monté en CSV
+                # donne les colonnes et leurs types ; lui seul dit qu'un -1 est
+                # l'absence de mesure et qu'un 0 est une mesure.
+                dictionary=source.dictionary_text(),
             )
         # Une analyse en échec ne livre PAS ses figures : la tentative ratée laisse
         # des axes vides, et un graphique blanc affiché sous « l'analyse n'a pas
@@ -1793,10 +1806,17 @@ class Orchestrator:
         artefact = self._memoriser_le_code(workspace, outcome, state["question"], plan.source)
         if artefact is not None:
             detail += f" — retenu sous le nom {artefact.name}"
+        # Deux amputations possibles sur ce nœud, et elles se cumulent : des
+        # LIGNES coupées à la matérialisation, des SECTIONS coupées du
+        # dictionnaire. L'une fait compter sur un échantillon, l'autre fait
+        # compter sans la règle — et l'utilisateur a besoin des deux.
+        mesures = {"truncated": False, "truncation": ""}
+        self._ajoute_avis(mesures, avis)
+        self._ajoute_avis(mesures, outcome.dictionary_notice)
         return {
             "analysis": outcome,
             "artifacts": images,
-            "trace": [self._step("analysis", detail, start, truncated=bool(avis), truncation=avis)],
+            "trace": [self._step("analysis", detail, start, **mesures)],
         }
 
     @staticmethod

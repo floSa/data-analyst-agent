@@ -123,7 +123,7 @@ def test_un_dictionnaire_ampute_est_dit_a_l_utilisateur(source: FileSource):
     orchestrateur = Orchestrator(
         model=llm.model(),
         catalog=Catalog(sources=[source]),
-        settings=make_settings(retrieval_dictionary_max_chars=80),
+        settings=make_settings(dictionary_max_chars=80),
     )
     answer = orchestrateur.ask("Combien de survivants ?")
 

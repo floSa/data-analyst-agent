@@ -219,6 +219,54 @@ def test_aucun_avertissement_sans_lancienne_variable(recwarn):
     assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
 
 
+# -- plafond du dictionnaire : un réglage qui a changé de nom en changeant de
+# -- portée (d'un agent à deux lecteurs) --------------------------------------
+
+
+def test_plafond_du_dictionnaire_par_defaut():
+    """Au-dessus du plus gros dictionnaire de la démonstration : la coupe est un filet."""
+    assert make_settings().dictionary_max_chars == 8000
+
+
+def test_ancien_plafond_du_dictionnaire_toujours_honore(monkeypatch):
+    """Un `.env` posé du temps où seul l'agent SQL lisait le dictionnaire.
+
+    Un plafond qui redeviendrait son défaut en silence, c'est un contexte qui
+    gonfle sans que personne l'ait décidé — et sur le prompt qui se paie le plus
+    de fois par tour.
+    """
+    monkeypatch.setenv("DAA_RETRIEVAL_DICTIONARY_MAX_CHARS", "2000")
+
+    with pytest.deprecated_call():
+        settings = Settings(_env_file=None)
+
+    assert settings.dictionary_max_chars == 2000
+
+
+def test_ancien_plafond_signale_dans_les_logs(monkeypatch, caplog):
+    monkeypatch.setenv("DAA_RETRIEVAL_DICTIONARY_MAX_CHARS", "2000")
+
+    with caplog.at_level("WARNING"), pytest.deprecated_call():
+        Settings(_env_file=None)
+
+    assert "DAA_DICTIONARY_MAX_CHARS" in caplog.text
+
+
+def test_nouveau_plafond_prime_sur_lancien(monkeypatch):
+    monkeypatch.setenv("DAA_RETRIEVAL_DICTIONARY_MAX_CHARS", "2000")
+    monkeypatch.setenv("DAA_DICTIONARY_MAX_CHARS", "5000")
+
+    with pytest.deprecated_call():
+        settings = Settings(_env_file=None)
+
+    assert settings.dictionary_max_chars == 5000
+
+
+def test_aucun_avertissement_sans_lancien_plafond(recwarn):
+    assert Settings(_env_file=None).retrieval_dictionary_max_chars is None
+    assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+
+
 def test_defauts_dappel_llm_bornent_lattente():
     """600 s x 3 essais, c'est ~30 min de thread retenu par un appel bloque."""
     settings = make_settings()
