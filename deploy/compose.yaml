@@ -120,11 +120,17 @@ services:
 
     healthcheck:
       # On interroge la sonde de l'application À TRAVERS TLS : c'est la chaîne
-      # entière qu'on veut voir verte, pas nginx tout seul. `--insecure` parce
-      # que le certificat est signé par une autorité locale, et que la sonde
-      # n'a pas à connaître le magasin de confiance des postes.
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--no-check-certificate",
-             "--spider", "https://127.0.0.1/health"]
+      # entière qu'on veut voir verte, pas nginx tout seul.
+      # `--no-check-certificate` parce que le certificat est signé par une
+      # autorité locale, et que la sonde n'a pas à connaître le magasin de
+      # confiance des postes.
+      #
+      # `-O /dev/null` et NON `--spider` : le spider ferme la connexion avant la
+      # fin du corps, nginx reçoit un SIGPIPE et écrit un « [alert] unknown
+      # process exited on signal 13 » — toutes les quinze secondes. Un journal
+      # qui crie sans raison est un journal qu'on cesse de lire.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--timeout=4",
+             "--no-check-certificate", "-O", "/dev/null", "https://127.0.0.1/health"]
       interval: 15s
       timeout: 5s
       retries: 5
