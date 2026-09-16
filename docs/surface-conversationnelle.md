@@ -603,6 +603,20 @@ décide rien seul : l'appelant confronte la source demandée au texte de
 l'utilisateur avant de lier, exactement comme
 `_regle_source_de_la_conversation` le fait depuis §14.
 
+**Et il répond quand on ne lui donne pas de nom.** Appelé avec une `source`
+vide, il rend l'inventaire des sources et ne lie rien. Ce n'est pas une
+commodité : son verbe — « travailler sur une source » — est la tournure même
+avec laquelle on demande à l'agent sur quoi il travaille, et « tu bosses sur
+quoi ? » venait se ranger sous lui. Le modèle, ne pouvant pas remplir `source`,
+rendait le TOUR entier (`AUTRE`, aucun outil, retour au planificateur, une
+clarification au lieu d'une réponse — mesuré deux campagnes le 2026-09-16). Le
+verbe n'est pas retirable : c'est lui qui fait attraper « on se met sur X » ou
+« passe-moi la main sur X », et l'en débarrasser fait retomber les ouvertures de
+10 sur 10 à 4 sur 10. La règle qui en sort tient en une phrase — **un outil qui
+ne peut pas remplir son argument doit avoir quelque chose à rendre, sinon c'est
+le tour que le modèle rend** — et ce qu'il rend ici est la bonne réponse à la
+question posée.
+
 Le nœud `system` passe **en tête du graphe** : la première question d'un tour
 n'est plus « quelle capacité ? » mais « est-ce une question sur moi ? ».
 
@@ -619,7 +633,7 @@ l'agent SQL, dont l'origine est le même incident (`acfd8f5`).
 
 Les textes de `introspection.py` ont maintenant **deux emplois** : ils sont la
 matière que le modèle formule, et le repli servi tel quel quand sa formulation ne
-les porte pas. Deux défauts la disqualifient (`defaut_de_fondation`) :
+les porte pas. Trois défauts la disqualifient (`defaut_de_fondation`) :
 
 - **un nom qu'aucun fait ne porte** — c'est `acfd8f5` par une autre porte. Un
   modèle à qui l'on demande les tables d'une base « familière » sait en citer de
@@ -629,6 +643,18 @@ les porte pas. Deux défauts la disqualifient (`defaut_de_fondation`) :
 - **un nom que l'outil a rendu et que la réponse omet** — une liste incomplète
   n'est pas une réponse à « quelles colonnes ? », et c'est le défaut mesuré au
   §4 : la version narrée avait laissé tomber deux colonnes sur dix.
+- **une action que les faits annoncent et que la réponse ne dit pas.** Les deux
+  premiers défauts portent sur des NOMS, et une puce de capacité n'en porte
+  aucun : « - **analyser et visualiser** — du code Python… » ne nomme rien au
+  sens technique, donc n'exigeait rien. La famille « que sais-tu faire ? »
+  tenait par accident — le modèle qui résumait les capacités laissait tomber
+  l'inventaire de la dernière ligne avec, et se faisait prendre sur
+  l'inventaire. Le 2026-09-16, deux campagnes de suite, sa formulation a cité
+  `titanic`, `iris` et `california_housing` en oubliant les quatre verbes :
+  « je peux te demander quoi ? » rendait une liste de SUJETS et ne disait plus
+  qu'il savait ANALYSER. Ce qui est exigé est le **radical** — `interrog`,
+  `analys`, `predi`, `repond` —, jamais le mot entier : une réponse a le droit
+  d'écrire « je prédis » ou « des prédictions », pas de se taire.
 
 Sont comptés pour des noms techniques, côté modèle, ce qu'il met **entre accents
 graves** et tout jeton **à blanc souligné**. Jamais le gras : il en met sur des

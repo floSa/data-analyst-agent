@@ -1004,7 +1004,7 @@ Et le bilan des trois, mesuré sur vLLM, trois tirages partout :
 
 | dette | avant | après | ce qui l'a réparée |
 |---|---|---|---|
-| **A** — l'ouverture polie perd le court-circuit de source | 18/51 | **48/51** | un sixième outil de l'agent système + la frontière du prompt dite comme une propriété |
+| **A** — l'ouverture polie perd le court-circuit de source | 18/51 | **51/51** | un sixième outil de l'agent système + la frontière du prompt dite comme une propriété ; l'outil appelé sans nom rend l'inventaire, et les ouvertures passent de 27/30 à 30/30 |
 | **B** — une réponse juste dont la provenance n'est pas dite | 21/30 | **27/30** (30/30 sur l'oracle arbitré) | la récupération attribue quand elle répond depuis le dictionnaire |
 | **C** — trois formulations qui choisissent autre chose | 24/30 | **30/30** | la phrase nomme la grandeur classée, et l'oracle est arbitré sur deux lignes |
 
@@ -1062,7 +1062,8 @@ Les deux ont été mesurées **seules**, sur le même runner, trois tirages :
 | **avant** | 3/30 | 12/12 | 3/9 | **18/51** | 202 |
 | **voie 1 seule** | 30/30 | 3/12 | 3/9 | **36/51** | 114 |
 | **voie 2 seule** | 15/30 | 12/12 | 9/9 | **36/51** | 195 |
-| **voie 2 + la frontière dite dans le prompt système** — l'état retenu | 27/30 | 12/12 | 9/9 | **48/51** | 165 |
+| **voie 2 + la frontière dite dans le prompt système** | 27/30 | 12/12 | 9/9 | **48/51** | 165 |
+| **et l'outil appelé sans nom rend l'inventaire** — l'état retenu | **30/30** | 12/12 | 9/9 | **51/51** | 156 |
 
 Les deux voies rendent le même total, et c'est un hasard : elles échouent aux
 deux bouts opposés.
@@ -1094,16 +1095,34 @@ politesse, ni le verbe ne décident* — et il dit qu'un message peut ne poser
 AUCUNE question et désigner quand même une source. Les ouvertures passent de
 15/30 à 27/30, la contre-épreuve reste à 12/12, et la campagne coûte **165
 appels LLM contre 202 avant** : une ouverture reconnue par l'outil s'arrête au
-nœud système et ne paie ni planificateur ni récupération.
+nœud système et ne paie ni planificateur ni récupération. La branche du nom
+absent, ajoutée après coup pour réparer « tu bosses sur quoi ? », a fini de
+fermer le volet : **30/30 ouvertures, 156 appels** — l'outil est appelé plus
+souvent, et chaque fois qu'il l'est le tour s'arrête plus tôt.
 
-**Une mise en garde, parce qu'elle a failli coûter cher ici.** Cette phrase de
-prompt a d'abord été déplacée et réécrite pour corriger une « régression » de la
-surface conversationnelle (36/36 annoncé, 34/36 obtenu). La réécriture a fait
-tomber la surface à 33/36 ET la dette B de 27/30 à 24/30 — puis le prompt
-d'AVANT le chantier, rejoué le même jour, a rendu **33/36 lui aussi, sur les
-trois mêmes questions**. Il n'y avait pas de régression : la référence avait
-dérivé. La première rédaction a donc été rétablie, et la leçon est écrite plus
-bas, avec les garde-fous.
+**Une mise en garde, parce qu'elle a coûté cher ici.** Cette phrase de prompt a
+d'abord été déplacée et réécrite pour corriger une « régression » de la surface
+conversationnelle (36/36 annoncé, 34/36 obtenu). La réécriture a fait tomber la
+surface à 33/36 ET la dette B de 27/30 à 24/30 ; le prompt d'AVANT le chantier,
+rejoué le même jour dans une campagne UNIQUE, a rendu 33/36 lui aussi, et on en
+a conclu que la référence avait dérivé toute seule.
+
+**C'était faux, et c'est la mesure qui l'a dit.** Rejouées le 2026-09-16, deux
+campagnes de chaque côté, le même jour, sur le même serveur :
+
+| octets mesurés | campagne 1 | campagne 2 | appels LLM |
+|---|---|---|---|
+| `972870f`, sans ce chantier | 36/36 | 36/36 | 78 |
+| ce chantier, avant réparation | 34/36 | 34/36 | 81 |
+
+La référence n'avait pas bougé d'un point. C'est ce chantier qui faisait tomber
+deux questions, toujours les mêmes, aux deux campagnes — donc de façon
+déterministe. **Une campagne unique ne tranche rien** : elle donne un nombre,
+pas un verdict, et c'est sur ce nombre-là qu'on s'était attribué une innocence.
+La règle qui en sort est plus dure que celle qu'on avait écrite : avant de
+conclure à une dérive, on rejoue DEUX fois chaque côté, et deux échecs
+identiques sont une cause, pas un aléa. Le détail des deux défaillances et de
+leur réparation est plus bas.
 
 **Tranché : la voie 2 est gardée, la voie 1 est retirée.** Un second chemin qui
 casse ce que le premier tenait n'est pas un second chemin, c'est un échange. Et
@@ -1417,15 +1436,15 @@ Le **verrou de source** (C15) et l'**oracle d'ambiguïté** (C22) sont verts :
 - `mesure_choix_de_source.py` : la source se lie, tient sur une question qui ne
   la nomme pas, bascule en l'annonçant (« Je passe sur la source `telemetrie` —
   on travaillait sur `exploitation` »), et la nouvelle tient à son tour ;
-- `mesure_ambiguite_de_source.py`, trois essais par ordre de déclaration :
-  **3/3 propositions des deux côtés**, aucune source choisie par l'ordre du
+- `mesure_ambiguite_de_source.py`, cinq essais par ordre de déclaration :
+  **5/5 propositions des deux côtés**, aucune source choisie par l'ordre du
   YAML, aucune liée sans que l'utilisateur ait tranché. Le verrou ajouté à la
   liaison par outil est le même que celui-là — la source liée est celle que
   l'UTILISATEUR a nommée — et il est éprouvé par le volet verrou du runner
   d'ouverture, 9/9.
 
-La suite complète passe : **1 154 tests, 99,59 % de couverture** (référence
-d'avant : 1 128 et 99,58 %). Les vingt-six tests ajoutés sont tous du code pur,
+La suite complète passe : **1 159 tests, 99,59 % de couverture** (référence
+d'avant : 1 128 et 99,58 %). Les trente et un tests ajoutés sont tous du code pur,
 sans serveur ni modèle, et les quatre modules touchés — `graph`, `systeme`,
 `introspection`, `classement` — restent à 100 %. **Deux d'entre eux ont trouvé un
 défaut que la campagne live ne pouvait pas voir** : l'outil de liaison servait
@@ -1433,25 +1452,95 @@ la promesse « je garde cette source pour la suite » même quand le nœud refus
 de lier (cf. la dette A).
 
 La surface conversationnelle, rejouée sur vLLM contre `sources/catalogue.yaml`
-(`titanic` + `iris`, qui ne déclarent aucun dictionnaire) : **34/36 questions
-méta et 4/4 témoins**, 81 et 17 appels LLM.
+(`titanic` + `iris`, qui ne déclarent aucun dictionnaire) : **36/36 questions
+méta et 4/4 témoins, à deux campagnes consécutives**, 81 et 17 appels LLM à
+chacune.
 
-**Et il faut dire d'où vient ce 34/36, parce que le document annonçait 36/36.**
-Le prompt système d'avant le chantier — les octets exacts de `972870f` — a été
-rejoué le même jour, sur le même serveur, avec le même runner : il rend
-**33/36**, et il échoue sur les trois mêmes questions (`periode-indirecte`,
-`sources-tu-bosses`, `capacites-demander-quoi`). Le 36/36 du document a donc
-dérivé tout seul, sans qu'une ligne de code change. Le chantier est **au-dessus
-de sa référence du jour**, pas en dessous d'une référence d'hier.
+#### Deux défaillances déterministes, prises pour une dérive
 
-C'est la deuxième dérive de cette sorte trouvée ici — `F10` en est la première,
-0/3 au chantier précédent et 12/12 aujourd'hui à code identique. La leçon vaut
-d'être écrite : **un chiffre de campagne live n'est pas un acquis, c'est une
-mesure datée.** Avant de s'attribuer une régression, on rejoue la référence.
+Ce 36/36 est un 34/36 réparé, et l'histoire de l'erreur vaut le résultat.
+
+Le chantier avait d'abord annoncé 34/36 en expliquant que la référence avait
+dérivé : une campagne de `972870f` rejouée le même jour rendait 33/36. Deux
+campagnes de chaque côté ont dit le contraire — `972870f` rend 36/36 et 36/36
+(78 appels), le chantier 34/36 et 34/36 (81 appels). Les mêmes deux questions
+tombaient à chaque fois, aux mêmes mots près : ce n'était pas du bruit, c'était
+une régression, et ce sont les deux premières phrases qu'un prospect tape devant
+la démonstration.
+
+**`sources-tu-bosses` — « tu bosses sur quoi ? ».** Le fil brut du tour est court
+et sans appel : `system : aucun outil appelé — passe au planificateur`, puis
+`plan : clarification demandée`. L'agent système répondait `AUTRE`, le tour
+repartait au planificateur, qui le classait `query` et demandait de choisir une
+source. Ce qui s'affichait était pourtant l'inventaire complet — la clarification
+d'un `query` sans source EST l'inventaire —, et c'est ce qui a masqué le défaut :
+la réponse avait l'air juste. Elle l'était par accident, et le tour était un
+tour de clarification.
+
+La cause est l'outil de liaison ajouté par ce chantier, et elle a été isolée par
+variantes, chacune mesurée :
+
+| variante | « tu bosses sur quoi ? » |
+|---|---|
+| cinq outils (`972870f`) | appelle `capacites_de_l_agent` ✅ |
+| six outils, dont `travailler_sur_une_source` | aucun outil, `AUTRE` ❌ |
+| six outils, le sixième NEUTRE et sans argument | appelle `capacites_de_l_agent` ✅ |
+| six outils, le sixième NEUTRE et à argument requis | appelle `capacites_de_l_agent` ✅ |
+| six outils, le sixième débarrassé du verbe (nom ET fiche) | appelle `capacites_de_l_agent` ✅ |
+
+Ce n'est donc ni le nombre d'outils, ni l'argument requis : c'est le **verbe**.
+`travailler sur une source` est la tournure même avec laquelle on demande à
+l'agent sur quoi il travaille. Le modèle range la question sous l'outil, ne peut
+pas remplir `source`, et rend le tour entier plutôt que d'appeler un autre outil.
+
+**Et la réparation n'est pas de retirer le verbe.** Débarrasser le nom et la
+fiche de « travailler sur » répare ce tour-là et fait tomber les ouvertures de la
+dette A de 10 sur 10 à 4 sur 10 : le verbe est exactement ce qui fait attraper
+« on se met sur X », « passe-moi la main sur X », « reprendre mon travail sur X ».
+Le verbe est la portée de l'outil ; le supprimer, c'est supprimer l'outil.
+
+Ce qui est fait à la place tient en une phrase : **un outil qui ne peut pas
+remplir son argument doit avoir quelque chose à rendre, sinon c'est le tour que
+le modèle rend.** Appelé avec une `source` vide, `travailler_sur_une_source` rend
+désormais l'inventaire des sources — et l'inventaire n'est pas un pis-aller,
+c'est la réponse à « sur quoi travailles-tu ? ». Rien n'est lié, l'utilisateur
+n'ayant nommé personne ; mais l'outil compte comme appelé, donc l'agent système
+répond au lieu d'abdiquer. Une ligne de fiche, une branche de code, et les
+ouvertures passent de 8 sur 10 à **10 sur 10**.
+
+**`capacites-demander-quoi` — « je peux te demander quoi ? ».** Ici l'outil était
+bel et bien appelé, et les faits rendus énuméraient les cinq capacités. La
+réponse du modèle les a toutes perdues : elle a énuméré des SUJETS — mes
+capacités, mes sources, mes modèles — sans dire une seule fois qu'elle savait
+ANALYSER. La ceinture (`defaut_de_fondation`) n'a rien vu.
+
+Pourquoi elle n'a rien vu est le vrai défaut. Elle exige d'une puce les
+IDENTIFIANTS qu'elle porte ; une puce de capacité — « - **analyser et
+visualiser** — du code Python… » — n'en porte aucun, donc n'exigeait rien. La
+famille « que sais-tu faire ? » tenait par ACCIDENT : `decrire_les_capacites`
+finit par « Mes sources : `titanic`, `iris`… », que la ceinture réclame, et le
+modèle qui résumait les capacités laissait aussi tomber l'inventaire, donc se
+faisait prendre là-dessus. Le jour où sa formulation a cité les trois noms tout
+en oubliant les quatre verbes, plus rien ne l'arrêtait.
+
+La ceinture demande désormais aussi les **actions**, par leur radical et non par
+leur conjugaison : `interrog`, `analys`, `predi`, `repond`. Une réponse a le
+droit d'écrire « je prédis » ou « des prédictions » ; elle n'a pas le droit de
+ne pas le dire. C'est la convention de l'oracle de
+`mesure_surface_conversationnelle.py`, qui attend « analys » et « predi » —
+mesurer une capacité et exiger qu'elle soit dite sont la même opération, faite à
+deux endroits. Vérifié sur les autres textes de faits : l'inventaire et le
+registre n'exigent aucune action, leurs puces portant toutes un identifiant.
+
+**Ce qu'on retire de l'épisode.** Un chiffre de campagne live n'est pas un
+acquis, c'est une mesure datée — cela restait vrai. Mais la conclusion qu'on en
+avait tirée était la mauvaise : une campagne unique ne distingue pas une dérive
+d'une régression, et c'est précisément quand elle innocente qu'il faut s'en
+méfier. Deux campagnes de chaque côté, et deux échecs identiques sont une cause.
 
 Le parcours métier complet, rejoué depuis un message utilisateur : **46/48** sur
 les quarante-huit questions (16/16 canoniques, 16/16 courtes, 14/16 longues),
-181 appels LLM — contre 44/48 avant. Les quatre tours des dettes A et B qui
+180 appels LLM — contre 44/48 avant. Les quatre tours des dettes A et B qui
 échouaient sont réparés ; deux échouent encore, et aucun des deux n'est une
 réponse fausse :
 
@@ -1496,16 +1585,17 @@ et ce qui subsiste est plus petit et mieux cerné. La dette tenue à jour :
 
 | dette | portée | trace | état |
 |---|---|---|---|
-| **A** — le court-circuit de source ne reconnaît qu'un message réduit au nom d'une source | 3 questions sur 48, déterministe | `ouverture-telemetrie·longue`, `ouverture-facturation·longue`, `verrou-ouverture·longue` | **close** — un outil de l'agent système lie la source ; 18/51 → 48/51 |
+| **A** — le court-circuit de source ne reconnaît qu'un message réduit au nom d'une source | 3 questions sur 48, déterministe | `ouverture-telemetrie·longue`, `ouverture-facturation·longue`, `verrou-ouverture·longue` | **close** — un outil de l'agent système lie la source ; 18/51 → **51/51** |
 | **B** — une question de sens formulée court est routée vers la récupération, qui répond juste sans citer le dictionnaire | 1 question sur 48, déterministe | `sens-statut·courte` | **close** — la récupération attribue ; provenance dite 9/18 → 18/18, et 0 fausse attribution sur 12 témoins |
 | **C** — trois formulations de classement choisissent une autre grandeur ou appliquent le filtre `statut = 'T'` | 3 formulations sur 10 | `F03`, `F07`, `F10` | **close** — oracle arbitré sur `F03`/`F07`, la phrase nomme la grandeur ; `F10` ne se reproduisait plus, et sa cause de rédaction est corrigée |
 | **D** — une phrase qui désigne une source ET demande son contenu répond le contenu sans annoncer le volume | 1 ouverture sur 10 (`O01`), 1 tour sur 48 | `O01` du runner d'ouverture, `ouverture-facturation·longue` | **ouverte** — et c'est peut-être l'oracle qui a tort : la contre-épreuve protège exactement ce comportement |
 | **E** — deux oracles mesurent une typographie ou un jargon plutôt qu'un fait | 1 tour sur 48, 1 sur 30 | `sens-statut·longue` du parcours, `S4` du runner de provenance | **ouverte** — nommée pour être desserrée délibérément, pas en passant |
-| **F** — trois questions méta de la surface conversationnelle ont dérivé sans qu'un code change | 3 sur 36, sur le prompt d'AVANT comme sur celui d'ici | `periode-indirecte`, `sources-tu-bosses`, `capacites-demander-quoi` | **ouverte** — 36/36 au chantier précédent, 33/36 aujourd'hui sur les mêmes octets |
+| **F** — deux questions méta de la surface conversationnelle tombaient, et on l'avait mis sur le compte d'une dérive de la référence | 2 sur 36, déterministe | `sources-tu-bosses`, `capacites-demander-quoi` | **close** — deux campagnes de chaque côté ont montré une régression du chantier ; le verbe de l'outil de liaison et un trou de la ceinture ; 34/36 → **36/36 à deux campagnes** |
 
-`D` et `E` portent sur des oracles autant que sur le produit, et `F` ne porte
-que sur le modèle : aucune ne se répare par une ligne de prompt de plus, et
-c'est la seule chose dont on soit sûr.
+`D` et `E` portent sur des oracles autant que sur le produit : aucune ne se
+répare par une ligne de prompt de plus, et c'est la seule chose dont on soit
+sûr. `F` a été fermée, et elle laisse une leçon qui ne tient pas dans un
+tableau — on l'avait imputée au modèle sans l'avoir mesurée deux fois.
 
 ## Jouer la démonstration
 
