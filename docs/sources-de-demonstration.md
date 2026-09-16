@@ -277,9 +277,17 @@ vient du dictionnaire, et l'agent le cite en le nommant. C'est exactement ce que
 entièrement par leur ontologie, et aucune des deux sources ne déclare de
 dictionnaire.
 
-Une réserve de forme : **la question doit nommer sa source**. « que veut dire la
-colonne puissance_kw ? », sans « dans la source telemetrie », a été routée comme
-une demande d'inventaire et a rendu la liste des tables.
+Une réserve de forme était notée ici : **la question doit nommer sa source**.
+« que veut dire la colonne puissance_kw ? », sans « dans la source telemetrie »,
+était routée comme une demande d'inventaire et rendait la liste des tables.
+
+**Elle est LEVÉE, et ce n'en était pas une.** `puissance_kw` n'existe que dans
+une source sur cinq : la question n'a jamais été ambiguë. Ce qui manquait était
+une voie dans la cascade de ciblage, qui savait reconnaître un nom de source et
+de table mais pas de colonne — cf.
+[Ce que le routage du SENS a coûté](#ce-que-le-routage-du-sens-a-coûté-et-ce-quil-a-fallu-pour-le-réparer).
+Cette réserve, écrite comme une contrainte d'utilisateur, consacrait un trou du
+socle ; l'oracle qui la tenait a changé avec elle.
 
 ## Ce que ce catalogue a fait apparaître dans le socle, et ce qu'on en a fait
 
@@ -934,7 +942,8 @@ la source exploitation, peux-tu la charger ? » est routée vers la récupérati
 qui répond honnêtement « Je n'ai pas interrogé la source pour cette question,
 je ne peux donc rien en affirmer. Reformule ». La réserve de forme du document
 disait que la question doit nommer sa source ; il faut y ajouter qu'un message
-d'ouverture doit s'y RÉDUIRE.
+d'ouverture doit s'y RÉDUIRE. *(Les deux ont été levées depuis — la première par
+la voie de la colonne dans la cascade de ciblage, la seconde par la dette A.)*
 
 `ouverture-exploitation·longue` passe, et c'est un faux succès instructif :
 l'agent système a rendu l'inventaire des CINQ sources, où « 6 table(s) »
@@ -1417,7 +1426,8 @@ sept formulations de consigne ont échoué à réparer un texte ambigu.
 
 `assert_read_only`, `retrieval_request_limit`, `retrieval_max_rows` et le bac à
 sable au réseau coupé sont inchangés — au diff près : aucun de ces fichiers n'est
-touché par le chantier des trois dettes. La vérification de classement
+touché par le chantier des trois dettes, ni par celui du routage du sens qui a
+suivi. La vérification de classement
 s'intercale APRÈS `adapter.run`, donc après `assert_read_only` : elle ne voit que
 du SQL déjà accepté en lecture seule, et n'a aucun moyen d'en faire passer
 d'autre. Sa relance dépense `retrieval_request_limit` comme n'importe quel
@@ -1443,8 +1453,9 @@ Le **verrou de source** (C15) et l'**oracle d'ambiguïté** (C22) sont verts :
   l'UTILISATEUR a nommée — et il est éprouvé par le volet verrou du runner
   d'ouverture, 9/9.
 
-La suite complète passe : **1 159 tests, 99,59 % de couverture** (référence
-d'avant : 1 128 et 99,58 %). Les trente et un tests ajoutés sont tous du code pur,
+La suite complète passe : **1 171 tests, 99,60 % de couverture** (référence
+d'avant le routage du sens : 1 159 et 99,59 % ; avant les trois dettes : 1 128 et
+99,58 %). Les trente et un tests ajoutés sont tous du code pur,
 sans serveur ni modèle, et les quatre modules touchés — `graph`, `systeme`,
 `introspection`, `classement` — restent à 100 %. **Deux d'entre eux ont trouvé un
 défaut que la campagne live ne pouvait pas voir** : l'outil de liaison servait
@@ -1454,7 +1465,10 @@ de lier (cf. la dette A).
 La surface conversationnelle, rejouée sur vLLM contre `sources/catalogue.yaml`
 (`titanic` + `iris`, qui ne déclarent aucun dictionnaire) : **36/36 questions
 méta et 4/4 témoins, à deux campagnes consécutives**, 81 et 17 appels LLM à
-chacune.
+chacune. *(Refaite après le chantier du routage du sens, qui touche le prompt de
+l'agent système : **36/36 et 4/4, deux campagnes**, 82 + 17 appels. Le chemin
+pour y arriver est au §22 de [`surface-conversationnelle.md`](surface-conversationnelle.md) — une phrase de
+renfort avait coûté une question, à deux campagnes identiques.)*
 
 #### Deux défaillances déterministes, prises pour une dérive
 
@@ -1580,6 +1594,416 @@ ne prend pas. Un banc qui n'imite pas fidèlement l'appelant réel fabrique des
 défauts qui n'existent que pour lui, et fait perdre le temps qu'on croyait
 gagner.
 
+## Ce que le routage du SENS a coûté, et ce qu'il a fallu pour le réparer
+
+### Une question de sens qui rendait un tableau
+
+Mesuré après la fusion précédente, sur le catalogue de démonstration, la source
+`telemetrie` liée au tour d'avant :
+
+> **« c'est quoi puissance_kw exactement ? »**
+>
+> « 5 lignes retournées — voir le tableau ci-dessous. »
+
+Ce n'est pas une réponse mal formulée, c'est une réponse **d'un autre genre**.
+L'utilisateur demande ce qu'une colonne veut dire ; il reçoit des valeurs. Le
+dictionnaire de `telemetrie` porte exactement la réponse — que `-1` n'est pas
+une puissance — et elle n'est pas servie. Reproduit 3 fois sur 3, le même SQL à
+chaque tirage.
+
+La dette E rangeait le cas voisin, `S4` (« puissance_kw, ça signifie quoi ? »),
+sous « l'oracle exige notre jargon ». La mesure dit qu'il y avait autre chose
+dessous.
+
+#### Les deux cas, séparés — et c'est le même défaut
+
+| | « c'est quoi puissance_kw exactement ? » | `S4` — « puissance_kw, ça signifie quoi ? » |
+|---|---|---|
+| nœud système | **aucun outil appelé** — `AUTRE` | **aucun outil appelé** — `AUTRE` |
+| ce que fait l'aval | l'agent SQL écrit une requête | l'agent SQL répond depuis le dictionnaire de son prompt |
+| ce que voit l'utilisateur | « 5 lignes retournées » | une réponse juste, et attribuée |
+| verdict | échec visible | **passait pour sain** |
+
+Le routage est cassé **de la même façon** pour les deux. Ce qui les sépare est
+ce que l'agent SQL décide d'en faire, et ce n'est pas une propriété du produit :
+c'est une loterie. `S4` gagnait, l'autre perdait.
+
+Sondé directement sur l'agent système — huit formulations de question de sens,
+quatre sources, la source liée au fil — le résultat est sans nuance :
+
+| | formulations qui atteignent l'agent système |
+|---|---|
+| avant | **0 sur 8** — `AUTRE` à chaque fois |
+
+Une famille entière de questions, à laquelle le prompt de l'agent système dit
+pourtant explicitement qu'il doit répondre, ne l'atteignait jamais.
+
+#### Deux couches, et il fallait les deux
+
+Le défaut n'était pas d'un seul tenant. Une troisième formulation, déjà au
+parcours, le montre : « que veut dire la colonne puissance_kw ? » **atteignait**
+l'agent système, qui appelait bien l'outil de schéma — et l'outil rendait la
+liste des tables.
+
+**Couche 1 — l'outil ne disait pas ce qu'il porte.** `schema_d_une_source`
+s'annonçait « Tables, colonnes, types et clés d'une source ». De la structure.
+Or il rend aussi, pour la colonne visée, ce que le **dictionnaire** de la source
+en écrit — l'unité, le sens des codes, les valeurs qui n'en sont pas. Un modèle
+qui cherche un outil capable de dire ce qu'une colonne veut dire n'en voyait
+aucun, et concluait que la question n'était pas pour lui. Il concluait juste, à
+partir de ce qu'on lui montrait. La description dit maintenant les deux genres
+de fait que la fonction rend **réellement** — ce n'est pas une tournure de plus,
+c'est une interface qui cesse de mentir sur son retour, et un test le tient.
+
+**Couche 2 — la cascade de ciblage ignorait les colonnes.**
+`introspection._cible` savait reconnaître un nom de **source**, puis un nom de
+**table** — « quelles colonnes dans la table passengers ? » ne nomme aucune
+source et n'est pourtant pas ambiguë. Elle ne savait pas reconnaître un nom de
+**colonne**, pour exactement la même raison pourtant : `puissance_kw` n'existe
+que dans une source sur cinq. Ce qui était documenté ici comme une *réserve de
+forme* — « la question doit nommer sa source » — était un trou dans la cascade.
+
+La cascade compte désormais quatre voies, et une seule propriété : **un nom cité
+désigne la source qui le porte.** La source nommée ; à défaut celle qui porte la
+table nommée ; à défaut celle qui porte la colonne nommée ; à défaut la source
+de **travail** de la conversation. Quand plusieurs sources portent le même nom —
+`code_station` vit dans quatre sur cinq — c'est la source de travail qui
+tranche, et c'est le verrou de source appliqué au sens comme il l'est déjà aux
+chiffres. Elle n'écrase jamais un nom cité : elle départage, et ne décide seule
+que lorsque la question ne nomme rien.
+
+**Couche 3 — le critère, parce que le prompt se contredisait.** Les deux
+premières couches ont fait passer la sonde de 0/8 à 3/8. Les cinq formulations
+qui résistaient citaient toutes une **valeur** — et la section « ce qui n'est pas
+pour toi » du prompt rangeait « les valeurs manquantes » parmi les calculs. Le
+prompt énonçait la bonne propriété puis la démentait par une liste de noms.
+
+La liste est subordonnée à un test, qui n'énumère aucune tournure :
+
+> Ta réponse CHANGERAIT-elle si on remplaçait toutes les lignes de la source par
+> d'autres, sans toucher ni à sa structure ni à sa documentation ? Si oui, c'est
+> un calcul. Si non, elle est déjà écrite dans ce que l'installation déclare.
+>
+> « Combien de relevés valent -1 ? » se compte. « Qu'est-ce que -1 veut dire
+> ici ? » se lit.
+
+**Couche 4 — l'attribution suit les faits, dans les deux sens.** Une fois
+l'agent système saisi de ces questions, deux défauts symétriques sont apparus,
+et aucun n'était tenu par du code.
+
+- « le statut RET, il recouvre quoi au juste ? » rendait le bon fait — matériel
+  retiré du service — **sans dire d'où il le tenait**. C'est pourtant ce qui
+  sépare une lecture du référentiel de quelqu'un d'un savoir général sur les
+  codes d'état.
+- Sur `titanic`, qui ne déclare **aucun** dictionnaire, un tirage a écrit « selon
+  le dictionnaire de la source ». C'est pire : une attribution inventée donne
+  l'autorité de la base à un souvenir, et c'est la famille `acfd8f5`.
+
+Une seule règle couvre les deux, et se lit à l'endroit comme à l'envers : **la
+formulation attribue si et seulement si les faits attribuent**
+(`_attribution_qui_ne_colle_pas`). À défaut, ce sont les faits qui sont servis —
+et les faits, eux, portent l'en-tête d'attribution quand il y a lieu et se
+taisent sinon. Le témoin sans dictionnaire n'était jusqu'ici tenu que par une
+campagne ; il l'est maintenant par du code.
+
+Ce que la règle laisse passer, dit franchement : elle ne vérifie que la
+PRÉSENCE du mot, pas qu'il porte sur la bonne source. Et elle peut se
+déclencher à tort si le modèle écrit « dictionnaire » en répondant à une
+question qui n'en sert aucun — auquel cas les faits sont servis, ce qui dégrade
+la formulation et jamais le fond.
+
+#### Six formulations neuves, et ce qu'elles rendent
+
+Les oracles d'un dépôt finissent par mesurer les phrases qu'on y a écrites. Six
+formulations **neuves** ont donc été écrites pour ce chantier — aucune ne figure
+ailleurs dans le dépôt, ni au parcours, ni au runner de provenance, ni à celui
+d'ouverture — sur **quatre** sources qui déclarent un dictionnaire. Aucune ne
+nomme sa source : elle est liée au fil, comme dans la mesure d'origine. Les six
+formes sont volontairement dissemblables, parce qu'une famille se mesure par son
+étendue et non par son centre.
+
+Runner : `scripts/mesure_question_de_sens.py`. Oracle : le FAIT que porte le
+dictionnaire, jamais un mot ; plus l'attribution. 3 tirages chacune.
+
+| clé | source | forme | question | avant | après |
+|---|---|---|---|---|---|
+| `N1` | `telemetrie` | elliptique, sur une valeur | « puissance_kw à -1, je dois le comprendre comment ? » | 0/3 | **0/3** |
+| `N2` | `interventions` | deux questions en une | « duree_indispo_min est en minutes ou en heures ? et les valeurs négatives ? » | 3/3 | **3/3** |
+| `N3` | `interventions` | en « pourquoi » | « pourquoi station_libelle et pas un code station ? » | 0/3 | **0/3** |
+| `N4` | `referentiel` | sur un code, sans nommer la colonne | « le statut RET, il recouvre quoi au juste ? » | 0/3 | **3/3** |
+| `N5` | `facturation` | comparaison de deux colonnes | « montant_ttc_eur et montant_ht_eur, quelle différence ? » | 3/3 | **3/3** |
+| `N6` | `facturation` | soupçon, à démentir | « prix_kwh_eur à 0 sur ABO, c'est une donnée manquante ? » | 3/3 | **3/3** |
+| | | | **volet sens** | **9/18** | **12/18** |
+
+Et le témoin, indispensable : **les six mêmes formes** sur `titanic` et `iris`,
+qui ne déclarent aucun dictionnaire. Une réponse qui dit ce que le schéma porte
+est juste ; une réponse qui explique la colonne **de mémoire**, ou qui cite un
+dictionnaire inexistant, est la famille `acfd8f5` et c'est un échec. Ces deux
+jeux sont le pire cas possible, et c'est pour cela qu'ils sont là : le sens de
+leurs colonnes est de notoriété publique, donc dans la mémoire du modèle.
+
+| clé | source | question | avant | après |
+|---|---|---|---|---|
+| `W1` | `titanic` | « embarked à Q, je dois le comprendre comment ? » | 3/3 | **3/3** |
+| `W2` | `titanic` | « fare est en livres ou en dollars ? et les valeurs à zéro ? » | 0/3 | **3/3** |
+| `W3` | `titanic` | « pourquoi class_id et pas directement la classe ? » | 0/3 | **0/3** |
+| `W4` | `iris` | « la valeur setosa, elle recouvre quoi au juste ? » | 3/3 | **3/3** |
+| `W5` | `titanic` | « sibsp et parch, quelle différence ? » | 3/3 | **3/3** |
+| `W6` | `iris` | « petal_width à 0, c'est une donnée manquante ? » | 3/3 | **3/3** |
+| | | **volet témoin** | **12/18** | **15/18** |
+
+**Total : 21/36 → 27/36.** Aucun tirage, avant ni après, n'a inventé de
+convention sur une source sans dictionnaire ; `W2` cessait d'échouer sur
+« je n'ai pas bien compris ta demande » et a, à un tirage intermédiaire, cité un
+dictionnaire inexistant — c'est ce défaut-là qui a fait écrire la ceinture
+d'attribution, et il ne se reproduit plus.
+
+#### Ce qui reste, et pourquoi on s'arrête là
+
+Trois formulations sur douze résistent, et elles se ressemblent.
+
+| clé | ce qui se passe | ce que l'utilisateur reçoit |
+|---|---|---|
+| `N1` | l'agent système répond `AUTRE`, le planificateur classe `analyze` | du **code exécuté en bac à sable** : « 290 relevés sur les 10 000 analysés, soit 2,90 % » — un pourcentage calculé sur un échantillon tronqué, là où l'oracle hors agent dit 16 447 sur 547 200 |
+| `N3` | l'agent système répond `AUTRE`, la récupération répond depuis son prompt | le bon libellé, mais jamais le passage obligé par `referentiel` — la moitié du piège nº 1 |
+| `W3` | l'agent système répond `AUTRE`, le planificateur ne classe rien | « Je n'ai pas bien compris ta demande » — le tour est perdu |
+
+Les trois ont la même allure : elles citent une valeur, ou demandent
+**pourquoi** la donnée est modelée ainsi. Le critère du prompt les couvre —
+aucune des trois réponses ne changerait si on remplaçait les lignes — et le
+modèle ne l'applique pas.
+
+Quatre leviers ont déjà été tirés sur ce défaut : la description d'un outil, la
+cascade de ciblage, un critère de routage, une ceinture d'attribution. Un
+cinquième tour de prompt commencerait à viser ces trois phrases-là plutôt que
+leur propriété, et c'est exactement ce que la règle de C33 interdit. **Elles
+partent en dette (`H`) avec leur trace**, plutôt que de faire monter un chiffre
+qui ne mesurerait plus rien.
+
+`N1` est la plus préoccupante des trois, et pas parce qu'elle échoue : parce
+qu'elle **réussit à produire un nombre**. Une question de sens qui ressort en
+statistique fausse sur un échantillon est le défaut de ce dépôt qui coûte le
+plus cher — un chiffre faux et plausible — et c'est lui qu'il faudra prendre
+ensuite.
+
+#### Toutes les campagnes, avant et après
+
+Sur vLLM (`google/gemma-4-E4B-it-qat-w4a16-ct`, `http://localhost:8100/v1`),
+catalogue de démonstration semé, l'avant mesuré sur le socle **remis à `5ac250f`**
+et non déduit — les deux côtés emploient les mêmes oracles, dans leur version
+finale.
+
+| campagne | avant | après | ce qui l'a bougée |
+|---|---|---|---|
+| `mesure_question_de_sens.py` (six formulations neuves + six témoins) | 21/36 | **27/36** | le routage du sens, et la ceinture d'attribution |
+| — dont volet **sens** | 9/18 | **12/18** | |
+| — dont volet **témoin** (sans dictionnaire) | 12/18 | **15/18** | |
+| `mesure_parcours_de_demonstration.py` (48 questions) | 44/48 | **48/48** | le routage, et la liaison de la dette D |
+| `mesure_provenance_du_sens.py`, 2 campagnes | 27/30 | **27/30** ×2 *(30/30 avec l'oracle d'avant)* | `S4` seul reste, et pour un fait, cf. dette `I` |
+| `mesure_ouverture_de_source.py` | 51/51 | **51/51** | inchangée — c'est ce qu'on voulait |
+| `mesure_classement_sans_lexique.py` | 30/30 | **30/30** | inchangée |
+| `mesure_surface_conversationnelle.py`, 2 campagnes | 36/36 + 4/4 | **36/36 + 4/4** ×2 | inchangée, après une régression trouvée et retirée |
+| `mesure_ambiguite_de_source.py` (C22) | 6/6 propositions | **6/6** | inchangée |
+| `mesure_choix_de_source.py` (C15) | vert | **vert** | inchangée |
+
+Le parcours mérite sa décomposition, parce que c'est là que les oracles ont
+changé :
+
+| | oracle d'avant | oracle d'après |
+|---|---|---|
+| socle `5ac250f` | 46/48 | 44/48 |
+| socle réparé | **48/48** | **48/48** |
+
+Les deux oracles rendent le **même** chiffre final. Les changements d'oracle
+déplacent l'avant (46 → 44 : +1 pour le desserrage de `sens-statut·longue`, −3
+pour le resserrage de `reserve-de-forme`) et **ne déplacent pas l'après**. Les
+quatre points gagnés sont quatre points de produit.
+
+#### Une phrase de prompt de trop, et les deux campagnes qui l'ont vue
+
+Le critère de routage a d'abord été écrit avec une phrase de renfort dans la
+section « ce qui n'est pas pour toi » : *« Chacun passe le test ci-dessus : sa
+réponse change avec les lignes. »* Elle s'appliquait à la liste qui précède, où
+figure « la période couverte ».
+
+Elle est fausse. « De quand datent les données que tu as ? », posée sur
+`titanic` et `iris` — qui ne portent **aucune** colonne de date — a une réponse
+qui ne change pas avec les lignes : « il n'y en a pas ». En affirmant le
+contraire, le renfort a fait produire une phrase creuse et fausse par omission :
+
+> « Les données que j'ai datent de la période couverte par les sources
+> `titanic` et `iris`, comme indiqué dans le catalogue des sources. »
+
+**Deux campagnes, le même échec, au mot près** : `periode-indirecte`, 35/36 et
+35/36. C'est la leçon de la dette `F` qui a servi ici, et elle a servi dans
+l'autre sens : elle avait appris à ne pas prendre une régression pour une
+dérive ; elle a surtout appris à **mesurer deux fois avant de conclure quoi que
+ce soit**. Une campagne unique aurait laissé le doute sur du bruit.
+
+La phrase est retirée. Le critère reste — c'est lui qui fait basculer les
+questions de sens — mais il n'affirme plus, sur une liste écrite avant lui, une
+chose qui n'est vraie que la plupart du temps. Un critère qui se généralise à
+des exemples qu'on n'a pas vérifiés cesse d'être un critère.
+
+### Dette E — deux oracles qui mesuraient notre vocabulaire
+
+Deux oracles étaient nommés pour être desserrés **délibérément**, et le
+desserrage devait se montrer. Le voici, avec ce que chacun exigeait, ce qu'il
+exige, et ce qu'il laisse encore passer.
+
+| oracle | exigeait | exige | laisse encore passer |
+|---|---|---|---|
+| `sens-statut·longue` (parcours) | les sous-chaînes `'T'`, `'I'`, `'E'` — **avec des apostrophes droites**. Une réponse écrivant `` `T` `` échouait, et une réponse disant « le code T signifie terminée » aussi | trois FAITS, chacun une disjonction : le code cité **quelle que soit la convention de guillemets**, ou son sens écrit en clair (« terminé », « interrompu », « erreur ») ; plus l'attribution | une réponse qui énoncerait les trois sens sur la mauvaise colonne ; et le mot « erreur » peut venir d'ailleurs que du code `'E'` |
+| `S4` (runner de provenance) | la sous-chaîne **« sentinelle »** — le mot du dictionnaire et du produit, pas celui d'une réponse juste | deux FAITS : `-1` n'est pas une puissance (11 tournures admises), et il sort des agrégats (18 tournures) ; plus l'attribution | une réponse qui emploierait la bonne tournure sur une autre colonne ; aucune vérification de la syntaxe du filtre — seulement que le fait est ÉNONCÉ |
+
+Le mécanisme qui rend le desserrage vérifiable : chaque relevé porte **deux**
+verdicts, celui de l'oracle d'avant (`verdict_strict`) et celui d'après. Ils
+n'entrent pas dans le même total, et les runners impriment l'écart. Sans ça, un
+oracle desserré et un produit réparé rendent le même chiffre.
+
+#### Ce que le desserrage rapporte, et ce que le correctif rapporte
+
+| | oracle d'avant | oracle d'après |
+|---|---|---|
+| **`sens-statut`, avant correctif** | 2/3 — `longue` tombe sur la typographie | **3/3** |
+| **`sens-statut`, après correctif** | 3/3 | **3/3** |
+| **`S4`, avant correctif** | 0/3 | **0/3** |
+| **`S4`, après correctif** | **3/3** | **3/3** |
+
+Deux enseignements, et le second n'était pas attendu.
+
+**Le desserrage rapporte exactement 1 point, sur `sens-statut·longue`.** C'est
+le seul des deux oracles qui mesurait vraiment une typographie. Après
+correctif, il n'en rapporte plus aucun : les 48/48 du parcours et les 30/30 de
+la provenance sont obtenus **avec l'oracle d'avant comme avec celui d'après**.
+Aucun point de ce chantier ne vient d'un oracle qu'on s'est offert.
+
+**`S4` n'était pas un problème de vocabulaire, et le dire l'était.** Avant
+correctif, il échoue 0/3 des deux façons : la réponse disait bien « le compteur
+n'a rien remonté » et ne disait **jamais** qu'il faut écarter `-1` des moyennes.
+Le fait manquait pour de bon. La dette E, en l'imputant au mot « sentinelle »,
+laissait croire que le produit allait bien.
+
+Et après correctif, l'écart entre les deux oracles **se retourne**, ce qui est
+le plus instructif de tout ce chantier.
+
+| après correctif, deux campagnes consécutives | oracle d'avant (« sentinelle ») | oracle d'après (le fait) |
+|---|---|---|
+| campagne 1 | **3/3** | **0/3** |
+| campagne 2 | **3/3** | **0/3** |
+
+La réponse est pourtant bonne, et bien meilleure qu'avant. Elle cite le
+dictionnaire, nomme sa source, dit la sentinelle :
+
+> « Selon le dictionnaire de `telemetrie` (…) la valeur **`-1`** est une
+> **valeur sentinelle** indiquant que le compteur n'a rien remonté, et qu'elle
+> **ne doit pas être considérée comme une puissance**. »
+
+Ce qu'elle ne dit pas : **qu'il faut l'écarter du calcul.** Un utilisateur qui
+lit cela sait que `-1` est particulier ; il ne sait pas que sa moyenne sera
+fausse s'il la calcule quand même — et c'est l'écart entre 66,67 et 68,76 que ce
+catalogue existe pour montrer. Le dictionnaire, lui, l'écrit noir sur blanc
+(« à écarter de toute moyenne »), et les faits servis à l'agent le portent : la
+consigne se perd dans le RÉSUMÉ, pas dans la lecture.
+
+Une variante l'a d'ailleurs dit, sur un état intermédiaire du prompt : « … et ne
+doit pas être **incluse dans tout calcul** de puissance », qui passe les deux
+oracles. Le fait est donc à portée du modèle ; il ne sort pas de façon fiable.
+
+**L'oracle au jargon déclarerait 30/30 dans les deux campagnes.** C'est l'oracle
+au FAIT qui a dit les trois choses : que le fait manquait avant, qu'il est à
+portée, et qu'il ne sort pas. Le second fait de `S4` part donc en dette (`I`),
+et pas comme un défaut d'oracle.
+
+#### Un oracle de faits se corrige aussi
+
+Il faut le dire, parce que c'est le même travers dans l'autre sens : la
+disjonction du fait « `-1` sort des agrégats » a été **élargie en cours de
+campagne**. Elle ne reconnaissait pas « ne doit pas être incluse dans tout
+calcul de puissance », qui l'énonce pourtant exactement. Un oracle de faits qui
+rejette une réponse juste est redevenu ce qu'on lui reprochait — une liste de
+nos tournures. Les deux campagnes ont été rejugées avec la disjonction
+définitive, depuis les réponses enregistrées, pour rester comparables.
+
+**Un troisième oracle porte le même travers et n'a PAS été touché.**
+`sens-puissance` du parcours exige lui aussi la sous-chaîne « sentinelle ». Il
+passe 3/3 sur les trois formulations, avant comme après, donc rien ne
+l'obligeait — et le desserrer sans nécessité aurait gonflé un chiffre sans rien
+apprendre. Il est porté en dette (`G`) plutôt que corrigé en passant.
+
+### Dette D — deux oracles qui ne pouvaient pas avoir raison ensemble
+
+La dette disait : « tu peux me la sortir ? » et `ouverture-facturation·longue`
+sont des phrases qui DÉSIGNENT une source et DEMANDENT son contenu ; l'oracle
+du parcours attend l'accusé de réception avec le volume, la contre-épreuve
+protège l'inverse.
+
+**Mesure d'abord, arbitrage ensuite.** Les deux tours ne se comportent pas
+pareil, et l'un des deux ne fait plus partie du problème.
+
+| tour | nœuds | source liée | ce que rend la réponse | verdict |
+|---|---|---|---|---|
+| `O01` — « on bosse sur exploitation aujourd'hui, tu peux me la sortir ? » | `system → synthesize` | **exploitation** | l'accueil, ses 6 tables, sa période | **conforme 3/3** |
+| `ouverture-facturation·longue` — « … peux-tu m'indiquer ce qu'on y trouve ? » | `system → synthesize` | **(aucune)** | les 3 feuilles **et toutes leurs colonnes** | **échec 3/3** |
+
+`O01` passe. Il n'y a rien à y arbitrer : le message ne demande aucun calcul —
+retirez-en le nom de la source et « me la sortir » ne désigne plus rien qu'on
+puisse compter — et il est traité comme une ouverture, ce qu'il est.
+
+Reste le second, et il ne tombe pas où la dette le croyait.
+
+#### Ce que l'utilisateur perd, dans chaque cas
+
+**Si l'agent accuse réception sans répondre** — l'utilisateur perd **un
+aller-retour**. Rien de faux n'a été dit, l'état de la conversation est juste,
+et il sait désormais ce que contient la source, ce qui l'aide à poser sa vraie
+question. C'est un coût de latence.
+
+**Si l'agent répond sans lier** — l'utilisateur perd **le tour suivant**.
+Mesuré, 3 tirages sur 3 : après cette réponse, « combien de factures ? » posée
+dans le même fil reçoit l'inventaire des cinq sources du catalogue. Sa question
+n'est pas mal répondue, elle n'est pas répondue du tout. Et il n'a aucun moyen
+de savoir pourquoi, puisque le tour d'avant s'était très bien passé.
+
+Les deux ne sont pas du même ordre. Le premier coûte du temps ; le second coûte
+une conversation, et en silence.
+
+#### L'arbitrage : c'est « les deux », et la seconde moitié est gratuite
+
+La réponse rendue par le produit — les trois feuilles et leurs colonnes — est
+**exactement** ce que la question demande, et c'est strictement plus que
+l'accusé de réception. L'oracle la rejetait pour n'avoir pas écrit le chiffre
+**3**, qui est le nombre que produit le gabarit de l'accueil. Un oracle qui
+rejette une réponse plus riche que celle qu'il attend mesure une forme.
+
+Ce qui manquait n'était donc pas le nombre : c'était la **liaison**. Et la
+liaison ne demande aucun aller-retour de plus — la désignation se lit dans le
+texte de l'utilisateur, en code.
+
+**Le perdant est l'oracle du parcours, et il est corrigé dans son runner** : les
+trois tours d'ouverture n'exigent plus le volume, ils exigent que la source soit
+**liée** après le tour (champ `liee`), plus son nom dans la réponse. C'est le
+même oracle que `mesure_ouverture_de_source.py` porte déjà, pour la même raison
+qui y est écrite : « une réponse peut nommer une source sans l'avoir retenue, et
+c'est exactement le faux succès qu'on veut voir ».
+
+**Et le produit est corrigé aussi**, parce que l'oracle avait raison sur le
+fond. `_regle_source_de_la_conversation` lie la source qu'un message nomme, et
+`_lier_la_source` en annonce la bascule — mais toutes deux vivent dans le nœud
+du PLAN, que l'agent système court-circuite. Le nœud système applique désormais
+la même règle (`_lier_la_source_nommee`), avec les mêmes garde-fous : rien hors
+conversation, rien sur une source **imposée** par l'appelant, et toute bascule
+**annoncée** en tête de réponse. Ce n'est pas une règle neuve, c'est un trou
+dans une règle existante.
+
+**Coût : zéro appel LLM.** La liaison est déterministe. Le tour reste à 2 appels
+pour `ouverture-facturation·longue`, contre 6 pour l'accueil par l'outil de
+liaison — la voie corrigée est la moins chère des deux.
+
+**La contre-épreuve reste verte**, et c'était le risque : 12/12 sur les quatre
+tours qui exigent qu'une question posée en nommant une source soit RÉPONDUE et
+non avalée, et 9/9 sur le verrou. Aucun des deux oracles n'a eu à perdre.
+
 **Ce qui reste à traiter.** Les trois dettes du chantier précédent sont closes,
 et ce qui subsiste est plus petit et mieux cerné. La dette tenue à jour :
 
@@ -1588,14 +2012,27 @@ et ce qui subsiste est plus petit et mieux cerné. La dette tenue à jour :
 | **A** — le court-circuit de source ne reconnaît qu'un message réduit au nom d'une source | 3 questions sur 48, déterministe | `ouverture-telemetrie·longue`, `ouverture-facturation·longue`, `verrou-ouverture·longue` | **close** — un outil de l'agent système lie la source ; 18/51 → **51/51** |
 | **B** — une question de sens formulée court est routée vers la récupération, qui répond juste sans citer le dictionnaire | 1 question sur 48, déterministe | `sens-statut·courte` | **close** — la récupération attribue ; provenance dite 9/18 → 18/18, et 0 fausse attribution sur 12 témoins |
 | **C** — trois formulations de classement choisissent une autre grandeur ou appliquent le filtre `statut = 'T'` | 3 formulations sur 10 | `F03`, `F07`, `F10` | **close** — oracle arbitré sur `F03`/`F07`, la phrase nomme la grandeur ; `F10` ne se reproduisait plus, et sa cause de rédaction est corrigée |
-| **D** — une phrase qui désigne une source ET demande son contenu répond le contenu sans annoncer le volume | 1 ouverture sur 10 (`O01`), 1 tour sur 48 | `O01` du runner d'ouverture, `ouverture-facturation·longue` | **ouverte** — et c'est peut-être l'oracle qui a tort : la contre-épreuve protège exactement ce comportement |
-| **E** — deux oracles mesurent une typographie ou un jargon plutôt qu'un fait | 1 tour sur 48, 1 sur 30 | `sens-statut·longue` du parcours, `S4` du runner de provenance | **ouverte** — nommée pour être desserrée délibérément, pas en passant |
+| **D** — une phrase qui désigne une source ET demande son contenu répond le contenu sans annoncer le volume | 1 tour sur 48 (`O01` ne la porte plus : 3/3) | `ouverture-facturation·longue` | **close** — l'oracle exigeait le gabarit de l'accueil ; ce qui manquait était la LIAISON, et la question suivante du fil était perdue 3/3. Oracle corrigé (il exige `liee`), produit corrigé (`_lier_la_source_nommee`), contre-épreuve 12/12 |
+| **E** — deux oracles mesurent une typographie ou un jargon plutôt qu'un fait | 1 tour sur 48, 1 sur 30 | `sens-statut·longue` du parcours, `S4` du runner de provenance | **close** — desserrés avec leur avant/après, et verdict strict conservé à côté. Le desserrage rapporte **1 point** en tout (`sens-statut·longue`) et **0** après correctif ; `S4` n'était pas un défaut d'oracle mais un fait qui manquait |
 | **F** — deux questions méta de la surface conversationnelle tombaient, et on l'avait mis sur le compte d'une dérive de la référence | 2 sur 36, déterministe | `sources-tu-bosses`, `capacites-demander-quoi` | **close** — deux campagnes de chaque côté ont montré une régression du chantier ; le verbe de l'outil de liaison et un trou de la ceinture ; 34/36 → **36/36 à deux campagnes** |
 
-`D` et `E` portent sur des oracles autant que sur le produit : aucune ne se
-répare par une ligne de prompt de plus, et c'est la seule chose dont on soit
-sûr. `F` a été fermée, et elle laisse une leçon qui ne tient pas dans un
-tableau — on l'avait imputée au modèle sans l'avoir mesurée deux fois.
+| **G** — un troisième oracle exige le mot « sentinelle », et n'a PAS été touché | 3 formulations sur 48 | `sens-puissance` du parcours | **ouverte, délibérément** — il passe 3/3 avant comme après, donc rien ne l'obligeait ; le desserrer sans nécessité aurait gonflé un chiffre sans rien apprendre |
+| **H** — trois formulations de question de sens n'atteignent toujours pas l'agent système | 2 sur 18 au volet sens, 1 sur 18 au témoin | `N1`, `N3`, `W3` de `mesure_question_de_sens.py` | **ouverte** — quatre leviers déjà tirés ; un cinquième viserait ces phrases-là et non leur propriété. `N1` est la plus coûteuse : elle ressort en **statistique fausse sur un échantillon**, pas en échec |
+| **I** — la reformulation perd la CONSIGNE du dictionnaire | 1 tour sur 30, 2 campagnes sur 2 | `S4` du runner de provenance | **ouverte** — la réponse dit que `-1` n'est pas une puissance et omet qu'il fausse les moyennes. Les faits servis à l'agent la portent ; c'est le résumé qui la laisse tomber, et aucune ceinture ne tient aujourd'hui une consigne — `defaut_de_fondation` vérifie des noms, des énumérations et une attribution, pas un impératif |
+
+`D` et `E` sont closes, et elles se ferment sur le même constat : **ni l'une ni
+l'autre n'était le défaut d'oracle qu'on croyait.** `D` avait un oracle à moitié
+faux — il exigeait un chiffre de gabarit — et un produit vraiment défaillant,
+qui perdait le tour suivant sans le dire. `E` avait deux oracles qui mesuraient
+bien notre vocabulaire, et les desserrer n'a rendu qu'un seul point : le reste
+était un fait qui manquait pour de bon. Dans les deux cas, ranger le défaut du
+côté de l'oracle laissait croire que le produit allait bien.
+
+`F` laisse une leçon qui ne tient pas dans un tableau — on l'avait imputée au
+modèle sans l'avoir mesurée deux fois. `G` et `H` sont ouvertes par choix : la
+première parce qu'un oracle qu'on desserre sans nécessité est un chiffre qu'on
+s'offre, la seconde parce qu'un cinquième tour de prompt cesserait de chercher
+une propriété pour viser trois phrases.
 
 ## Jouer la démonstration
 
@@ -1626,6 +2063,7 @@ export DAA_CATALOG_PATH=sources/demonstration/catalogue.yaml
 uv run python scripts/mesure_parcours_de_demonstration.py --tirages 1
 uv run python scripts/mesure_ouverture_de_source.py --tirages 3
 uv run python scripts/mesure_provenance_du_sens.py --tirages 3
+uv run python scripts/mesure_question_de_sens.py --tirages 3
 uv run python scripts/mesure_classement_sans_lexique.py --tirages 3
 uv run python scripts/mesure_classement_sans_lexique.py --tirages 3 --oracle-davant
 uv run python scripts/mesure_choix_de_source.py
@@ -1641,4 +2079,7 @@ uv run python scripts/mesure_ambiguite_de_source.py --essais 3
 
 `mesure_provenance_du_sens.py` porte lui aussi ses deux catalogues en dur — le
 catalogue de démonstration pour les six questions de sens, celui de production
-pour les quatre témoins sans dictionnaire.
+pour les quatre témoins sans dictionnaire. `mesure_question_de_sens.py` fait de
+même, avec six formulations NEUVES sur quatre sources et six témoins : c'est le
+runner du routage du sens, et son volet témoin est la seule chose qui distingue
+« le modèle a lu le dictionnaire » de « le modèle se souvient de titanic ».

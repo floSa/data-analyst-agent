@@ -3139,3 +3139,59 @@ Restent :
   non ailleurs, et elle n'a pas été mesurée sur un corpus de tournures implicites ;
 - **le rejeu ne vérifie pas que le décor est le même** (§20.10), inchangé ;
 - **`sources-premiere-personne` sous Ollama**, inchangé depuis le §18.7.
+
+## 22. Un critère de routage, et la phrase de renfort qui a coûté une question
+
+Le chantier du routage des questions de SENS
+(`docs/sources-de-demonstration.md`) a touché le prompt de l'agent système —
+ce que le [§20.9](#209-une-ligne-de-prompt-qui-en-coûtait-deux) et le
+[§21.8](#218-pas-de-régression--la-batterie-sur-les-deux-moteurs) désignent
+comme l'endroit le plus cher du dépôt. Il a donc coûté, et le prix est ici.
+
+### 22.1 Ce qui a été ajouté, et pourquoi
+
+Une famille entière de questions — « que veut dire cette colonne ? », sous
+toutes ses formes — ne parvenait jamais à l'agent système : sondé sur huit
+formulations, il répondait `AUTRE` **8 fois sur 8**. Le prompt énonçait pourtant
+la bonne propriété. Il la démentait ensuite, par une liste de noms où figurait
+« les valeurs manquantes », qui attrapait toute question citant une valeur.
+
+La liste est désormais subordonnée à un **test**, et ce test n'énumère aucune
+tournure :
+
+> Ta réponse CHANGERAIT-elle si on remplaçait toutes les lignes de la source par
+> d'autres, sans toucher ni à sa structure ni à sa documentation ? Si oui, c'est
+> un calcul, et ce n'est pas pour toi.
+>
+> « Combien de relevés valent -1 ? » se compte. « Qu'est-ce que -1 veut dire
+> ici ? » se lit.
+
+### 22.2 La phrase de renfort, et ce qu'elle a cassé
+
+Le critère était accompagné d'une phrase qui l'appliquait à la liste
+existante : *« Chacun passe le test ci-dessus : sa réponse change avec les
+lignes. »* Elle est fausse pour l'un des éléments de cette liste.
+
+« De quand datent les données que tu as ? », sur `titanic` et `iris` qui ne
+portent **aucune** colonne de date, a une réponse qui ne change pas avec les
+lignes : il n'y en a pas. Le renfort a fait produire une phrase creuse, et
+fausse par omission :
+
+> « Les données que j'ai datent de la période couverte par les sources
+> `titanic` et `iris`, comme indiqué dans le catalogue des sources. »
+
+| campagne | questions méta | témoins | la question qui tombe |
+|---|---|---|---|
+| avec le renfort, 1ʳᵉ | 35/36 | 4/4 | `periode-indirecte` |
+| avec le renfort, 2ᵉ | 35/36 | 4/4 | `periode-indirecte`, **réponse identique au mot près** |
+
+**Deux campagnes, le même échec, la même phrase.** C'est ce que la dette `F` a
+appris, et il faut le dire dans l'autre sens que la première fois : elle avait
+appris à ne pas prendre une régression pour une dérive du modèle ; elle sert ici
+à ne pas prendre une régression pour du bruit qu'on aurait pu ignorer. Une
+campagne unique aurait laissé le doute.
+
+La phrase est retirée. Le critère reste — c'est lui qui fait basculer les
+questions de sens — mais il n'affirme plus, sur des exemples écrits avant lui,
+une chose qui n'est vraie que la plupart du temps. **Un critère qui se
+généralise à des cas qu'on n'a pas vérifiés cesse d'être un critère.**
