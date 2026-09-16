@@ -116,6 +116,24 @@ class SystemeDeps:
         donc le tour repart au planificateur.
         """
         vise = demandee.strip().strip("\"`'").lower()
+        if not vise:
+            # AUCUN nom écrit. C'est ici que le tour se jouait : le modèle
+            # rangeait « tu bosses sur quoi ? » sous cet outil — même verbe —,
+            # ne pouvait pas remplir `source`, et abandonnait le tour ENTIER en
+            # répondant ``AUTRE``. La question repartait au planificateur, qui
+            # la classait `query` et demandait de choisir une source.
+            #
+            # Un outil qui ne peut pas remplir son argument doit avoir quelque
+            # chose à rendre, sinon c'est le tour que le modèle rend. Et ce
+            # qu'il rend ici n'est pas un pis-aller : « sur quoi travailles-tu ? »
+            # demande l'inventaire, et l'inventaire est la bonne réponse. Rien
+            # n'est lié — ``source_a_lier`` reste vide — mais l'outil COMPTE
+            # comme appelé, donc l'agent système répond au lieu d'abdiquer.
+            faits = self.releves.tous() if self.releves is not None else None
+            return self.retenir(
+                "travailler_sur_une_source",
+                introspection.decrire_les_sources(self.catalogue_declare, faits),
+            )
         trouvee = next((s for s in self.catalogue_declare.sources if s.name.lower() == vise), None)
         if trouvee is None:
             # Les noms entre accents graves, comme partout dans `introspection` :
@@ -212,7 +230,11 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         incidente, même polie — n'appelle AUCUN outil : réponds AUTRE et laisse
         la question suivre son chemin.
 
-        `source` : le nom de la source, tel qu'il est écrit dans le catalogue.
+        Si le message ne NOMME aucune source, appelle-le avec une `source` VIDE :
+        il rend l'inventaire.
+
+        `source` : le nom de la source, tel qu'il est écrit dans le catalogue,
+        ou la chaîne vide.
         """
         return ctx.deps.retenir_la_liaison(source)
 

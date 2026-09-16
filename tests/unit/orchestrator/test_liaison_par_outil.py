@@ -28,6 +28,7 @@ from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator
+from data_analyst_agent.orchestrator.systeme import SystemeDeps
 from helpers.scripted_llm import PLANNER, SYSTEME, ScriptedLLM, text, tool_call
 
 OUTIL = "travailler_sur_une_source"
@@ -197,3 +198,68 @@ def test_le_court_circuit_deterministe_passe_toujours_devant(deux_sources: Catal
     assert "on travaille sur **ventes**" in reponse.answer
     assert llm.prompts_for(SYSTEME) == []
     assert llm.prompts_for(PLANNER) == []
+
+
+# --- l'outil appelé SANS nom : il rend l'inventaire, il n'abdique pas ----------
+
+
+def test_l_outil_appele_sans_nom_rend_l_inventaire_et_ne_lie_rien(
+    deux_sources: Catalog, registre: Registry
+):
+    """« Tu bosses sur quoi ? » — et l'outil qui ne peut pas remplir son argument.
+
+    Le défaut mesuré le 2026-09-16, deux campagnes identiques. Cet outil porte
+    le verbe « travailler sur une source » ; c'est ce verbe qui lui fait
+    attraper « on se met sur X », « passe-moi la main sur X », « reprendre mon
+    travail sur X » — dix ouvertures sur dix. C'est aussi ce verbe qui lui fait
+    attraper « tu bosses sur quoi ? », qui n'écrit aucun nom. Le modèle rangeait
+    la question sous l'outil, ne pouvait pas remplir `source`, et rendait le
+    TOUR : ``AUTRE``, aucun outil appelé, retour au planificateur, qui classait
+    `query` et demandait de choisir une source.
+
+    La réparation n'est pas lexicale. Débarrasser le nom et la fiche du verbe
+    répare ce tour-là et fait retomber les ouvertures de 10 sur 10 à 4 sur 10 :
+    le verbe est ce qui donne à l'outil sa portée. Un outil qui ne peut pas
+    remplir son argument doit avoir quelque chose à RENDRE, sinon c'est le tour
+    que le modèle rend. Et l'inventaire n'est pas un pis-aller : « sur quoi
+    travailles-tu ? » le demande.
+
+    Rien n'est lié — l'utilisateur n'a nommé personne, et c'est la règle de tout
+    ce module.
+    """
+    deps = SystemeDeps(
+        catalogue_declare=deux_sources,
+        catalogue_effectif=deux_sources,
+        registre=registre,
+        question="tu bosses sur quoi ?",
+    )
+
+    rendu = deps.retenir_la_liaison("")
+
+    assert deps.source_a_lier == ""
+    assert deps.outils_appeles == [OUTIL]
+    assert "ventes" in rendu
+    assert "stocks" in rendu
+
+
+def test_un_nom_inconnu_reste_distinct_d_un_nom_absent(deux_sources: Catalog, registre: Registry):
+    """Deux situations, deux réponses — et surtout, deux messages.
+
+    Un nom ABSENT est une question sur le catalogue : on répond par
+    l'inventaire. Un nom INCONNU est une erreur du modèle : on le lui dit, et on
+    lui montre les vrais noms. Les confondre rendrait « Source `` inconnue » à
+    quelqu'un qui n'a rien écrit de faux.
+    """
+    deps = SystemeDeps(
+        catalogue_declare=deux_sources,
+        catalogue_effectif=deux_sources,
+        registre=registre,
+        question="mets-toi sur comptabilite",
+    )
+
+    rendu = deps.retenir_la_liaison("comptabilite")
+
+    assert deps.source_a_lier == ""
+    assert "inconnue" in rendu
+    assert "`ventes`" in rendu
+    assert "`stocks`" in rendu
