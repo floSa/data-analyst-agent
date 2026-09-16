@@ -10,6 +10,16 @@
 # $remote_addr — traversent le gabarit intactes, et se lisent ici telles
 # qu'elles s'écrivent dans une configuration ordinaire.
 
+# L'adresse RÉELLE du pair en premier, puis la chaîne annoncée. Sans ces deux
+# champs côte à côte, on ne peut pas distinguer « le mandataire n'ajoute pas son
+# maillon » de « l'application ne le lit pas » — et c'est la première question
+# qu'on se pose quand un verrouillage compte de travers.
+#
+# Ici et pas dans le `server` : `log_format` n'est admis qu'au niveau `http`,
+# celui de ce fichier. Mesuré — dans un `server`, nginx refuse de démarrer.
+log_format daa '$remote_addr "$http_x_forwarded_for" $host '
+               '"$request" $status $body_bytes_sent $request_time';
+
 # Rediriger le clair vers le chiffré plutôt que de le refuser : quelqu'un qui
 # tape l'adresse sans préfixe arrive en http, et un refus sec ressemble à une
 # panne. 308 et non 302 — la méthode et le corps sont conservés.
@@ -42,13 +52,7 @@ server {
     # confidentialité persistante que les suites ECDHE viennent d'apporter.
     ssl_session_tickets off;
 
-    # L'adresse RÉELLE du pair en premier, puis la chaîne annoncée. Sans ces
-    # deux champs côte à côte, on ne peut pas distinguer « le mandataire
-    # n'ajoute pas son maillon » de « l'application ne le lit pas » — et c'est
-    # la première question qu'on se pose quand un verrouillage compte de travers.
-    log_format  daa '$remote_addr "$http_x_forwarded_for" $host '
-                    '"$request" $status $body_bytes_sent $request_time';
-    access_log  /var/log/nginx/access.log daa;
+    access_log /var/log/nginx/access.log daa;
 
     # HSTS. `always` pour que l'en-tête accompagne AUSSI les réponses d'erreur —
     # sans quoi un 502 laisserait le navigateur oublier la consigne. Ni
