@@ -1,0 +1,22 @@
+# Ce que le contexte de build n'a pas à transporter. Sans ce fichier, le
+# contexte embarque .venv (plus d'un gigaoctet), var/ (les conversations et le
+# magasin de comptes) et .git — c'est-à-dire des données de production dans une
+# image, et une minute d'envoi au démon à chaque build.
+.git/
+.github/
+.venv/
+.claude/
+var/
+notebooks/
+tests/
+docs/
+.env
+*.log
+__pycache__/
+*.py[oc]
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml

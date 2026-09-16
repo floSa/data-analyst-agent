@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# Pilote du service : démarrer, arrêter, redémarrer, lire les journaux,
+# administrer les comptes, sauvegarder, restaurer.
+#
+# UNE seule commande, et c'est délibéré : l'exploitant n'a pas à savoir que le
+# service est un compose, ni où vit son fichier d'environnement. L'unité
+# systemd (deploy/daa.service) appelle ce script — `systemctl start daa` et
+# `daactl start` font donc exactement la même chose.
+#
+#     sudo deploy/daactl start|stop|restart|status|logs
+#     sudo deploy/daactl build            # (re)construit l'image de l'application
+#     sudo deploy/daactl sandbox          # construit l'image du bac à sable si absente
+#     sudo deploy/daactl users <args…>    # scripts/manage_users.py dans le conteneur
+#     sudo deploy/daactl backup [dossier]
+#     sudo deploy/daactl restore <archive>
+#
+# `sudo` parce que le fichier d'environnement est en 0600 root:root : il porte
+# le mot de passe Postgres et la clé du moteur.
+
+set -euo pipefail
+
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE_FILE="$DEPLOY_DIR/compose.yaml"
+ENV_FILE="${DAA_ENV_FILE:-/etc/data-analyst-agent/daa.env}"
+
+mourir() { echo "daactl: $*" >&2; exit 1; }
+
+[[ -r "$ENV_FILE" ]] || mourir "fichier d'environnement illisible : $ENV_FILE
+       (modèle : $DEPLOY_DIR/daa.env.example — et \`sudo\` est sans doute ce qui manque)"
+
+# Les valeurs dont le SCRIPT a besoin (pas le conteneur : lui les reçoit par
+# `env_file`). `set -a` + source, plutôt qu'un grep : le fichier est un fichier
+# d'environnement, on le lit comme tel.
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+: "${DAA_DATA_DIR:?DAA_DATA_DIR manque dans $ENV_FILE}"
+
+compose() {
+    docker compose --file "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
+}
+
+# L'image du bac à sable N'EST PAS reconstruite si elle est là : c'est celle que
+# la CI publie, à partir du même contexte. On vérifie sa présence, on ne
+# s'approprie pas sa fabrication.
+sandbox_si_absente() {
+    local image="${DAA_SANDBOX_IMAGE:-data-analyst-agent-sandbox:0.1}"
+    if docker image inspect "$image" >/dev/null 2>&1; then
+        echo "image du bac à sable présente : $image"
+    else
+        echo "image du bac à sable absente : $image — construction depuis le contexte de la CI"
+        compose --profile outils build sandbox
+    fi
+}
+
+# Les dossiers que l'application n'a pas le droit de créer elle-même : ils sont
+# le point de MONTAGE du conteneur, donc ils doivent exister avant lui, sinon le
+# démon les crée en root et le conteneur (uid 1000) ne peut rien y écrire.
+arborescence() {
+    install -d -m 0700 -o 1000 -g 1000 \
+        "$DAA_DATA_DIR" \
+        "$DAA_DATA_DIR/workspaces" \
+        "$DAA_DATA_DIR/auth" \
+        "$DAA_DATA_DIR/tmp" \
+        "$DAA_DATA_DIR/sources" \
+        "$DAA_DATA_DIR/models"
+}
+
+case "${1:-}" in
+    start)
+        arborescence
+        sandbox_si_absente
+        # `--wait` rend la main quand la sonde /health répond, pas quand le
+        # conteneur est créé : l'unité systemd peut donc dépendre de ce retour.
+        compose up --detach --wait
+        echo "en service sur http://${DAA_HTTP_BIND:-127.0.0.1}:${DAA_HTTP_PORT:-8000}/"
+        ;;
+    stop)
+        compose down
+        ;;
+    restart)
+        compose down
+        exec "$0" start
+        ;;
+    status)
+        compose ps
+        ;;
+    logs)
+        shift
+        compose logs "${@:---follow}"
+        ;;
+    build)
+        compose build app
+        ;;
+    sandbox)
+        sandbox_si_absente
+        ;;
+    users)
+        shift
+        # Dans le conteneur EN MARCHE, et non dans un conteneur jetable : le
+        # mot de passe se saisit au terminal (getpass), ce qui demande un tty,
+        # et le magasin visé doit être celui du volume.
+        compose exec app python scripts/manage_users.py "$@"
+        ;;
+    backup)
+        exec "$DEPLOY_DIR/backup.sh" "${2:-}"
+        ;;
+    restore)
+        [[ -n "${2:-}" ]] || mourir "usage : daactl restore <archive.tar.gz>"
+        exec "$DEPLOY_DIR/restore.sh" "$2"
+        ;;
+    *)
+        sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+        exit 1
+        ;;
+esac

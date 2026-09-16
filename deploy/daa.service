@@ -1,0 +1,37 @@
+# Unité systemd du service. À installer ainsi (le chemin du dépôt apparaît
+# quatre fois ci-dessous : s'il n'est pas /opt/data-analyst-agent, le corriger
+# avant) :
+#
+#     sudo install -m 0644 deploy/daa.service /etc/systemd/system/daa.service
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now daa
+#
+# `enable` est ce qui fait revenir l'application après un redémarrage de la
+# machine ; `--now` la démarre sans attendre le prochain.
+
+[Unit]
+Description=data-analyst-agent — API et page de chat
+Documentation=file:/opt/data-analyst-agent/docs/INSTALLATION.md
+# Le service EST des conteneurs : sans le démon, il n'y a rien à démarrer.
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+# `oneshot` + `RemainAfterExit` parce que `docker compose up --detach` rend la
+# main : le processus de longue vie est le conteneur, tenu par le démon, pas
+# une commande que systemd surveillerait. C'est aussi ce qui rend l'unité
+# idempotente au démarrage — le démon peut avoir déjà relancé le conteneur
+# (`restart: unless-stopped`), `daactl start` le constate et n'en refait pas un.
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/data-analyst-agent
+ExecStart=/opt/data-analyst-agent/deploy/daactl start
+ExecStop=/opt/data-analyst-agent/deploy/daactl stop
+ExecReload=/opt/data-analyst-agent/deploy/daactl restart
+# `daactl start` attend que la sonde /health réponde (`compose up --wait`). Le
+# premier démarrage construit l'image si elle manque : large, exprès.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

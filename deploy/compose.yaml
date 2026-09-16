@@ -1,0 +1,84 @@
+# Le service de l'application. Se lance par `deploy/daactl start`, ou par
+# l'unité systemd `deploy/daa.service` qui appelle la même chose au démarrage
+# de la machine.
+#
+# AUCUN secret ici : le fichier ne porte que des noms de variables. Leurs
+# valeurs — mot de passe Postgres, clé d'API du moteur — vivent dans le fichier
+# d'environnement en 0600 désigné par DAA_ENV_FILE (défaut :
+# /etc/data-analyst-agent/daa.env), hors du dépôt. Le compose le lit deux fois,
+# et c'est voulu : `--env-file` sur la ligne de commande pour interpoler les
+# ${...} ci-dessous, `env_file:` ci-dessous pour les poser dans le conteneur.
+
+name: data-analyst-agent
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: data-analyst-agent:0.1
+    restart: unless-stopped
+
+    env_file:
+      - ${DAA_ENV_FILE:-/etc/data-analyst-agent/daa.env}
+
+    # 127.0.0.1 par défaut, et c'est une décision : le cookie de session est
+    # `Secure` en service, donc l'exposition publique passe par un terminaison
+    # TLS devant, pas par ce port. DAA_HTTP_BIND=0.0.0.0 pour l'ouvrir en
+    # connaissance de cause.
+    ports:
+      - "${DAA_HTTP_BIND:-127.0.0.1}:${DAA_HTTP_PORT:-8000}:8000"
+
+    # LE point délicat, et la raison pour laquelle il n'y a qu'UN volume.
+    #
+    # L'application ne calcule pas dans son propre conteneur : elle lance un
+    # conteneur FRÈRE (le bac à sable) et lui monte des fichiers. Ces montages
+    # sont interprétés par le démon de l'hôte, donc les chemins qu'elle lui
+    # donne doivent exister SUR L'HÔTE, à l'identique. Un dossier monté ailleurs
+    # dans le conteneur que là où il est sur l'hôte donnerait un `docker run`
+    # avec un chemin qui n'existe nulle part — et un bac à sable vide.
+    #
+    # D'où la règle : un seul dossier de données, monté au MÊME chemin absolu
+    # des deux côtés, et tout ce qui peut finir dans un montage vit dedans —
+    # les conversations (DAA_WORKSPACE_DIR), les fichiers des sources
+    # (DAA_CATALOG_PATH), et les CSV temporaires des tables SQL matérialisées
+    # (TMPDIR, sans quoi ils tomberaient dans le /tmp du conteneur).
+    volumes:
+      - ${DAA_DATA_DIR:?DAA_DATA_DIR manquant}:${DAA_DATA_DIR:?}
+      # La socket du démon : c'est par elle que le bac à sable est lancé.
+      # Ce que cela donne, et pourquoi c'est tenable, est écrit noir sur blanc
+      # dans docs/INSTALLATION.md §« Le bac à sable vu du conteneur ».
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    # Le conteneur tourne en 1000:1000 (cf. Dockerfile). `group_add` lui ajoute
+    # le groupe propriétaire de la socket, dont le gid dépend de la machine :
+    # `stat -c %g /var/run/docker.sock`.
+    group_add:
+      - "${DAA_DOCKER_GID:?DAA_DOCKER_GID manquant — stat -c %g /var/run/docker.sock}"
+
+    # Le moteur LLM et Postgres tournent SUR L'HÔTE, pas dans ce compose : le
+    # moteur est un service partagé (dépôt llm-service) qu'on ne relance pas
+    # ici. `host-gateway` donne au conteneur un nom pour joindre son hôte, ce
+    # que `localhost` ne fait pas depuis un conteneur.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # Journaux bornés : sans cela, un fichier json grossit jusqu'à remplir le
+    # disque, et un service qui tombe faute de place est un service qu'on n'a
+    # pas livré.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # L'image du bac à sable. Ce service ne DÉMARRE jamais : il n'est là que pour
+  # que `docker compose --profile outils build sandbox` sache la construire à
+  # partir du contexte qui existe déjà, celui-là même que la CI construit. Le
+  # profil l'écarte de `up`.
+  sandbox:
+    profiles: ["outils"]
+    image: ${DAA_SANDBOX_IMAGE:-data-analyst-agent-sandbox:0.1}
+    build:
+      context: ../src/data_analyst_agent/sandbox/image
+    command: ["/bin/true"]
