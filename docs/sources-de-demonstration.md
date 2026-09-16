@@ -203,6 +203,12 @@ vLLM, et par un runner : **16/16, 56 appels LLM**
 Les oracles de ce tableau ont été recalculés hors de l'agent à cette occasion :
 ils sont inchangés.
 
+**Et ce 16/16 mesure seize PHRASES, pas seize questions** — celles de la colonne
+« Question » ci-dessous, que nous avons écrites nous-mêmes. Chaque tour porte
+depuis deux paraphrases d'utilisateur, même intention et même oracle, et le
+score réel des quarante-huit est plus bas : cf. « Seize questions,
+quarante-huit phrases ».
+
 **Ce que comptent les seize tours**, puisque le décompte n'était pas détaillé :
 trois tours d'**ouverture** qui nomment une source et lient la conversation
 (`exploitation`, `telemetrie`, `facturation` — la table du verrou en montre un,
@@ -665,6 +671,39 @@ par borne **puis** par heure. Une consigne qui déplace la faute sans la retirer
 et qui coûte la moitié du temps du tour, ne vaut pas d'être gardée. C'est, à une
 autre échelle, la leçon de la section suivante.
 
+**La cause de cet aller-retour est lue, pas devinée, et ce n'est pas le
+dictionnaire.** `AnalysisResult` ne garde que le DERNIER code et la dernière
+exécution : le premier essai — celui dont on veut savoir pourquoi il échoue —
+n'y figure pas. Une sonde posée sur `SandboxSession.execute` l'enregistre. Trois
+tirages, trois fois le même couple, au caractère près :
+
+```text
+essai 1 (error) : releves_filtre['heure'] = releves_filtre['horodatage'].dt.floor('H')
+                  ValueError: Invalid frequency: H. ... Did you mean h?
+essai 2 (ok)    : # CORRECTION: Le message d'erreur indique que 'H' est invalide et suggère 'h'.
+                  releves_filtre['heure'] = releves_filtre['horodatage'].dt.floor('h')
+```
+
+**Une majuscule.** pandas a retiré les alias de fréquence capitalisés ; le modèle
+les écrit encore. Le dictionnaire n'est pour rien dans cette faute — il ne fait
+que conduire le code vers un arrondi temporel, là où « par heure » lu comme
+l'heure du jour (`dt.hour`) n'en touche aucun. Retirer quoi que ce soit au
+dictionnaire ne retirerait pas la majuscule.
+
+**Elle n'est pas corrigée, et voici pourquoi.** La seule correction possible sans
+toucher au dictionnaire est une consigne de prompt qui nomme l'alias. Elle a été
+essayée et mesurée au chantier précédent : le modèle écrit bien la minuscule du
+premier coup, les cinq tirages tiennent toujours en deux essais **sur une autre
+erreur**, et le tour passe de 34 s à 51 s. Ce serait, une fois de plus, un pari
+de prompt sur un détail de bibliothèque — exactement ce que la section « La colonne des comptes qui
+disparaissait » vient de retirer du produit.
+
+Le mécanisme qui répare réellement existe déjà, et il est structurel : la boucle
+de self-debug renvoie au modèle l'erreur RÉELLE, qui contient ici la correction
+en toutes lettres (« Did you mean h? »), et le second essai passe 3 fois sur 3.
+Un aller-retour de plus, dans une boucle qui en autorise trois, n'est pas un
+chiffre faux. Il est recensé, il n'est pas payé deux fois.
+
 #### Le module de coupe est partagé, pas dupliqué
 
 `agents/retrieval/dictionnaire` est devenu
@@ -745,41 +784,222 @@ Six règles, le relevé complet des sept formulations, ce que l'ambiguïté coû
 chiffres faux, et une liste de contrôle. Le dictionnaire d'`exploitation` est
 resté dans sa version réécrite.
 
-### La colonne des comptes qui disparaissait
+### La colonne des comptes qui disparaissait, et ce que « 0/5 → 5/5 » ne disait pas
 
 `Q4` demande « les trois stations avec le plus de sessions ? **donne leur code
 et leur nom** », et le modèle s'y tenait à la lettre : code et nom dans le
-`SELECT`, le compte seulement dans le `ORDER BY`. Mesuré 5 fois sur 5, sur le
-dictionnaire en service. L'ordre et les stations étaient justes, le SQL n'était
-pas filtré — une réponse littérale, pas un chiffre faux.
+`SELECT`, le compte seulement dans le `ORDER BY`. L'ordre et les stations
+étaient justes, le SQL n'était pas filtré — une réponse littérale, pas un
+chiffre faux, mais un palmarès sans ses chiffres ne dit pas de combien le
+premier devance le second, et ne se vérifie pas.
 
-Le remède tient en une ligne du prompt de l'agent SQL : la grandeur qui **classe**
-va dans le `SELECT`, et les colonnes que la question énumère sont un minimum,
-pas un maximum. **0/5 avant, 5/5 après**, avec 1 015 / 911 / 872 dans le
-tableau. Le parcours métier et la surface conversationnelle ne bougent pas.
+Le remède posé alors tenait en une ligne du prompt de l'agent SQL, et cette
+ligne **énumérait des tournures** : « les trois plus… », « le plus gros… »,
+« classe par… ». **0/5 avant, 5/5 après** — sur la phrase qui l'avait motivée.
 
-Il valait la peine d'être corrigé parce qu'un palmarès sans ses chiffres ne dit
-pas de combien le premier devance le second, et ne se vérifie pas. Un test de
-CONTENU tient cette ligne — le seul du fichier des prompts, parce qu'elle a un
-avant et un après chiffrés et que la retirer ferait revenir le défaut sans que
-rien n'échoue.
+Remesurée sur une SECONDE formulation de la même demande — « les trois stations
+**les plus sollicitées** : donne leur code et leur nom » — elle rend **0/3**. La
+tournure n'est pas dans la liste.
+
+C'est le pari que ce produit a déjà payé une fois : le lexique de mots-clés du
+planificateur plafonnait à 3 tournures sur 10 et a dû être remplacé par des
+outils que le modèle appelle. Une règle de prompt qui énumère des tournures est
+le même pari, déplacé d'un cran.
+
+#### Dix façons de demander le même palmarès
+
+Runner :
+[`scripts/mesure_classement_sans_lexique.py`](../scripts/mesure_classement_sans_lexique.py).
+Dix formulations d'utilisateur de la MÊME demande sur `exploitation`, trois
+tirages chacune, et **deux verdicts par tirage** :
+
+- **le SQL**, jugé par [`agents/retrieval/classement`](../src/data_analyst_agent/agents/retrieval/classement.py) :
+  toute expression du `ORDER BY` figure-t-elle dans le `SELECT` ? C'est la
+  propriété qu'on veut, énoncée sans regarder la question — donc mesurable
+  quelle que soit la phrase ;
+- **ce que l'utilisateur voit** : la réponse ET le tableau portent-ils les trois
+  stations et leurs trois comptes ?
+
+Les deux sont nécessaires. Un SQL en règle qui classe sur la mauvaise grandeur
+reste un tour faux, et ce n'est pas le même défaut.
+
+#### Quatre états, mesurés côte à côte
+
+| | SQL en règle | oracle | appels LLM | tours relancés |
+|---|---|---|---|---|
+| **(0)** la règle de C31, qui énumère des tournures | 27/30 | 21/30 | 150 | — |
+| **(a)** la règle reformulée : elle porte sur la REQUÊTE, pas sur les mots | **12/30** | 9/30 | 150 | — |
+| **(b)** vérification structurelle, AUCUNE règle de prompt | **30/30** | 21/30 | 164 | 14/30 |
+| **(b) + (0)** la vérification, et la règle gardée | **30/30** | **24/30** | 153 | **3/30** |
+
+Les appels LLM sont comptés par le runner, un par requête au serveur ; « tours
+relancés » est leur écart à 5 appels, qui est le coût d'un tour sans relance.
+Aucune durée n'est citée : deux de ces campagnes ont partagé le GPU avec une
+autre mesure, et un temps de tour ne se compare qu'à charge égale.
+
+**La voie (a) est un échec net, et c'est le résultat le plus instructif.** Dire
+la règle en propriété abstraite — « toute expression de ton ORDER BY figure
+aussi dans ton SELECT » — au lieu d'énumérer des tournures fait passer de 27/30
+à 12/30. Quatre formulations qui passaient cessent de passer. On ne remplace pas
+une liste de mots par une phrase mieux tournée : le prompt ne tient pas cette
+propriété, quelle que soit sa rédaction.
+
+**La voie (b) la tient, et sans regarder la question.** La vérification lit le
+SQL produit, repère les expressions du `ORDER BY` absentes du `SELECT`, et
+renvoie la remarque au modèle **en même temps que son résultat** — le tableau
+est déjà calculé et il est juste, le retenir pour forcer une correction
+transformerait un palmarès sans ses chiffres en tour mort. Une relance au plus
+par récupération, sur `retrieval_request_limit` : la redire à chaque requête
+dépenserait le budget sur une remarque déjà lue.
+
+**Une porte de sortie a été essayée, et retirée.** La première rédaction offrait
+au modèle de garder son résultat « si le tri ne sert qu'à rendre la sortie
+lisible ». Il a pris cette sortie **3 fois sur 3** sur la question même qui a
+motivé tout ceci, et la relance ne réparait rien. Une consigne qui propose de ne
+rien faire se fait suivre à la lettre.
+
+#### Ce qui est gardé, et pourquoi les deux
+
+**La vérification est la garantie ; la règle de prompt est devenue une
+économie.** C'est la mesure qui range les deux dans cet ordre : la vérification
+rend 30/30 avec ou sans la règle, et la règle fait écrire la projection juste du
+premier coup plus souvent — **3 relances au lieu de 14** sur trente tirages, soit
+153 appels LLM contre 164.
+
+Une consigne de prompt qui ne garantit rien mais qui fait gagner 7 % d'appels
+vaut d'être gardée. Ce qu'il fallait retirer, ce n'est pas la ligne : c'est
+l'idée qu'elle suffisait. Le test qui la tenait dans
+[`tests/unit/test_prompts.py`](../tests/unit/test_prompts.py) le dit maintenant
+dans ces termes.
+
+#### Deux autres familles, que ce correctif ne touche pas
+
+Trois formulations sur dix restent fausses contre l'oracle de `Q4`, avec un SQL
+**parfaitement en règle** — ce ne sont pas des palmarès sans chiffres, ce sont
+des palmarès d'autre chose :
+
+| formulation | ce que le modèle a classé | lecture |
+|---|---|---|
+| « **qui charge le plus** ? je veux les 3 premières stations… » | `SUM(energie_kwh)` | défendable : « charger » se lit en kilowattheures |
+| « **où est-ce qu'on recharge le plus** ? … » | `SUM(energie_kwh)` | idem |
+| « sur quelles stations y a-t-il eu le plus de **recharges** ? … » | `COUNT(*)` avec `WHERE statut = 'T'` | défendable : le dictionnaire dit que seules les sessions `'T'` sont des recharges abouties |
+
+La troisième est la plus intéressante : le modèle applique la définition que la
+source déclare, et l'oracle de `Q4` — qui compte TOUTES les sessions — est celui
+qui a tort pour cette phrase-là. Ces trois écarts sont recensés en dette : ils ne
+relèvent pas de la cause réparée ici, et les corriger demanderait de décider ce
+qu'une question ambiguë veut dire, ce qui n'est pas une décision de code.
+
+### Seize questions, quarante-huit phrases — ce que le 16/16 mesurait
+
+Le parcours ci-dessus est **16/16**. Il est mesuré sur seize phrases que nous
+avons écrites nous-mêmes, une par question. La section précédente montre ce que
+ce chiffre garantit : la phrase, pas la question.
+
+Chacun des seize tours porte donc maintenant **deux paraphrases** en plus de la
+sienne — même intention, même oracle, autre formulation : l'une courte et
+familière, l'autre longue et polie. Quarante-huit questions, trois tirages
+chacune, une commande :
+
+```bash
+DAA_CATALOG_PATH=sources/demonstration/catalogue.yaml \
+  uv run python scripts/mesure_parcours_de_demonstration.py --tirages 3
+```
+
+**Le score réel : 44 questions sur 48** (132 tirages conformes sur 144).
+
+| formulation | score | ce qui tombe |
+|---|---|---|
+| **canonique** — nos seize phrases | **48/48** | rien : le 16/16 se reproduit à trois tirages |
+| **courte** — « statut dans sessions, ça veut dire quoi ? » | **45/48** | une question |
+| **longue** — « Pourrais-tu m'ouvrir la source telemetrie… ? » | **39/48** | trois questions |
+
+Les douze échecs sont **quatre questions × trois tirages**, identiques d'un
+tirage à l'autre. Ce n'est pas du bruit de modèle : ce sont quatre défauts
+déterministes que seize phrases ne pouvaient pas voir.
+
+#### Les familles d'écart
+
+**A — l'ouverture polie perd le court-circuit de source.** Trois questions, neuf
+tirages. Un message réduit au nom d'une source (« telemetrie ») — ou presque
+(« passe sur telemetrie », « facturation, vas-y ») — déclenche le court-circuit
+déterministe de `_choix_de_source`, qui lie la source et l'annonce avec ses
+tables : « Entendu : on travaille sur **telemetrie** … 3 table(s), 547 820
+ligne(s) ». Une phrase polie ne le déclenche pas, et part à l'agent système, qui
+répond par l'inventaire des tables et de leurs colonnes — utile, mais il ne
+COMPTE pas les tables, et la source n'est pas liée pour le tour suivant.
+
+Le pire des trois est `verrou-ouverture` : « J'aimerais reprendre le travail sur
+la source exploitation, peux-tu la charger ? » est routée vers la récupération,
+qui répond honnêtement « Je n'ai pas interrogé la source pour cette question,
+je ne peux donc rien en affirmer. Reformule ». La réserve de forme du document
+disait que la question doit nommer sa source ; il faut y ajouter qu'un message
+d'ouverture doit s'y RÉDUIRE.
+
+`ouverture-exploitation·longue` passe, et c'est un faux succès instructif :
+l'agent système a rendu l'inventaire des CINQ sources, où « 6 table(s) »
+figure pour `exploitation`. L'oracle est satisfait par un chemin qui n'est pas
+celui qu'on mesure.
+
+**B — une question courte sur le sens d'une colonne ne cite plus sa source.**
+Une question, trois tirages. « statut dans sessions, ça veut dire quoi ? » part
+à la récupération au lieu de l'agent système, et la récupération répond
+JUSTE — « 'T' : Terminée, la recharge a abouti ; 'I' : Interrompue… », contenu
+qui ne peut venir que du dictionnaire, qu'elle a dans son prompt. Elle ne dit
+simplement pas « selon le dictionnaire de `exploitation` ». L'oracle exige cette
+attribution, et il a raison de l'exiger : c'est elle qui distingue une lecture
+de la source d'un savoir général sur les codes de statut. Le chiffre n'est pas
+faux ; la provenance n'est pas dite.
+
+#### Ce que la vérification de classement coûte sur ce parcours : rien
+
+Les quarante-huit questions ont été rejouées DEUX fois, trois tirages chacune —
+avant la vérification structurelle et après. **132/144 et 540 appels LLM des
+deux côtés**, aux mêmes quatre questions près. La relance ne se déclenche sur
+aucun des quarante-huit tours : la consigne de prompt suffit à faire projeter la
+grandeur sur ces phrases-là, et la vérification n'a rien à redire.
+
+C'est la réponse à « qu'est-ce que ça casse ailleurs ». Sur la seule campagne où
+elle se déclenche — les dix formulations de classement — elle coûte 3 relances
+sur 30 tirages. Partout ailleurs, elle est un filet qu'on ne sent pas.
+
+#### Ce qui est corrigé ici, et ce qui part en dette
+
+Rien de ces deux familles n'est corrigé dans ce chantier : **aucune ne relève de
+la cause du sujet 1**, et les traiter demanderait de rouvrir le routage des
+questions — le court-circuit de source pour A, la frontière entre agent système
+et récupération pour B. Les deux sont recensées, avec leur trace, comme matériau
+des chantiers suivants :
+
+| dette | portée | trace |
+|---|---|---|
+| **A** — le court-circuit de source ne reconnaît qu'un message réduit au nom d'une source | 3 questions sur 48, déterministe | `ouverture-telemetrie·longue`, `ouverture-facturation·longue`, `verrou-ouverture·longue` |
+| **B** — une question de sens formulée court est routée vers la récupération, qui répond juste sans citer le dictionnaire | 1 question sur 48, déterministe | `sens-statut·courte` |
+| **C** — trois formulations de classement choisissent une autre grandeur (énergie) ou appliquent le filtre `statut = 'T'` du dictionnaire | 3 formulations sur 10 du runner de classement | `F03`, `F07`, `F10` de `mesure_classement_sans_lexique` |
 
 ### Les garde-fous, et ce qui n'a pas bougé
 
 `assert_read_only`, `retrieval_request_limit`, `retrieval_max_rows` et le bac à
-sable au réseau coupé sont inchangés. La suite complète passe : **1 089 tests,
-99,56 % de couverture** (référence d'avant : 1 074 et 99,56 % ; avant elle,
-1 046 et 99,55 %).
+sable au réseau coupé sont inchangés. La vérification de classement s'intercale
+APRÈS `adapter.run`, donc après `assert_read_only` : elle ne voit que du SQL
+déjà accepté en lecture seule, et n'a aucun moyen d'en faire passer d'autre. Sa
+relance dépense `retrieval_request_limit` comme n'importe quel aller-retour, et
+elle est bornée à UNE par récupération.
+
+La suite complète passe : **1 128 tests, 99,58 % de couverture** (référence
+d'avant : 1 090 et 99,56 % ; avant elle, 1 074 et 99,56 %). Les trente-huit
+tests ajoutés sont tous du code pur, sans serveur ni modèle : la propriété que
+le prompt ne tenait pas est maintenant tenue par quelque chose qui se teste.
 
 La surface conversationnelle, rejouée sur vLLM contre `sources/catalogue.yaml`
-(`titanic` + `iris`, qui ne déclarent aucun dictionnaire et dont le prompt est
-donc inchangé au caractère près) : **36/36 questions méta et 4/4 témoins**.
-L'oracle durci ne se desserre pas.
+(`titanic` + `iris`, qui ne déclarent aucun dictionnaire) : **36/36 questions
+méta et 4/4 témoins**, 78 et 17 appels LLM. L'oracle durci ne se desserre pas,
+et la vérification de classement ne s'y déclenche pas une fois.
 
 Le parcours métier complet, rejoué depuis un message utilisateur : **16/16 sur
-vLLM, 56 appels LLM** — contre 69 à la campagne d'origine. L'économie vient des
-trois tours d'ouverture, désormais servis sans aucun appel au modèle par le
-court-circuit de choix de source.
+les seize phrases canoniques**, et **44/48** sur les quarante-huit questions —
+132 tirages conformes sur 144, à l'identique avant et après le correctif de
+classement, pour 540 appels LLM des deux côtés.
 
 Il se rejoue maintenant d'une commande :
 [`scripts/mesure_parcours_de_demonstration.py`](../scripts/mesure_parcours_de_demonstration.py).
@@ -799,9 +1019,12 @@ ne prend pas. Un banc qui n'imite pas fidèlement l'appelant réel fabrique des
 défauts qui n'existent que pour lui, et fait perdre le temps qu'on croyait
 gagner.
 
-**Ce qui restait à traiter est traité.** La colonne des comptes absente de Q4
-était la réserve laissée par le chantier précédent ; elle est mesurée et
-corrigée plus haut, 0/5 avant et 5/5 après.
+**Ce qui reste à traiter.** La colonne des comptes absente de `Q4` est corrigée,
+et cette fois sur dix formulations et non sur une : 30/30 SQL en règle. Trois
+dettes sont ouvertes et nommées — l'ouverture polie qui perd le court-circuit de
+source, la question de sens formulée court qui ne cite plus son dictionnaire, et
+les trois formulations de classement qui choisissent une autre grandeur. Aucune
+ne relève de la cause réparée ici ; toutes ont leur trace et leur runner.
 
 ## Jouer la démonstration
 
