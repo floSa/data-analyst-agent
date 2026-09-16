@@ -204,3 +204,66 @@ def test_un_dictionnaire_entier_ne_signale_rien(adapter):
         dictionary=DICO_DE_SOURCE,
     )
     assert outcome.dictionary_notice == ""
+
+
+# --- get_schema accepte un argument de table plutôt que de le refuser --------
+#
+# L'outil n'en prenait aucun. Sous vLLM, le modèle lui passait
+# `{"table_name": ...}`, la validation refusait, il réessayait, et le budget de
+# reprise valant 1 le tour mourait sur « la source de données n'a pas pu être
+# interrogée » — 9 fois sur 9, sur trois sources. Jamais sous Ollama : le même
+# modèle, deux gabarits d'appel d'outil.
+
+
+def test_get_schema_sans_argument_rend_le_schema_complet(adapter):
+    outcome = run_retrieval(
+        "Décris la source.",
+        adapter=adapter,
+        model=scripted_model(
+            [[ToolCallPart("get_schema", {})], [TextPart("La table mini a deux colonnes.")]]
+        ),
+        settings=make_settings(),
+    )
+    assert outcome.tools_used == ["get_schema"]
+
+
+def test_get_schema_accepte_un_nom_de_table_au_lieu_de_refuser(adapter):
+    """Le tour ABOUTIT là où il mourait : plus de validation à échouer."""
+    outcome = run_retrieval(
+        "Combien de lignes en tout ?",
+        adapter=adapter,
+        model=scripted_model(
+            [
+                [ToolCallPart("get_schema", {"table_name": "mini"})],
+                [ToolCallPart("run_sql", {"query": "SELECT count(*) AS n FROM mini"})],
+                [TextPart("4 lignes.")],
+            ]
+        ),
+        settings=make_settings(),
+    )
+    assert outcome.succeeded
+    assert outcome.result.rows == [[4]]
+
+
+def test_une_table_inconnue_rend_le_schema_complet_et_le_dit(adapter):
+    """Le modèle qui invente un nom a besoin de voir les vrais, pas d'un refus.
+
+    Même choix que ``run_sql``, qui rend son erreur SQL en texte au lieu de
+    lever : une boucle de correction se nourrit de ce qu'on lui rend.
+    """
+    from data_analyst_agent.agents.retrieval.agent import _schema_lisible
+
+    rendu = _schema_lisible(adapter.schema(), "passengers")
+    assert "inconnue" in rendu
+    assert "mini" in rendu  # les tables qui existent, et le schéma complet
+    assert "sexe" in rendu
+
+
+def test_un_nom_de_table_decore_est_reconnu(adapter):
+    """Le modèle écrit parfois `"mini"` ou `mini` — la décoration n'est pas un nom."""
+    from data_analyst_agent.agents.retrieval.agent import _schema_lisible
+
+    for ecriture in ("mini", " MINI ", '"mini"', "`mini`"):
+        rendu = _schema_lisible(adapter.schema(), ecriture)
+        assert "inconnue" not in rendu
+        assert "sexe" in rendu

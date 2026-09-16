@@ -29,6 +29,7 @@ from data_analyst_agent.agents.retrieval.sql import (
     DatabaseAdapter,
     QueryError,
     QueryResult,
+    SchemaInfo,
 )
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
@@ -96,10 +97,15 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
         return ctx.deps.adapter.schema().table_names()
 
     @agent.tool
-    def get_schema(ctx: RunContext[RetrievalDeps]) -> str:
-        """Schéma complet : tables, colonnes, types, clés étrangères."""
+    def get_schema(ctx: RunContext[RetrievalDeps], table_name: str = "") -> str:
+        """Schéma : tables, colonnes, types, clés étrangères.
+
+        `table_name` : une table à décrire seule. Laisse vide — le défaut —
+        pour le schéma COMPLET, qui est ce qu'il te faut dans presque tous les
+        cas (une jointure se lit sur plusieurs tables à la fois).
+        """
         ctx.deps.tools_used.append("get_schema")
-        return ctx.deps.adapter.schema().to_prompt()
+        return _schema_lisible(ctx.deps.adapter.schema(), table_name)
 
     @agent.tool
     def run_sql(ctx: RunContext[RetrievalDeps], query: str) -> str:
@@ -128,6 +134,35 @@ def composer_le_prompt(dialect: str, dictionnaire: DictionnaireInjecte | None) -
     base = prompts.render(prompts.RETRIEVAL, dialect=dialect)
     bloc = bloc_de_prompt(dictionnaire) if dictionnaire is not None else ""
     return f"{base}\n\n{bloc}" if bloc else base
+
+
+def _schema_lisible(schema: SchemaInfo, table_name: str) -> str:
+    """Le schéma, réduit à ``table_name`` quand elle existe — complet sinon.
+
+    **Un argument accepté plutôt qu'un argument interdit.** L'outil n'en prenait
+    aucun ; le modèle lui passait ``{"table_name": ...}``, la validation
+    refusait, il réessayait à l'identique, et le budget de reprise valant 1, le
+    tour mourait sur « la source de données n'a pas pu être interrogée ».
+    Mesuré 9 fois sur 9 sous vLLM, sur trois sources, jamais sous Ollama : un
+    même modèle, deux gabarits d'appel d'outil, un défaut qui n'apparaît que
+    d'un côté. Interdire l'argument revenait donc à parier sur un gabarit.
+
+    Un nom INCONNU rend le schéma complet plutôt qu'une erreur, et le dit. Le
+    modèle qui invente un nom de table a besoin de voir les vrais, pas d'un
+    refus : c'est la même boucle que celle de ``run_sql``, qui rend son erreur
+    SQL en texte au lieu de lever.
+    """
+    if not table_name.strip():
+        return schema.to_prompt()
+    vise = table_name.strip().strip("\"`'").lower()
+    for table in schema.tables:
+        if table.name.lower() == vise:
+            return table.to_ddl()
+    connues = ", ".join(schema.table_names()) or "(aucune)"
+    return (
+        f"Table {table_name!r} inconnue dans cette source. Tables existantes : "
+        f"{connues}. Voici le schéma complet :\n\n{schema.to_prompt()}"
+    )
 
 
 def run_retrieval(
