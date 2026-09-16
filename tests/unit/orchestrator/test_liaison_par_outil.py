@@ -263,3 +263,72 @@ def test_un_nom_inconnu_reste_distinct_d_un_nom_absent(deux_sources: Catalog, re
     assert "inconnue" in rendu
     assert "`ventes`" in rendu
     assert "`stocks`" in rendu
+
+
+# --- décrire UNE source, quand la question ne porte que sur elle --------------
+
+
+def test_une_question_sur_une_seule_source_ne_deballe_pas_le_catalogue(
+    deux_sources: Catalog, registre: Registry
+):
+    """« De quoi parle interventions et de quel type est-elle ? » vise UNE source.
+
+    L'outil n'avait pas d'argument : il rendait le catalogue entier, et le
+    modèle recopiait les cinq fiches — volumes et périodes compris — pour une
+    question qui en visait une. Mesuré sur le catalogue de démonstration, au
+    deuxième tour d'une conversation d'ouverture : personne ne lit cinq
+    paragraphes pour savoir qu'un CSV porte la main courante de la maintenance.
+
+    Même famille que `get_schema` sans argument : le modèle demande le détail
+    d'une chose, l'outil n'a que le tout à rendre.
+    """
+    deps = SystemeDeps(
+        catalogue_declare=deux_sources,
+        catalogue_effectif=deux_sources,
+        registre=registre,
+        question="de quoi parle la source stocks et de quel type est-elle ?",
+    )
+
+    rendu = deps.decrire_les_sources("stocks")
+
+    assert "stocks" in rendu
+    assert "L'état des stocks." in rendu
+    assert "ventes" not in rendu  # l'autre source n'a rien à faire là
+    assert deps.outils_appeles == ["sources_de_donnees"]
+
+
+def test_sans_cible_l_outil_rend_le_catalogue_entier(deux_sources: Catalog, registre: Registry):
+    """« Quelles sources as-tu ? » les demande TOUTES : c'est le cas nominal."""
+    deps = SystemeDeps(
+        catalogue_declare=deux_sources,
+        catalogue_effectif=deux_sources,
+        registre=registre,
+        question="quelles sources as-tu ?",
+    )
+
+    rendu = deps.decrire_les_sources()
+
+    assert "ventes" in rendu
+    assert "stocks" in rendu
+
+
+def test_une_cible_inconnue_rend_le_catalogue_plutot_qu_une_erreur(
+    deux_sources: Catalog, registre: Registry
+):
+    """Celui qui se trompe de nom a besoin de voir les vrais, pas d'un refus.
+
+    Même choix que `_schema_lisible` côté récupération : partout où l'on doute,
+    on rend le tout. Un refus coûterait un tour à quelqu'un qui n'a rien fait de
+    mal — le modèle a mal recopié un nom, l'utilisateur, lui, attend une réponse.
+    """
+    deps = SystemeDeps(
+        catalogue_declare=deux_sources,
+        catalogue_effectif=deux_sources,
+        registre=registre,
+        question="de quoi parle comptabilite ?",
+    )
+
+    rendu = deps.decrire_les_sources("comptabilite")
+
+    assert "ventes" in rendu
+    assert "stocks" in rendu

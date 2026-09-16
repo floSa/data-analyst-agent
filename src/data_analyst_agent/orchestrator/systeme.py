@@ -106,6 +106,37 @@ class SystemeDeps:
         self.faits.append(texte)
         return texte
 
+    def decrire_les_sources(self, cible: str = "") -> str:
+        """Le catalogue, ou UNE source quand la question ne porte que sur elle.
+
+        **Un outil qui ne sait pas se restreindre fait déballer tout le reste.**
+        Mesuré sur le catalogue de démonstration : « de quoi parle la source
+        interventions et de quel type est-elle ? » rendait les CINQ fiches, avec
+        leurs volumes et leurs périodes, pour une question qui en visait une. On
+        ne lit pas cinq paragraphes pour savoir qu'un fichier CSV porte la main
+        courante de la maintenance. C'est la même famille que `get_schema` sans
+        argument : le modèle demande le détail d'une chose, l'outil n'a que le
+        tout à rendre, et c'est l'utilisateur qui paie la différence.
+
+        Un nom INCONNU rend le catalogue entier plutôt qu'une erreur, comme
+        partout ici : celui qui se trompe de nom a besoin de voir les vrais.
+        """
+        vise = cible.strip().strip("\"`'").lower()
+        faits = self.releves.tous() if self.releves is not None else None
+        if vise:
+            trouvee = next(
+                (s for s in self.catalogue_declare.sources if s.name.lower() == vise), None
+            )
+            if trouvee is not None:
+                releve = self.releves.de(trouvee.name) if self.releves is not None else None
+                return self.retenir(
+                    "sources_de_donnees", introspection.fiche_de_source(trouvee, releve)
+                )
+        return self.retenir(
+            "sources_de_donnees",
+            introspection.decrire_les_sources(self.catalogue_declare, faits),
+        )
+
     def retenir_la_liaison(self, demandee: str) -> str:
         """Enregistre la source que le modèle veut lier, et rend son accueil.
 
@@ -191,17 +222,18 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         )
 
     @agent.tool
-    def sources_de_donnees(ctx: RunContext[SystemeDeps]) -> str:
+    def sources_de_donnees(ctx: RunContext[SystemeDeps], cible: str = "") -> str:
         """Les sources déclarées : nom, type, description, volume et période couverte.
+
+        `cible` : le nom d'UNE source, quand la question ne porte que sur
+        celle-là (« de quoi parle interventions ? », « elle est de quel
+        type ? »). Laisse vide pour le catalogue entier (« quelles sources
+        as-tu ? »).
 
         Le volume et la période sont LUS dans chaque source, jamais déduits de
         son nom : c'est la différence entre décrire un catalogue et le raconter.
         """
-        faits = ctx.deps.releves.tous() if ctx.deps.releves is not None else None
-        return ctx.deps.retenir(
-            "sources_de_donnees",
-            introspection.decrire_les_sources(ctx.deps.catalogue_declare, faits),
-        )
+        return ctx.deps.decrire_les_sources(cible)
 
     @agent.tool
     def schema_d_une_source(ctx: RunContext[SystemeDeps], cible: str = "") -> str:
