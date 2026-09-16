@@ -807,3 +807,140 @@ def test_le_module_ne_lit_ni_fichier_ni_base():
     source = Path(introspection.__file__).read_text(encoding="utf-8")
     for interdit in ("open(", "read_text", "connect(", "open_source"):
         assert interdit not in source
+
+
+# --- la consigne : elle suit les faits, dans les deux sens aussi --------------
+
+# L'extrait réel servi par `decrire_le_schema` pour « puissance_kw » sur le
+# catalogue de démonstration : la ligne de fiche du dictionnaire, telle que
+# `extrait_du_dictionnaire` la recopie. C'est elle qui porte la consigne.
+FAITS_AVEC_CONSIGNE = """\
+- `puissance_kw` (DOUBLE)
+
+Ce qu'en dit le dictionnaire de `telemetrie` :
+> | `puissance_kw` | Puissance instantanée mesurée, en **kilowatts**. \
+**`-1` est une valeur sentinelle** — le compteur n'a rien remonté — et n'est \
+pas une puissance : à écarter de toute moyenne. |"""
+
+# La même source, la même colonne, mais un extrait qui ne dit que le SENS :
+# c'est le témoin qui sépare « les faits portent une consigne » de « les faits
+# citent un dictionnaire ». Les deux moitiés de la ceinture sont distinctes.
+FAITS_SANS_CONSIGNE = """\
+- `cause` (VARCHAR)
+
+Ce qu'en dit le dictionnaire de `telemetrie` :
+> | `cause` | Libellé libre : `coupure secteur`, `défaut modem`. |"""
+
+
+def test_une_consigne_tue_ne_se_sert_pas():
+    """Le fait est rendu, l'impératif tombe — mesuré 3/3 sur deux campagnes.
+
+    C'est la dette `I`. La réponse est juste sur le SENS et muette sur ce qu'il
+    faut en faire : l'utilisateur sait que `-1` est particulier, il ne sait pas
+    que sa moyenne sera fausse s'il la calcule quand même.
+    """
+    reponse = (
+        "Selon le dictionnaire de `telemetrie`, la valeur `-1` de `puissance_kw` "
+        "est une valeur sentinelle indiquant que le compteur n'a rien remonté, "
+        "et qu'elle ne doit pas être considérée comme une puissance."
+    )
+
+    defaut = introspection.defaut_de_fondation(reponse, FAITS_AVEC_CONSIGNE)
+
+    assert defaut.startswith("consigne tue")
+
+
+def test_une_consigne_INVENTEE_ne_se_sert_pas():
+    """L'autre sens : une règle de traitement qu'aucun fait n'énonce.
+
+    Même nocivité que l'attribution inventée — elle donne l'autorité de la base
+    à un savoir général, et sur une valeur manquante elle change un calcul.
+    """
+    reponse = (
+        "Selon le dictionnaire de `telemetrie`, la colonne `cause` est un "
+        "libellé libre ; les valeurs vides sont à écarter de toute moyenne."
+    )
+
+    defaut = introspection.defaut_de_fondation(reponse, FAITS_SANS_CONSIGNE)
+
+    assert defaut.startswith("consigne inventée")
+
+
+@pytest.mark.parametrize(
+    "reponse",
+    [
+        # le mot du dictionnaire
+        "Selon le dictionnaire de `telemetrie`, `puissance_kw` à `-1` n'est pas "
+        "une puissance : à écarter de toute moyenne.",
+        # la variante qu'on avait vue passer en campagne
+        "Selon le dictionnaire de `telemetrie`, `puissance_kw` à `-1` est une "
+        "sentinelle et ne doit pas être incluse dans tout calcul de puissance.",
+        # un autre verbe, une autre construction
+        "Selon le dictionnaire de `telemetrie`, `puissance_kw` vaut `-1` quand le "
+        "compteur est muet ; il faut l'exclure du calcul de la moyenne.",
+        # le participe, au pluriel
+        "Selon le dictionnaire de `telemetrie`, les relevés de `puissance_kw` à "
+        "`-1` sont écartés des moyennes.",
+    ],
+)
+def test_quatre_tournures_de_la_MEME_consigne_passent(reponse):
+    """La ceinture tient un FAIT, pas une tournure — la leçon de la dette `E`.
+
+    Quatre formulations, aucun mot commun obligatoire, et aucune n'est celle
+    que le produit emploie ailleurs. Un oracle qui n'en admettrait qu'une
+    mesurerait notre vocabulaire, et il passerait jusqu'au jour où une
+    reformulation juste le ferait tomber.
+    """
+    assert introspection.defaut_de_fondation(reponse, FAITS_AVEC_CONSIGNE) == ""
+
+
+@pytest.mark.parametrize(
+    "reponse",
+    [
+        "La colonne `age` est de type FLOAT dans la table `passengers`.",
+        # « écart type » n'est pas « écarter » : le radical nu aurait crié ici
+        "La colonne `age` est de type FLOAT ; son écart type se calcule sur la table `passengers`.",
+        # une obligation POSITIVE n'est pas une consigne de dictionnaire
+        "La colonne `age` est de type FLOAT dans `passengers`, il faut en "
+        "calculer la moyenne sur les lignes renseignées.",
+    ],
+)
+def test_une_source_sans_dictionnaire_ne_declenche_rien(reponse):
+    """Le témoin obligatoire : `titanic` et `iris` ne déclarent aucun dictionnaire.
+
+    Aucune consigne à porter, donc rien ne doit se déclencher — ni dans un sens
+    ni dans l'autre. Les deux derniers cas sont les faux positifs qu'on a
+    cherchés exprès : un mot de statistique qui commence comme le verbe, et une
+    obligation qui n'interdit rien.
+    """
+    faits = "La table `passengers` de la source `titanic` :\n\n- `age` (FLOAT)"
+
+    assert introspection.defaut_de_fondation(reponse, faits) == ""
+
+
+def test_une_consigne_veut_une_interdiction_ET_un_calcul():
+    """Ni l'une ni l'autre ne suffit, et les deux tiennent dans la même phrase."""
+    assert introspection.porte_une_consigne("à écarter de toute moyenne") == "a ecarter"
+    # une interdiction sans calcul : c'est une phrase sur le sens
+    assert introspection.porte_une_consigne("elle ne doit pas être prise pour une puissance") == ""
+    # un calcul sans interdiction : c'est une phrase sur le calcul
+    assert introspection.porte_une_consigne("la moyenne juste vaut 68,76") == ""
+    # les deux, mais dans deux phrases : le texte n'énonce pas la consigne
+    assert introspection.porte_une_consigne("Ne pas s'y fier. La moyenne vaut 68,76.") == ""
+
+
+def test_la_consigne_ne_se_cherche_que_dans_le_dictionnaire_cite():
+    """Nos propres impératifs ne sont pas des consignes de la source.
+
+    Les faits que NOUS écrivons en portent — « Demande-moi une table en
+    particulier… » — et les compter ferait exiger d'une réponse qu'elle relaie
+    une invitation de l'application comme si la source l'avait écrite.
+    """
+    faits = (
+        "Voici les tables de chacune de mes sources :\n\n- **titanic** : `passengers`\n\n"
+        "Ne me demande pas de calculer une moyenne sans préciser la table."
+    )
+
+    assert (
+        introspection.defaut_de_fondation("Ma source est **titanic** : `passengers`.", faits) == ""
+    )

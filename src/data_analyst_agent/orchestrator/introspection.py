@@ -822,6 +822,11 @@ def defaut_de_fondation(reponse: str, faits: str) -> str:
       `surface-conversationnelle.md`).
     - **une attribution qui ne correspond pas aux faits**, dans les DEUX sens
       (``_attribution_qui_ne_colle_pas``).
+    - **une consigne qui ne correspond pas aux faits**, dans les DEUX sens
+      aussi (``_consigne_qui_ne_colle_pas``). Un dictionnaire ne dit pas
+      seulement ce qu'une valeur SIGNIFIE, il dit ce qu'il ne faut pas en
+      faire ; une reformulation qui garde le sens et laisse tomber l'impératif
+      rend un utilisateur informé et une moyenne fausse.
 
     Le message rendu est destiné à la **trace**, pas à l'utilisateur : ce qu'il
     lit, lui, est la réponse déterministe, qui ne dit pas qu'elle est un repli.
@@ -841,7 +846,9 @@ def defaut_de_fondation(reponse: str, faits: str) -> str:
     tues = [a for a in _actions(faits) if a not in plat]
     if tues:
         return "action(s) omise(s) : " + ", ".join(tues)
-    return _attribution_qui_ne_colle_pas(reponse, faits)
+    return _attribution_qui_ne_colle_pas(reponse, faits) or _consigne_qui_ne_colle_pas(
+        reponse, faits
+    )
 
 
 # Comment les faits annoncent qu'ils citent le dictionnaire d'une source. C'est
@@ -882,4 +889,152 @@ def _attribution_qui_ne_colle_pas(reponse: str, faits: str) -> str:
         return "provenance tue : les faits citent le dictionnaire, la réponse non"
     if donnee and not attendue:
         return "provenance inventée : aucun fait ne cite de dictionnaire"
+    return ""
+
+
+# --- la ceinture de CONSIGNE : un impératif des faits doit survivre ----------
+
+# Ce qui, dans une phrase, marque une INTERDICTION ou une mise à l'écart. Les
+# formes positives n'y sont pas, et c'est délibéré : « il faut calculer la
+# moyenne » n'est pas la consigne d'un dictionnaire, c'est une phrase
+# ordinaire, et l'y admettre ferait crier la ceinture sur les sources qui ne
+# déclarent rien. Une consigne de dictionnaire dit ce qu'il NE faut PAS faire
+# de la donnée — c'est le genre entier du piège : une valeur qui se laisse
+# calculer alors qu'elle n'est pas une mesure.
+_MARQUES_D_OBLIGATION = (
+    " a ecarter",
+    " a exclure",
+    " a retirer",
+    " a ignorer",
+    " a filtrer",
+    " a eviter",
+    " a proscrire",
+    " a ne pas ",
+    " ne doit pas ",
+    " ne doivent pas ",
+    " ne peut pas ",
+    " ne peuvent pas ",
+    " ne doit jamais ",
+    " ne doivent jamais ",
+    " il ne faut pas ",
+    " ne pas ",
+    " sans inclure",
+    " sans compter",
+    " sans tenir compte",
+    " ecarte",
+    " ecartant",
+    " exclure",
+    " exclu",
+    " ignorer",
+    " proscri",
+)
+
+# Ce sur quoi la consigne doit porter pour en être une : un CALCUL. Ce ne sont
+# pas nos mots — ce sont les noms des opérations elles-mêmes, ceux que le
+# dictionnaire écrit et ceux qu'une réponse juste écrit à son tour. « total »
+# n'y est pas : « sur un total de 10 000 relevés » est une tournure de
+# dénombrement, pas d'agrégation, et l'admettre confondrait les deux.
+_GRANDEURS_CALCULEES = (
+    "moyenne",
+    "moyenner",
+    "calcul",
+    "agregat",
+    "somme",
+    "mediane",
+    "percentile",
+    "quartile",
+    "comptage",
+    "statistique",
+    "avg",
+    "sum(",
+    "count(",
+    "mean",
+    "min(",
+    "max(",
+)
+
+# Une phrase, au sens où une consigne en tient une. Le point-virgule et le
+# deux-points comptent : « n'est pas une puissance : à écarter de toute
+# moyenne » est UNE consigne, et couper au seul point la garderait entière.
+_FIN_DE_PHRASE = re.compile(r"[.;:!?\n]")
+
+
+def porte_une_consigne(texte: str) -> str:
+    """La consigne que ``texte`` énonce — ``""`` s'il n'en énonce aucune.
+
+    Une consigne est une **interdiction qui porte sur un calcul**, et c'est la
+    conjonction des deux qui en fait une. Ni l'une ni l'autre ne suffit, et
+    c'est ce qui distingue les trois formulations qu'on a mesurées sur `S4` :
+
+    - « `-1` … n'est pas une puissance : **à écarter de toute moyenne** » —
+      interdiction (*à écarter*) sur un calcul (*moyenne*). C'est la consigne
+      du dictionnaire ;
+    - « elle **ne doit pas** être considérée comme une puissance » —
+      interdiction, aucun calcul. C'est une phrase sur le SENS, et c'est
+      exactement celle que le modèle rend 3 fois sur 3 en laissant tomber la
+      consigne ;
+    - « elle **ne doit pas** être incluse dans tout **calcul** de puissance » —
+      les deux. C'est la variante qu'on avait vue passer, et elle est juste.
+
+    Les deux doivent tenir dans la **même phrase**. Sans cette borne, un texte
+    qui interdit quelque chose au début et parle de moyenne à la fin passerait
+    pour porter une consigne qu'il n'énonce pas.
+
+    Rend la marque trouvée plutôt qu'un booléen : c'est ce qui rend la trace
+    lisible quand la ceinture écarte une formulation.
+    """
+    for phrase in _FIN_DE_PHRASE.split(texte):
+        plat = replie(phrase)
+        marque = next((m for m in _MARQUES_D_OBLIGATION if m in plat), "")
+        if marque and any(g in plat for g in _GRANDEURS_CALCULEES):
+            return marque.strip()
+    return ""
+
+
+def _citations(faits: str) -> str:
+    """Les seules lignes des faits que NOUS n'écrivons pas : le dictionnaire.
+
+    La consigne se cherche là et nulle part ailleurs. Le reste des faits est
+    notre propre texte, et il porte ses propres impératifs — « Demande-moi une
+    table en particulier… » — qui ne sont pas des consignes de traitement de la
+    donnée et n'ont rien à faire dans une réponse.
+    """
+    return "\n".join(
+        _CITATION.sub("", ligne) for ligne in faits.splitlines() if _CITATION.match(ligne)
+    )
+
+
+def _consigne_qui_ne_colle_pas(reponse: str, faits: str) -> str:
+    """La consigne de la réponse doit être celle des faits — dans les deux sens.
+
+    Même mécanique que ``_attribution_qui_ne_colle_pas``, sur un autre genre de
+    fait, et pour une raison mesurée : la ceinture vérifiait des NOMS, des
+    énumérations, des actions et une attribution, et laissait passer la perte
+    d'un IMPÉRATIF. C'est la dette `I`.
+
+    **Les faits portent une consigne, la réponse non.** Mesuré 3/3 sur deux
+    campagnes, sur « puissance_kw, ça signifie quoi ? » : le dictionnaire écrit
+    que `-1` est *à écarter de toute moyenne*, l'extrait servi le porte, et la
+    réponse s'arrête à « ce n'est pas une puissance ». L'utilisateur sait alors
+    que la valeur est particulière ; il ne sait pas que sa moyenne sera fausse
+    s'il la calcule quand même — et c'est l'écart entre 66,67 et 68,76 que ce
+    catalogue existe pour montrer. Une consigne perdue coûte un chiffre faux,
+    pas une nuance de style.
+
+    **La réponse porte une consigne, les faits non.** C'est la moitié qu'on
+    n'aurait pas écrite sans la leçon de l'attribution, et c'est la plus
+    nocive : une règle de traitement inventée sur une source qui n'en déclare
+    aucune donne l'autorité de la base à un savoir général. `titanic` et `iris`
+    ne déclarent aucun dictionnaire ; rien ne doit s'y déclencher, et c'est
+    exactement ce que le volet témoin de la mesure vérifie.
+
+    Dans les deux cas, ce sont les faits qui sont servis — et les faits, eux,
+    portent la consigne quand la source en écrit une, et se taisent sinon.
+    """
+    attendue = porte_une_consigne(_citations(faits))
+    donnee = porte_une_consigne(reponse)
+    if attendue and not donnee:
+        return f"consigne tue : les faits l'énoncent (« {attendue} »), la réponse non"
+    if donnee and not attendue:
+        return f"consigne inventée : aucun fait ne l'énonce (« {donnee} »)"
     return ""
