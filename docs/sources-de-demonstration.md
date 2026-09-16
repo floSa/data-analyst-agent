@@ -2004,6 +2004,435 @@ liaison — la voie corrigée est la moins chère des deux.
 tours qui exigent qu'une question posée en nommant une source soit RÉPONDUE et
 non avalée, et 9/9 sur le verrou. Aucun des deux oracles n'a eu à perdre.
 
+## Un chiffre calculé sur une tranche, rendu comme LE chiffre
+
+La dette `H` rangeait ce défaut sous « le routage n'atteint pas l'agent
+système », sur la foi d'un seul tour, `N1` :
+
+> « puissance_kw à -1, je dois le comprendre comment ? »
+> → « La valeur -1 est une valeur sentinelle indiquant une absence de mesure.
+> Sur les 10 000 relevés analysés, 290 relevés (soit 2,90 %) présentent cette
+> valeur. »
+
+La vérité est **16 447 sur 547 200, soit 3,01 %**. Le routage est la cause de
+cette phrase-là ; il n'est pas le défaut. Le défaut est qu'un chiffre calculé
+sur une **tranche matérialisée** sort sans être qualifié, et il ne se répare pas
+en corrigeant le routage d'une phrase.
+
+Ce chantier a donc écrit un runner pour la propriété plutôt que pour la phrase —
+[`mesure_tranche_ou_source.py`](../scripts/mesure_tranche_ou_source.py) — et il
+a rendu deux choses qu'on n'attendait pas. Les deux sont dites avant les
+correctifs, parce que les deux corrigent la dette elle-même.
+
+### Le critère, nommé avant la mesure
+
+Le critère n'est pas « le bon chiffre ». Un chiffre d'échantillon **annoncé
+comme tel** est une réponse honnête ; c'est le chiffre d'échantillon **muet**
+qui est faux, parce qu'il se lit comme un chiffre de la source. Quatre
+verdicts, et un seul échec :
+
+| verdict | ce que c'est | |
+|---|---|---|
+| `source` | le chiffre rendu est celui de la source entière | ✔ |
+| `tranche qualifiée` | le chiffre rendu est celui de la tranche, et le texte rendu à l'utilisateur dit que le compte porte sur autre chose que la source | ✔ |
+| **`tranche muette`** | le chiffre rendu est celui de la tranche et rien ne le dit | **✘ seul échec** |
+| `sans chiffre` | ni l'un ni l'autre — tour perdu, ou réponse sans aucune grandeur | compté à part |
+
+Ce qui vaut QUALIFICATION est un FAIT, pas un mot — la leçon des dettes `E` et
+`G`. Le fait « ce compte ne porte pas sur la source » se porte de deux façons,
+et une seule suffit : **la taille de la tranche est écrite à côté du chiffre**
+(« sur les 10 000 relevés analysés, 290 »), ce qui est une vérification
+**numérique** et ne dépend d'aucune tournure ; ou bien la réponse **dit**
+l'échantillon, par une disjonction de tournures énumérée dans le runner
+(`TOURNURES_DE_TRANCHE`) et donc montrée.
+
+Ce que l'oracle laisse passer, dit franchement : une réponse qui écrirait 10 000
+pour une tout autre raison passerait la première branche, et une réponse qui
+dirait « échantillon » en rendant quand même le chiffre comme s'il était celui
+de la source passerait la seconde. Aucune des deux ne vérifie que l'utilisateur
+a COMPRIS ; elles vérifient que l'information est SORTIE.
+
+### Les huit questions, et le résultat qu'on n'attendait pas
+
+Huit questions de comptage ou de proportion, sur les deux seules sources du
+catalogue qui dépassent la tranche, formulées comme un utilisateur les pose et
+**sans jamais nommer leur source** — elle est liée au fil. Les deux assiettes
+sont calculées hors de l'agent, en SQL direct : la table entière, et
+`SELECT * … LIMIT 10 000`, qui est exactement ce que le nœud d'analyse
+matérialise.
+
+| clé | source | question | vrai (source) | vrai (tranche) |
+|---|---|---|---|---|
+| `T1` | `telemetrie` | « combien de relevés sont à -1 sur la puissance ? » | **16 447** | 290 |
+| `T2` | `telemetrie` | « les compteurs muets, ça représente quelle proportion des relevés ? » | **3,01 %** | 2,90 % |
+| `T3` | `telemetrie` | « au total, j'ai combien de relevés de puissance ? » | **547 200** | 10 000 |
+| `T4` | `telemetrie` | « combien de fois une borne a répondu avec une puissance à zéro ? » | **44 197** | 806 |
+| `E1` | `exploitation` | « en tout, ça fait combien de sessions ? » | **48 000** | 10 000 |
+| `E2` | `exploitation` | « combien de sessions ont le statut T ? » | **42 281** | 8 762 |
+| `E3` | `exploitation` | « quelle part des sessions a été interrompue ? » | **8,99 %** | 9,51 % |
+| `E4` | `exploitation` | « combien de sessions sont tombées en erreur ? » | **1 405** | 287 |
+
+Le 290 / 2,90 % de la dette est **exactement** le chiffre de la tranche : la
+reproduction est acquise, et l'oracle aussi.
+
+**Trois tirages chacune, sur vLLM, avant tout correctif : 24/24 sur la source,
+zéro tranche muette.** Les vingt-quatre tours passent par
+`system → plan → retrieval → synthesize`, et `retrieval` compte en SQL, sur la
+table entière.
+
+| clé | avant (3 tirages) | après (3 tirages) |
+|---|---|---|
+| `T1` | 16 447 ✔ ×3 | 16 447 ✔ ×3 |
+| `T2` | 3,01 ✔ ×3 | 3,01 ✔ ×3 |
+| `T3` | 547 200 ✔ ×3 | 547 200 ✔ ×3 |
+| `T4` | 44 197 ✔ ×3 | 44 197 ✔ ×3 |
+| `E1` | 48 000 ✔ ×3 | 48 000 ✔ ×3 |
+| `E2` | 42 281 ✔ ×3 | 42 281 ✔ ×3 |
+| `E3` | 8,99 ✔ ×3 | 8,99 ✔ ×3 |
+| `E4` | 1 405 ✔ ×3 | 1 405 ✔ ×3 |
+| | **24/24** | **24/24** |
+
+**La dette se trompe donc sur son étendue.** Elle affirmait que le défaut
+« concerne TOUTE question qui compte sur une source plus grande que
+`analysis_table_max_rows` ». Il n'en est rien : une question de comptage est
+routée vers le SQL, et le SQL ne connaît pas la tranche. Ce qui compte sur la
+tranche, c'est ce qui finit dans le nœud d'**analyse** — et `N1` y finit parce
+que c'est une question de SENS mal routée, pas parce que c'est un comptage.
+
+### Et la dette se trompe une seconde fois : le texte AVERTIT
+
+Reproduction de `N1`, telle quelle, avec la réponse **entière** :
+
+> La valeur `puissance_kw = -1` est identifiée comme une "Valeur Sentinelle"
+> indiquant une absence de mesure. Sur les 10000 relevés analysés, 290 relevés
+> (soit 2.90%) présentent cette valeur. […]
+>
+> **Données tronquées : releves_puissance coupée(s) à 10000 lignes (réglage
+> DAA_ANALYSIS_TABLE_MAX_ROWS) — tout agrégat qui porte sur elles (somme,
+> moyenne, comptage) décrit cet échantillon, pas la table entière.**
+
+La dette écrivait « rien dans le texte n'avertit l'utilisateur ». C'est faux :
+`_avis_de_troncature` remonte par la trace, et `_with_context_notices`
+l'**appose à la réponse** — pas seulement à la trace. La dette avait été écrite
+sur un extrait de la réponse, et l'extrait s'arrêtait avant l'avis. Par le
+critère énoncé plus haut, cette réponse est **acceptable**.
+
+C'est la leçon de méthode de ce chantier, et elle vaut la mesure : *une dette
+écrite depuis une citation tronquée décrit le texte qu'on a coupé, pas celui que
+le produit rend.*
+
+### Là où la propriété se rompt vraiment : ce qui change de nœud
+
+Restait à chercher le défaut là où il vit. Lu dans le code, **quatre** endroits
+du socle livrent une tranche — pour trois réglages, parce que deux d'entre eux
+partagent le leur — et **deux seulement** avaient une voix :
+
+| coupe | réglage | avait-elle une voix ? |
+|---|---|---|
+| la table matérialisée pour l'analyse | `DAA_ANALYSIS_TABLE_MAX_ROWS` | **oui** — `_avis_de_troncature`, jusque dans la réponse |
+| le résultat d'une requête | `DAA_RETRIEVAL_MAX_ROWS` | **oui** — la synthèse écrit « (résultat tronqué par la limite de lignes) » |
+| le **rejeu** d'un code sur ces mêmes CSV | `DAA_ANALYSIS_TABLE_MAX_ROWS` | **non** |
+| un **tableau intermédiaire** remonté au tour suivant | `DAA_RETRIEVAL_MAX_ROWS` | **non** |
+
+Le rejeu est le cas qui se mesure, et il se mesure en deux tours dans le même
+fil. Deuxième volet du runner, 3 tirages :
+
+| tour | ce que rend la réponse | qualifié ? |
+|---|---|---|
+| 1 — « fais-moi un camembert des relevés selon qu'ils sont à -1, à 0 ou positifs » | « sur un total de **10 000** relevés … 290 » + l'avis de troncature | **oui** |
+| 2 — « reprends ce graphique et mets-le en bleu » | « 8904 valeurs positives, 806 valeurs nulles, et **290** » | **non — 3/3** |
+
+Le même chiffre, redevenu muet en changeant de nœud. Et l'utilisateur n'a aucun
+moyen de le savoir : le tour d'avant s'était très bien passé.
+
+La cause est structurelle et non rédactionnelle. L'avis naît dans le **décor de
+données** (`_decor_de_donnees`), qui est un gestionnaire de contexte : il meurt
+avec le bloc qui monte les CSV. Le premier jet a son avis sous la main
+(`_analysis_node`) ; le rejeu, lui, traverse l'agent de **rappel** avant d'être
+rendu, et le nœud qui le rend n'a plus le décor. `_rejouer_un_code` nommait
+d'ailleurs cet avis `_avis` — le souligné qui dit « je jette ».
+
+### Le correctif : la tranche voyage avec la grandeur
+
+`AnalysisResult` porte désormais un `truncation_notice`, à côté du
+`dictionary_notice` qui existait déjà et pour exactement la même raison : ce qui
+a été amputé doit voyager avec le résultat, parce que le résultat est ce qui
+traverse les nœuds. `_rejouer_un_code` l'attache, `_rendu_du_rejeu` le remonte.
+
+Le tableau intermédiaire est traité de la même façon, et un cran plus loin :
+`WorkspaceArtifact` porte un `tronque`, `save_table` le retient, et
+`_mount_workspace` le rend au décor — le code engendré voit `TRONQUÉ` en face du
+fichier, et l'utilisateur reçoit l'avis. C'est la même coupe que celle de la
+requête, vue au tour où elle devient dangereuse : quand la phrase de la synthèse
+est loin derrière et qu'on recompte sur le CSV gardé.
+
+**Ce qui n'a PAS été fait, et pourquoi.** Un troisième avis avait été écrit pour
+le nœud de récupération, puis retiré. La synthèse dit déjà la coupe, dans la
+même phrase que le tableau ; un second message au même endroit est du bruit, et
+aucune campagne n'a montré de chiffre muet sur ce chemin. Un correctif sans
+défaut mesuré derrière lui est une rédaction, pas une réparation.
+
+**Et l'autre piste a été mesurée, pas supposée.** « Un comptage appartient au
+SQL et non au Python, et le nœud peut le savoir » : c'est vrai, et le socle le
+fait déjà — 24/24 des questions de comptage partent au SQL toutes seules.
+Ajouter une règle pour forcer ce qui arrive déjà aurait déplacé du code sans
+déplacer un chiffre.
+
+### Après, et ce que ça vaut
+
+Mêmes huit questions, mêmes trois tirages, plus le volet rejeu :
+
+| volet | avant | après |
+|---|---|---|
+| **comptage** (8 questions × 3) | 24/24 — 24 sur la source, **0 tranche muette** | **24/24** — identique |
+| **rejeu** (2 × 3, verdict sur le 2ᵉ tour) | 0/6 — **3 tranche muette**, 3 sans chiffre | **3/6** — 3 tranche qualifiée, **0 tranche muette**, 3 sans chiffre |
+
+Les trois `R1` passent de « tranche muette » à « tranche qualifiée », et ce qui
+les qualifie est la branche NUMÉRIQUE de l'oracle — le volume de la tranche,
+10 000, écrit dans la réponse. Les trois `R2` restent « sans chiffre » : la
+réponse du rejeu n'y reprend aucune grandeur, il n'y a donc rien à qualifier.
+Elles portent l'avis quand même, et elles ne sont comptées ni dans un sens ni
+dans l'autre — un tour sans chiffre n'est pas un succès de cet oracle.
+
+**Le chiffre qui compte est le troisième : 3 tranches muettes → 0.**
+
+Trois tests unitaires tiennent la propriété, hors de tout serveur : le rejeu qui
+dit sa coupe, le tableau intermédiaire qui reste une tranche au tour suivant,
+et — obligatoire — le tableau **entier** qui ne se qualifie de rien, parce
+qu'accuser une donnée complète ferait douter d'un chiffre juste.
+
+### Dette I — la ceinture ne tenait pas une consigne
+
+`defaut_de_fondation` vérifiait quatre choses : un nom inventé, un nom omis, une
+action tue, une attribution qui ne colle pas. Elle ne vérifiait pas qu'un
+**impératif** porté par les faits survive à la reformulation.
+
+Le cas est `S4`. Le dictionnaire de `telemetrie` écrit que `-1` « n'est pas une
+puissance : **à écarter de toute moyenne** », l'extrait servi le porte, et la
+réponse du modèle s'arrêtait à la première moitié :
+
+> « … la valeur **`-1`** est une **valeur sentinelle** indiquant que le compteur
+> n'a rien remonté, et qu'elle **ne doit pas être considérée comme une
+> puissance**. »
+
+Un utilisateur qui lit cela sait que la valeur est particulière ; il ne sait pas
+que sa moyenne sera fausse s'il la calcule quand même. C'est l'écart entre 66,67
+et 68,76, et c'est ce que ce catalogue existe pour montrer.
+
+#### Ce qu'est une consigne, et ce qui la distingue
+
+C'est la même mécanique que la ceinture des actions écrite en C34, sur un autre
+genre de fait — et la difficulté est ailleurs. Une action se reconnaît par le
+radical de son verbe ; une consigne ne peut pas se reconnaître par ses mots,
+sinon on réécrit l'oracle au jargon qu'on vient de retirer (dette `E`).
+
+Elle se reconnaît par sa forme : **une interdiction qui porte sur un calcul**,
+les deux dans la même phrase. C'est la conjonction qui discrimine, et elle
+tranche exactement les trois formulations mesurées :
+
+| formulation | interdiction | calcul | consigne ? |
+|---|---|---|---|
+| « n'est pas une puissance : **à écarter** de toute **moyenne** » — le dictionnaire | ✔ | ✔ | **oui** |
+| « elle **ne doit pas** être considérée comme une puissance » — ce que le modèle rendait 3/3 | ✔ | ✘ | **non** |
+| « elle **ne doit pas** être incluse dans tout **calcul** de puissance » — la variante vue en campagne | ✔ | ✔ | **oui** |
+
+La deuxième est une phrase sur le SENS ; les deux autres disent ce qu'il faut
+faire de la donnée. Aucun mot n'est obligatoire : quatre tournures différentes
+de la même consigne passent, et elles sont tenues par un test paramétré.
+
+Trois choix sont écrits dans le module parce qu'ils sont des limites, pas des
+détails :
+
+- **les formes positives sont hors de la liste.** « Il faut calculer la
+  moyenne » n'est pas la consigne d'un dictionnaire ; l'admettre ferait crier la
+  ceinture sur les sources qui ne déclarent rien.
+- **le mot « total » n'est pas un mot de calcul.** « Sur un total de 10 000
+  relevés » est une tournure de dénombrement, pas d'agrégation.
+- **la consigne ne se cherche que dans les lignes CITÉES du dictionnaire.** Le
+  reste des faits est notre propre texte, et il porte ses impératifs à nous
+  (« Demande-moi une table en particulier… ») qui n'ont rien à faire dans une
+  réponse.
+
+#### Mesurée dans les deux sens, et le témoin est obligatoire
+
+| sens | cas | verdict |
+|---|---|---|
+| **consigne tue** | les faits l'énoncent, la réponse non — la formulation mesurée 3/3 | écartée ✔ |
+| **consigne inventée** | une règle de traitement affirmée là où aucun fait n'en porte | écartée ✔ |
+| témoin — prose juste sur `titanic` | « la colonne `age` est de type FLOAT » | rien ✔ |
+| témoin — **« son écart type se calcule sur `passengers` »** | le mot de statistique qui commence comme le verbe | rien ✔ |
+| témoin — **« il faut en calculer la moyenne »** | une obligation qui n'interdit rien | rien ✔ |
+
+Les deux derniers témoins sont les faux positifs qu'on est allé chercher exprès.
+Un radical nu — `ecart` — aurait crié sur « écart type », et une liste
+d'obligations non signée aurait crié sur « il faut calculer ».
+
+La seconde moitié de la règle est la plus nocive des deux, comme pour
+l'attribution : une règle de traitement affirmée sur une source qui n'en déclare
+aucune donne l'autorité de la base à un savoir général. `titanic` et `iris` ne
+déclarent aucun dictionnaire, donc aucune consigne à porter, et rien ne doit s'y
+déclencher.
+
+#### Ce que la ceinture touche réellement dans le catalogue
+
+Relevé sur les cinq dictionnaires, colonne par colonne :
+
+| source | colonnes | portent une consigne |
+|---|---|---|
+| `exploitation` | 19 | 0 |
+| `facturation` | 12 | 0 |
+| `referentiel` | 6 | 0 |
+| `interventions` | 7 | **1** — `duree_indispo_min` |
+| `telemetrie` | 11 | **1** — `puissance_kw` |
+
+**2 sur 55**, et ce sont les deux valeurs sentinelles du catalogue — les pièges
+nº 2 et nº 4. La ceinture n'est pas un filet large qu'on aurait tendu au hasard.
+
+Une limite, et elle est assumée : le piège nº 1 d'`exploitation` — « **Règle par
+défaut : AUCUN filtre sur `statut`** » — n'est pas vu comme une consigne, parce
+que c'est une règle **positive** et non une interdiction. Exiger d'une réponse
+qui explique ce que `statut` signifie qu'elle relaie en plus la règle de filtre
+serait pédant. La ceinture attrape le genre des sentinelles ; elle ne prétend
+pas attraper tout ce qu'un dictionnaire prescrit.
+
+#### Ce que ça change sur la campagne
+
+| campagne | avant | après |
+|---|---|---|
+| `mesure_provenance_du_sens.py`, campagne 1 | 27/30 | **30/30** |
+| `mesure_provenance_du_sens.py`, campagne 2 | 27/30 | **30/30** |
+| — dont `S4`, oracle au FAIT | **0/3** ×2 | **3/3** ×2 |
+| — dont volet témoin (`titanic`, `iris`) | 12/12 | **12/12** — inchangé |
+
+**Et il faut dire ce que l'utilisateur reçoit.** La ceinture ne fait pas dire la
+consigne au modèle : elle l'empêche de servir une formulation qui la perd, et
+sert les FAITS à la place. Ce que le tour rend est donc l'extrait du
+dictionnaire, tel quel :
+
+> Dans la table `releves_puissance`, la colonne `puissance_kw` est de type
+> DOUBLE. Elle est obligatoire (NOT NULL).
+>
+> Ce qu'en dit le dictionnaire de `telemetrie` :
+> > | `puissance_kw` | Puissance instantanée mesurée, en **kilowatts**. **`-1`
+> > est une valeur sentinelle** — le compteur n'a rien remonté — et n'est pas
+> > une puissance : **à écarter de toute moyenne**. […]
+
+C'est moins joli qu'une phrase, et c'est le même arbitrage que pour les noms et
+pour l'attribution : un gabarit qu'on garde justement parce qu'il vaut mieux
+qu'une reformulation qui perd ce qui compte. La consigne, elle, arrive.
+
+### Dette G — le troisième oracle au jargon, aligné sur le fait
+
+`sens-puissance` du parcours exigeait deux sous-chaînes : `dictionnaire` et
+**`sentinelle`**. Le second est le mot du dictionnaire et du produit — pas celui
+d'une réponse juste. C'est exactement le travers que la dette `E` avait relevé
+sur `S4`, et il avait été laissé en place **délibérément** : l'oracle passait
+3/3, donc rien ne l'obligeait, et le desserrer sans nécessité aurait gonflé un
+chiffre sans rien apprendre.
+
+Cet arbitrage était le bon sur le moment et il ne l'est plus, pour une raison
+que ce chantier a rendue visible : **un oracle au jargon qui passe est plus
+dangereux qu'un oracle au jargon qui échoue.** Il passera jusqu'au jour où une
+reformulation juste le fera tomber, et ce jour-là on lira une régression du
+produit là où il n'y en aura pas. La dette `F` a coûté deux campagnes pour
+apprendre ce que vaut une régression mal imputée ; on ne laisse pas un troisième
+oracle la préparer.
+
+Il y avait pire, et c'est le fait qui a tranché : **les deux oracles ont donné
+des verdicts opposés sur la même colonne.** Avant ce chantier, sur
+`telemetrie.puissance_kw`, `S4` échouait 0/3 sur le fait « `-1` sort des
+moyennes » et `sens-puissance` déclarait 3/3 sur le mot « sentinelle ». Le même
+dictionnaire et la même colonne — et un tableau de bord sur deux qui l'annonçait
+verte.
+
+**Ce que la mesure a corrigé dans ce raisonnement.** On aurait pu en conclure
+que `sens-puissance` couvrait la même consigne perdue que `S4`. Il ne la
+couvrait pas : le socle a été remis à l'état d'AVANT la ceinture de consigne, et
+`sens-puissance` y passe **3/3 avec l'oracle au fait**. Les deux tours ne
+posaient pas la même question — `sens-puissance` NOMME sa source, `S4` la laisse
+au fil — et le tour qui nomme sa source recevait déjà une réponse qui portait
+les deux faits. L'alignement est donc **préventif et non correctif**, et c'est
+dit ici parce que le contraire serait plus flatteur.
+
+#### L'oracle, avant et après
+
+| | avant | après |
+|---|---|---|
+| ce qu'il exige | les sous-chaînes `dictionnaire` **et** `sentinelle`, en conjonction | **trois FAITS**, chacun une disjonction : `-1` n'est pas une puissance (11 tournures), il sort des agrégats (18 tournures), et l'attribution (2) |
+| ce qu'il laisse passer | une réponse qui écrit « sentinelle » sans dire ce qu'il faut en faire — c'est-à-dire la réponse défectueuse | une réponse qui emploierait la bonne tournure sur une autre colonne ; aucune vérification de la syntaxe du filtre, seulement que le fait est ÉNONCÉ |
+| ce qu'il rejetterait à tort | « `-1` ne correspond à aucune mesure et doit être exclu des moyennes » — juste, et sans le mot | rien de mesuré |
+| d'où viennent ses disjonctions | écrites sur place | **importées** de `mesure_provenance_du_sens` — les mêmes que `S4` et que `N1` |
+
+Ce dernier point n'est pas de la cosmétique. Trois runners mesuraient la même
+colonne, le même dictionnaire et la même question posée de trois façons, avec
+**trois copies** des mêmes disjonctions. Trois occasions d'en élargir une et
+d'oublier les deux autres — et c'est arrivé : la disjonction de `S4` avait été
+élargie en cours de campagne précédente pour admettre « ne doit pas être incluse
+dans tout calcul de puissance », et les deux autres ne l'avaient pas été. Elles
+sont maintenant une seule (`FAITS_DE_LA_SENTINELLE`), pour le même motif que
+`MAX_DISTINCT_VALUES` dans le socle.
+
+#### Son verdict sur une campagne complète
+
+L'exigence était : *s'il change de verdict, dis-le.* Il n'en change pas, et le
+tableau le montre des deux côtés du correctif — l'avant mesuré sur le socle
+remis à `41d15c3`, pas déduit.
+
+| | oracle d'avant (« sentinelle ») | oracle d'après (les trois faits) |
+|---|---|---|
+| socle **avant** la ceinture de consigne | 3/3 | **3/3** |
+| socle **après** | 3/3 | **3/3** |
+
+Zéro point gagné, zéro point perdu, sur un parcours qui reste à **48/48**.
+C'était le but : un oracle qu'on aligne sans nécessité ne doit rien rapporter,
+sinon c'est qu'on s'est offert un chiffre. Ce qu'on achète ici n'est pas un
+point, c'est une alarme qui sonnera pour la bonne raison le jour où elle
+sonnera.
+
+### Toutes les campagnes de ce chantier
+
+Sur vLLM (`google/gemma-4-E4B-it-qat-w4a16-ct`, `http://localhost:8100/v1`),
+catalogue de démonstration semé. L'« avant » de la ceinture de consigne est
+mesuré sur le socle **remis à `41d15c3`**, pas déduit.
+
+| campagne | référence | après | ce qui l'a bougée |
+|---|---|---|---|
+| `mesure_tranche_ou_source.py` — volet **comptage** (8 × 3) | 24/24, **0 muette** | **24/24**, 0 muette | inchangée — c'est ce qu'on voulait |
+| `mesure_tranche_ou_source.py` — volet **rejeu** (2 × 3) | 0/6, **3 muettes** | **3/6**, **0 muette** | l'avis de troncature voyage avec le résultat d'analyse |
+| `mesure_provenance_du_sens.py`, 2 campagnes | 27/30 | **30/30** ×2 | la ceinture de consigne — `S4` passe de 0/3 à 3/3 |
+| `mesure_parcours_de_demonstration.py` (48 questions) | 48/48 | **48/48**, 178 appels | inchangée ; `sens-puissance` 3/3 des deux oracles |
+| `mesure_ouverture_de_source.py` | 51/51 | **51/51**, 156 appels | inchangée |
+| `mesure_question_de_sens.py` | 27/36 | **27/36** | inchangée — cf. la note ci-dessous |
+| `mesure_classement_sans_lexique.py` | 30/30 | **30/30** (SQL en règle 30/30) | inchangée |
+| `mesure_surface_conversationnelle.py`, 2 campagnes | 36/36 + 4/4 | **36/36 + 4/4** ×2 | inchangée |
+| `mesure_ambiguite_de_source.py` (C22) | 6/6 propositions | **6/6** | inchangée |
+| `mesure_choix_de_source.py` (C15) | vert | **vert**, 25 appels pour 6 tours | inchangée |
+| suite `pytest` | 1 171 / 99,60 % | **1 185 / 99,60 %** | 14 tests neufs |
+
+#### Une régression qui n'en était pas, et la dette `F` qui a servi
+
+La première campagne de `mesure_question_de_sens.py` a rendu **24/36** au lieu
+de 27, et une seule ligne bougeait : `N5`, « montant_ttc_eur et montant_ht_eur,
+quelle différence ? », passée de 3/3 à 0/3 sur la provenance.
+
+Le réflexe aurait été de l'imputer à la ceinture de consigne, écrite dans le
+même chantier. Deux mesures l'ont écarté, et elles ne disent pas la même chose :
+
+| socle | `N5` | nœuds |
+|---|---|---|
+| **avant** la ceinture (`41d15c3` remis) | **2/2 conforme** | `system → plan → retrieval → synthesize` |
+| **après**, campagne 1 | 0/3 | `system → plan → retrieval → synthesize` |
+| **après**, campagne 2 | **3/3 conforme** | `system → plan → retrieval → synthesize` |
+
+Le chemin est le **même** dans les trois cas, et la ceinture ne vit pas dessus :
+elle est dans le nœud système, que ce tour traverse sans appeler d'outil. Ce
+qui varie est la formulation de l'agent SQL, d'une campagne à l'autre, sur un
+prompt identique.
+
+C'est la leçon de la dette `F`, appliquée : *mesurer deux fois avant de conclure
+quoi que ce soit.* Une campagne unique aurait fait porter à la ceinture une
+régression qui ne lui appartient pas — et l'aurait peut-être fait défaire.
+
 **Ce qui reste à traiter.** Les trois dettes du chantier précédent sont closes,
 et ce qui subsiste est plus petit et mieux cerné. La dette tenue à jour :
 
@@ -2016,9 +2445,9 @@ et ce qui subsiste est plus petit et mieux cerné. La dette tenue à jour :
 | **E** — deux oracles mesurent une typographie ou un jargon plutôt qu'un fait | 1 tour sur 48, 1 sur 30 | `sens-statut·longue` du parcours, `S4` du runner de provenance | **close** — desserrés avec leur avant/après, et verdict strict conservé à côté. Le desserrage rapporte **1 point** en tout (`sens-statut·longue`) et **0** après correctif ; `S4` n'était pas un défaut d'oracle mais un fait qui manquait |
 | **F** — deux questions méta de la surface conversationnelle tombaient, et on l'avait mis sur le compte d'une dérive de la référence | 2 sur 36, déterministe | `sources-tu-bosses`, `capacites-demander-quoi` | **close** — deux campagnes de chaque côté ont montré une régression du chantier ; le verbe de l'outil de liaison et un trou de la ceinture ; 34/36 → **36/36 à deux campagnes** |
 
-| **G** — un troisième oracle exige le mot « sentinelle », et n'a PAS été touché | 3 formulations sur 48 | `sens-puissance` du parcours | **ouverte, délibérément** — il passe 3/3 avant comme après, donc rien ne l'obligeait ; le desserrer sans nécessité aurait gonflé un chiffre sans rien apprendre |
-| **H** — trois formulations de question de sens n'atteignent toujours pas l'agent système | 2 sur 18 au volet sens, 1 sur 18 au témoin | `N1`, `N3`, `W3` de `mesure_question_de_sens.py` | **ouverte** — quatre leviers déjà tirés ; un cinquième viserait ces phrases-là et non leur propriété. `N1` est la plus coûteuse : elle ressort en **statistique fausse sur un échantillon**, pas en échec |
-| **I** — la reformulation perd la CONSIGNE du dictionnaire | 1 tour sur 30, 2 campagnes sur 2 | `S4` du runner de provenance | **ouverte** — la réponse dit que `-1` n'est pas une puissance et omet qu'il fausse les moyennes. Les faits servis à l'agent la portent ; c'est le résumé qui la laisse tomber, et aucune ceinture ne tient aujourd'hui une consigne — `defaut_de_fondation` vérifie des noms, des énumérations et une attribution, pas un impératif |
+| **G** — un troisième oracle exige le mot « sentinelle », et n'a PAS été touché | 3 formulations sur 48 | `sens-puissance` du parcours | **close** — aligné sur les trois mêmes FAITS que `S4`, et il les IMPORTE : trois copies d'une disjonction sur la même colonne étaient trois occasions d'en élargir une seule. Parcours **48/48**, `sens-puissance` 3/3 avec l'ancien oracle comme avec le nouveau |
+| **H** — un chiffre de tranche sort sans être qualifié | mesuré sur 8 questions × 3, plus 2 rejeux × 3 | `N1` de `mesure_question_de_sens.py`, `R1`/`R2` de `mesure_tranche_ou_source.py` | **close sur la tranche, ouverte sur le ROUTAGE** — et la dette se trompait deux fois : le texte AVERTIT déjà (`_with_context_notices`), et le défaut ne concerne pas tout comptage (24/24 sur la source). Il vivait dans ce qui change de nœud : le rejeu, **3 tranches muettes → 0**. Ce qui reste ouvert est le routage de `N1`, `N3`, `W3` vers l'agent système — un défaut distinct, et `N1` n'est plus une statistique fausse MUETTE, seulement une réponse d'un autre genre |
+| **I** — la reformulation perd la CONSIGNE du dictionnaire | 1 tour sur 30, 2 campagnes sur 2 | `S4` du runner de provenance | **close** — `_consigne_qui_ne_colle_pas` : une interdiction qui porte sur un calcul, mesurée dans les deux sens, témoins sans dictionnaire verts. `S4` **0/3 → 3/3**, provenance **27/30 → 30/30 à deux campagnes**, et 2 colonnes sur 55 du catalogue déclenchent la ceinture |
 
 `D` et `E` sont closes, et elles se ferment sur le même constat : **ni l'une ni
 l'autre n'était le défaut d'oracle qu'on croyait.** `D` avait un oracle à moitié
@@ -2029,10 +2458,26 @@ bien notre vocabulaire, et les desserrer n'a rendu qu'un seul point : le reste
 côté de l'oracle laissait croire que le produit allait bien.
 
 `F` laisse une leçon qui ne tient pas dans un tableau — on l'avait imputée au
-modèle sans l'avoir mesurée deux fois. `G` et `H` sont ouvertes par choix : la
-première parce qu'un oracle qu'on desserre sans nécessité est un chiffre qu'on
-s'offre, la seconde parce qu'un cinquième tour de prompt cesserait de chercher
-une propriété pour viser trois phrases.
+modèle sans l'avoir mesurée deux fois.
+
+`G`, `H` et `I` se ferment sur une leçon qui prolonge celle de `D` et `E`, et
+qui la retourne : **une dette peut se tromper sur son propre énoncé.** `H`
+affirmait deux choses que la mesure a démenties — que rien n'avertit
+l'utilisateur, et que tout comptage est touché — et elle avait été écrite depuis
+une citation coupée avant l'avis qu'elle déclarait absent. Le défaut existait
+bel et bien ; il n'était simplement ni là ni aussi large qu'on le croyait.
+
+`G` ajoute la sienne, et c'est la plus contre-intuitive : **un oracle au jargon
+qui PASSE est plus dangereux qu'un oracle au jargon qui échoue.** Avant ce
+chantier, deux oracles jugeaient la même colonne et se contredisaient —
+`S4` échouait 0/3 sur le fait, `sens-puissance` déclarait 3/3 sur le mot — et
+c'est le second qu'on lisait. Le laisser ouvert « parce qu'il passe » revenait à
+garder un témoin vert branché sur rien.
+
+Ce qui reste ouvert est le **routage** : `N1`, `N3` et `W3` n'atteignent
+toujours pas l'agent système, et c'est délibéré — quatre leviers ont déjà été
+tirés, un cinquième cesserait de chercher une propriété pour viser trois
+phrases.
 
 ## Jouer la démonstration
 
@@ -2066,6 +2511,7 @@ uv run python scripts/mesure_provenance_du_sens.py --tirages 3
 uv run python scripts/mesure_question_de_sens.py --tirages 3
 uv run python scripts/mesure_classement_sans_lexique.py --tirages 3
 uv run python scripts/mesure_classement_sans_lexique.py --tirages 3 --oracle-davant
+uv run python scripts/mesure_tranche_ou_source.py --tirages 3
 uv run python scripts/mesure_choix_de_source.py
 ```
 
