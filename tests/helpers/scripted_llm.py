@@ -101,6 +101,16 @@ class ScriptedLLM:
             last_user = ""
             for message in messages:
                 if isinstance(message, ModelRequest):
+                    # Un agent donne son prompt de DEUX façons, et le routage
+                    # doit reconnaître les deux : en `system_prompt` (une part
+                    # du message) ou en `instructions` (un champ du message,
+                    # réémis à chaque requête). L'agent système est passé aux
+                    # secondes le jour où il a reçu le tour d'avant en
+                    # historique — `pydantic-ai` n'émet un `system_prompt` que
+                    # sur un historique VIDE. Sans cette ligne, ce n'est pas un
+                    # test qui tombe, c'est chaque test qui traverse ce nœud,
+                    # sur « aucun script pour le prompt système : '' ».
+                    system = message.instructions or system
                     for part in message.parts:
                         if isinstance(part, SystemPromptPart):
                             system = part.content

@@ -604,36 +604,134 @@ def test_une_source_IMPOSEE_par_l_appelant_ne_lie_rien_depuis_l_agent_systeme(
     assert "Je travaille sur la source" not in reponse.answer
 
 
-def test_le_tour_precedent_est_rappele_en_tete_du_message():
-    """« Oui » n'a de sens que si l'on sait à quoi il répond.
+def test_le_tour_precedent_part_comme_de_vrais_messages():
+    """« Oui » n'a de sens que si l'on sait à quoi il répond — et sous quelle forme.
 
     Mesuré le 2026-09-16, et c'est l'agent qui pose le piège : il demande
     « souhaitez-vous que je consulte le schéma de `referentiel` et
-    `facturation` ? », l'utilisateur répond « oui », et « oui » tout seul ne
-    concerne aucun outil — le tour repartait au planificateur, qui rendait
-    « je n'ai pas bien compris ta demande ». Après le rappel : les deux schémas.
+    `facturation` ? », l'utilisateur répond « oui », et le tour repartait au
+    planificateur, qui rendait « je n'ai pas bien compris ta demande ».
 
-    En TÊTE, et étiqueté : ce qu'on lit en dernier est ce à quoi on répond, et
-    le rappel est du contexte, pas une seconde question.
+    Le tour d'avant recopié dans le message ne suffisait pas : le modèle
+    répondait ``TextPart("travailler_sur_une_source(source='referentiel')")``
+    — il avait compris, il ÉCRIVAIT l'appel au lieu de l'émettre, et un appel
+    écrit n'est pas un appel. Deux messages, une question et sa réponse, et le
+    modèle émet un vrai appel d'outil.
     """
-    from data_analyst_agent.orchestrator.systeme import _avec_le_tour_precedent
+    from data_analyst_agent.orchestrator.systeme import _le_tour_precedent_en_messages
 
-    rendu = _avec_le_tour_precedent(
-        "oui", ("que contient referentiel ?", "Souhaitez-vous que je consulte son schéma ?")
+    messages = _le_tour_precedent_en_messages(
+        ("que contient referentiel ?", "Souhaitez-vous que je consulte son schéma ?")
     )
 
-    assert rendu.index("TOUR PRÉCÉDENT") < rendu.index("MESSAGE À TRAITER")
-    assert "que contient referentiel ?" in rendu
-    assert rendu.rstrip().endswith("oui")
-    # sans tour précédent, le message part tel quel : rien ne change au premier tour
-    assert _avec_le_tour_precedent("oui", None) == "oui"
+    assert [type(m).__name__ for m in messages] == ["ModelRequest", "ModelResponse"]
+    assert messages[0].parts[0].content == "que contient referentiel ?"
+    assert messages[1].parts[0].content == "Souhaitez-vous que je consulte son schéma ?"
+    # sans tour précédent, aucun historique : rien ne change au premier tour
+    assert _le_tour_precedent_en_messages(None) == []
+
+
+def test_sans_reponse_de_l_agent_il_n_y_a_rien_a_continuer():
+    """Une question sans réponse ne porte rien qu'un « oui » puisse reprendre."""
+    from data_analyst_agent.orchestrator.systeme import _le_tour_precedent_en_messages
+
+    assert _le_tour_precedent_en_messages(("et ?", "   ")) == []
+    assert _le_tour_precedent_en_messages(("", "")) == []
 
 
 def test_la_reponse_precedente_est_bornee():
-    """Ce prompt repart à chaque aller-retour d'outil : l'inventaire y tiendrait deux fois."""
-    from data_analyst_agent.orchestrator.systeme import _avec_le_tour_precedent
+    """L'historique repart à chaque aller-retour d'outil : l'inventaire y tiendrait deux fois."""
+    from data_analyst_agent.orchestrator.systeme import (
+        REPONSE_PRECEDENTE_MAX_CARACTERES,
+        _le_tour_precedent_en_messages,
+    )
 
-    rendu = _avec_le_tour_precedent("oui", ("et ?", "x" * 5000))
+    messages = _le_tour_precedent_en_messages(("et ?", "x" * 5000))
 
-    assert len(rendu) < 1200
-    assert "[…]" in rendu
+    rendu = messages[-1].parts[0].content
+    assert len(rendu) < REPONSE_PRECEDENTE_MAX_CARACTERES + 20
+    assert rendu.endswith("[…]")
+
+
+def test_le_prompt_de_l_agent_systeme_survit_a_l_historique():
+    """Des instructions, pas un `system_prompt` — sinon l'historique l'efface.
+
+    ``pydantic-ai`` n'émet les parts de `system_prompt` que sur un historique
+    VIDE (``UserPromptNode.run``). L'agent système en reçoit un dès le second
+    tour d'une conversation : en `system_prompt`, il tournerait alors sans la
+    règle qui lui interdit d'inventer un nom de source.
+    """
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from data_analyst_agent import prompts
+    from data_analyst_agent.orchestrator.systeme import SystemeDeps, build_systeme_agent
+
+    recus: list[str] = []
+
+    def capture(messages, info):
+        dernier = messages[-1]
+        systeme = dernier.instructions or ""
+        for part in dernier.parts:
+            if type(part).__name__ == "SystemPromptPart":
+                systeme += part.content
+        recus.append(systeme)
+        return ModelResponse(parts=[TextPart("AUTRE")])
+
+    deps = SystemeDeps(
+        catalogue_declare=Catalog(sources=[]),
+        catalogue_effectif=Catalog(sources=[]),
+        registre=Registry([], Path(".")),
+        question="oui",
+    )
+    historique = [
+        ModelRequest(parts=[UserPromptPart(content="quelles sources ?")]),
+        ModelResponse(parts=[TextPart(content="`ventes`. Veux-tu son schéma ?")]),
+    ]
+    build_systeme_agent().run_sync(
+        "oui", model=FunctionModel(capture), deps=deps, message_history=historique
+    )
+
+    assert len(recus) == 1
+    assert prompts.gabarit(prompts.SYSTEME).strip() in recus[0]
+
+
+def test_le_tour_d_avant_arrive_au_modele_comme_un_dialogue(mini_csv: Path, registre: Registry):
+    """Bout en bout : ce que l'appelant passe à `run_systeme` arrive en messages.
+
+    Le contrat qui compte n'est pas la forme de la liste construite plus haut,
+    c'est ce que le modèle REÇOIT : une question, sa réponse, puis le message
+    du tour. Un dialogue, et pas un paragraphe qui raconte un dialogue — c'est
+    la différence entre un appel d'outil émis et un appel d'outil écrit en
+    prose (cf. `_le_tour_precedent_en_messages`).
+    """
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from data_analyst_agent.orchestrator.systeme import run_systeme
+
+    vus: list[tuple[str, str]] = []
+
+    def capture(messages, info):
+        for message in messages:
+            for part in message.parts:
+                contenu = getattr(part, "content", "")
+                if isinstance(contenu, str) and type(part).__name__ != "SystemPromptPart":
+                    vus.append((type(part).__name__, contenu))
+        return ModelResponse(parts=[TextPart("AUTRE")])
+
+    run_systeme(
+        "oui",
+        model=FunctionModel(capture),
+        catalogue_declare=Catalog(sources=[FileSource(name="ventes", path=mini_csv)]),
+        catalogue_effectif=Catalog(sources=[FileSource(name="ventes", path=mini_csv)]),
+        registre=registre,
+        request_limit=3,
+        echange_precedent=("quelles sources ?", "`ventes`. Veux-tu son schéma ?"),
+    )
+
+    assert vus == [
+        ("UserPromptPart", "quelles sources ?"),
+        ("TextPart", "`ventes`. Veux-tu son schéma ?"),
+        ("UserPromptPart", "oui"),
+    ]

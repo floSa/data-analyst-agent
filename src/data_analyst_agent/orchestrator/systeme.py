@@ -53,6 +53,13 @@ from contextlib import closing
 from dataclasses import dataclass, field
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
@@ -61,6 +68,11 @@ from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, Source, open_source
 from data_analyst_agent.agents.retrieval.faits import RelevesDuCatalogue
 from data_analyst_agent.orchestrator import introspection
+
+# Ce qu'on garde de la réponse précédente. Elle peut peser un inventaire
+# entier, et l'historique repart à chaque aller-retour de la boucle d'outils :
+# une réponse non bornée se paierait autant de fois qu'il y a d'outils appelés.
+REPONSE_PRECEDENTE_MAX_CARACTERES = 600
 
 
 def _trouver_la_source(catalogue: Catalog, nom: str) -> Source | None:
@@ -245,12 +257,21 @@ class ResultatSysteme:
 
 
 def build_systeme_agent() -> Agent[SystemeDeps, str]:
-    """L'agent et ses sept outils : cinq sujets documentés, la recherche par sujet, la liaison."""
-    agent: Agent[SystemeDeps, str] = Agent(deps_type=SystemeDeps, output_type=str)
+    """L'agent et ses sept outils : cinq sujets documentés, la recherche par sujet, la liaison.
 
-    @agent.system_prompt
-    def system_prompt(ctx: RunContext[SystemeDeps]) -> str:
-        return prompts.gabarit(prompts.SYSTEME)
+    Le prompt part en ``instructions`` et non en ``system_prompt``, et ce n'est
+    pas un détail de style : un ``system_prompt`` n'est émis par ``pydantic-ai``
+    que lorsque l'historique de messages est VIDE (``UserPromptNode.run`` :
+    ``if not messages: parts.extend(await self._sys_parts(...))``). Or cet
+    agent reçoit désormais le tour d'avant comme historique. Des instructions,
+    elles, sont réémises à chaque requête quel que soit l'historique — c'est
+    exactement ce qu'il faut ici, et c'est mesuré : l'historique passé sans
+    instructions fait tourner cet agent SANS son prompt, donc sans la règle qui
+    lui interdit d'inventer un nom.
+    """
+    agent: Agent[SystemeDeps, str] = Agent(
+        deps_type=SystemeDeps, output_type=str, instructions=prompts.gabarit(prompts.SYSTEME)
+    )
 
     @agent.tool
     def capacites_de_l_agent(ctx: RunContext[SystemeDeps]) -> str:
@@ -382,31 +403,51 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
     return agent
 
 
-def _avec_le_tour_precedent(question: str, echange: tuple[str, str] | None) -> str:
-    """Le message, précédé du tour d'avant quand il y en a un.
+def _le_tour_precedent_en_messages(echange: tuple[str, str] | None) -> list[ModelMessage]:
+    """Le tour d'avant, donné comme de VRAIS messages — et non recopié dans le nouveau.
 
-    En tête et non en queue : ce qu'on lit en dernier est ce à quoi on répond,
-    et c'est le message de l'utilisateur qu'il faut traiter. Le rappel est du
-    CONTEXTE, pas une seconde question — d'où l'étiquette explicite, sans
-    laquelle le modèle répond parfois au tour d'avant.
+    **Ce que la forme d'avant coûtait, montré par le fil brut.** Le tour d'avant
+    était recopié en tête du message de l'utilisateur, sous l'étiquette « TOUR
+    PRÉCÉDENT […] MESSAGE À TRAITER MAINTENANT ». Mesuré sur vLLM le
+    2026-09-16, amorce « Quelles sources de données as-tu ? », continuation
+    « Oui » : le modèle répond ::
 
-    La réponse précédente est bornée : elle peut peser un inventaire entier, et
-    ce prompt repart à chaque aller-retour de la boucle d'outils.
+        TextPart("travailler_sur_une_source(source='referentiel')")
+
+    Il a compris — il nomme le bon outil et le bon argument. Mais il l'ÉCRIT au
+    lieu de l'ÉMETTRE : aucun ``ToolCallPart``, donc ``outils_appeles`` vide,
+    donc « ce n'est pas une question sur le système », donc le tour repart au
+    planificateur, qui rend « je n'ai pas bien compris ta demande » suivi du
+    menu. Le même tour donné comme deux messages rend un vrai appel d'outil et
+    la réponse attendue. Ce n'est pas la compréhension qui manquait, c'est la
+    FORME : un bloc de prose qui raconte un dialogue ne met pas le modèle dans
+    la position de continuer un dialogue.
+
+    La réponse précédente reste bornée, et pour la raison d'avant : elle peut
+    peser un inventaire entier, et l'historique repart à chaque aller-retour de
+    la boucle d'outils.
+
+    Le tour d'avant seulement, jamais la transcription : ce qui manque à
+    « oui », à « et dedans ? » ou à « tu ne m'as pas répondu » est le tour
+    d'avant, et le prompt de cet agent est déjà le plus chargé du socle.
     """
     if echange is None:
-        return question
+        return []
     precedente, reponse = echange
-    if not precedente.strip() and not reponse.strip():
-        return question
+    dite = precedente.strip()
     extrait = reponse.strip()
-    if len(extrait) > 600:
-        extrait = extrait[:600] + " […]"
-    return (
-        "TOUR PRÉCÉDENT, pour comprendre ce qui suit — n'y réponds pas.\n"
-        f"L'utilisateur avait dit : {precedente.strip()}\n"
-        f"Tu avais répondu : {extrait}\n\n"
-        f"MESSAGE À TRAITER MAINTENANT : {question}"
-    )
+    if not extrait:
+        # Rien à continuer : sans réponse de l'agent, le message qui suit ne
+        # reprend rien, et un historique réduit à une question sans réponse
+        # coûterait des tokens pour ne rien porter.
+        return []
+    if len(extrait) > REPONSE_PRECEDENTE_MAX_CARACTERES:
+        extrait = extrait[:REPONSE_PRECEDENTE_MAX_CARACTERES] + " […]"
+    messages: list[ModelMessage] = []
+    if dite:
+        messages.append(ModelRequest(parts=[UserPromptPart(content=dite)]))
+    messages.append(ModelResponse(parts=[TextPart(content=extrait)]))
+    return messages
 
 
 def _ontologies(precision: str, deps: SystemeDeps) -> list[introspection.Ontologie]:
@@ -451,9 +492,10 @@ def run_systeme(
     concerne aucun outil — le tour repart au planificateur, qui rend « je n'ai
     pas bien compris ta demande ».
 
-    Un tour, pas la transcription entière : ce qui manque à « oui », à « et
-    dedans ? » ou à « tu ne m'as pas répondu » est le tour d'avant, et le prompt
-    de cet agent est déjà le plus chargé du socle.
+    Il part en ``message_history``, c'est-à-dire comme de VRAIS messages. Le
+    recopier en tête du message de l'utilisateur ne suffisait pas, et le fil
+    brut dit pourquoi : le modèle écrivait l'appel d'outil en prose au lieu de
+    l'émettre (cf. ``_le_tour_precedent_en_messages``).
     """
     deps = SystemeDeps(
         catalogue_declare=catalogue_declare,
@@ -464,9 +506,10 @@ def run_systeme(
         source_de_travail=source_de_travail,
     )
     run = build_systeme_agent().run_sync(
-        _avec_le_tour_precedent(question, echange_precedent),
+        question,
         model=model,
         deps=deps,
+        message_history=_le_tour_precedent_en_messages(echange_precedent),
         usage_limits=UsageLimits(request_limit=request_limit),
     )
     return ResultatSysteme(
