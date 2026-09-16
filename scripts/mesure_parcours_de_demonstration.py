@@ -71,10 +71,29 @@ class Tour:
     courte: str = ""
     longue: str = ""
     source: str = ""
+    # La source qui doit être LIÉE au fil après le tour — l'oracle de la dette D.
+    # Il ne se lit pas dans le texte : une réponse peut nommer une source, et la
+    # décrire parfaitement, sans avoir rien retenu. C'est exactement le cas qui
+    # passait inaperçu, et le même oracle existe déjà dans
+    # `mesure_ouverture_de_source.py` pour la même raison.
+    liee: str = ""
     # Ce que la réponse (ou le tableau) doit porter : des nombres, à la
     # tolérance près, et des fragments de texte.
     nombres: tuple[float, ...] = ()
     fragments: tuple[str, ...] = ()
+    # Les FAITS que la réponse doit porter, chacun une disjonction de tournures
+    # dont une seule suffit. C'est la forme desserrée de `fragments`, et elle
+    # existe pour une raison précise : `fragments` est une conjonction de
+    # sous-chaînes exactes, donc il mesure une TYPOGRAPHIE dès que le fait peut
+    # s'écrire de deux façons. `sens-statut` exigeait `'T'` avec des apostrophes
+    # droites et rejetait `` `T` `` — la même information, l'autre convention de
+    # citation (dette E). Un oracle n'a pas à départager deux façons d'écrire
+    # la même chose ; il a à constater que la chose est dite.
+    #
+    # `fragments` n'est pas retiré : il reste le verdict STRICT, calculé en
+    # parallèle et rapporté à part, pour qu'un desserrage ne se confonde jamais
+    # avec un progrès du produit.
+    faits: tuple[tuple[str, ...], ...] = ()
     # Ce qu'elle ne doit PAS porter — la valeur du voisin, pour le verrou.
     interdits: tuple[float, ...] = ()
     attendu: str = ""
@@ -85,6 +104,20 @@ FORMULATIONS = ("canonique", "courte", "longue")
 
 PARCOURS: tuple[Tour, ...] = (
     # --- trois ouvertures : un message qui ne porte qu'un nom de source -------
+    #
+    # Leur oracle a CHANGÉ, et c'est l'arbitrage de la dette D. Il exigeait le
+    # volume — « 6 tables », « 3 feuilles » — c'est-à-dire le chiffre que produit
+    # le gabarit de l'accusé de réception (``FaitsDeSource.en_clair``). Mesuré,
+    # 3 tirages sur 3 : la formulation longue de `ouverture-facturation` répond
+    # en donnant les trois feuilles ET leurs colonnes — strictement plus que
+    # l'accusé — et échouait pour n'avoir pas écrit le chiffre 3. Un oracle qui
+    # rejette une réponse plus riche que celle qu'il attend mesure une forme.
+    #
+    # Ce qui manquait vraiment était ailleurs, et personne ne le regardait : la
+    # source n'était pas LIÉE, et la question suivante du même fil recevait
+    # l'inventaire des cinq sources. L'oracle demande donc désormais la liaison —
+    # ce que l'utilisateur perd pour de bon quand elle n'a pas lieu — et le nom
+    # de la source dans la réponse, qu'il exigeait déjà.
     Tour(
         cle="ouverture-exploitation",
         fil="ouverture-exploitation",
@@ -94,8 +127,8 @@ PARCOURS: tuple[Tour, ...] = (
             "Bonjour, j'aimerais travailler sur la source exploitation. Peux-tu me la présenter ?"
         ),
         fragments=("exploitation",),
-        nombres=(6.0,),
-        attendu="la source est annoncée avec ses 6 tables",
+        liee="exploitation",
+        attendu="exploitation liée, et son contenu dit",
     ),
     Tour(
         cle="ouverture-telemetrie",
@@ -104,8 +137,8 @@ PARCOURS: tuple[Tour, ...] = (
         courte="passe sur telemetrie",
         longue="Pourrais-tu m'ouvrir la source telemetrie et me dire ce qu'elle contient ?",
         fragments=("telemetrie",),
-        nombres=(3.0,),
-        attendu="la source est annoncée avec ses 3 tables",
+        liee="telemetrie",
+        attendu="telemetrie liée, et son contenu dit",
     ),
     Tour(
         cle="ouverture-facturation",
@@ -117,8 +150,8 @@ PARCOURS: tuple[Tour, ...] = (
             "qu'on y trouve ?"
         ),
         fragments=("facturation",),
-        nombres=(3.0,),
-        attendu="la source est annoncée avec ses 3 feuilles",
+        liee="facturation",
+        attendu="facturation liée, et son contenu dit",
     ),
     # --- les sept questions métier -------------------------------------------
     Tour(
@@ -266,7 +299,17 @@ PARCOURS: tuple[Tour, ...] = (
         ),
         source="exploitation",
         fragments=("dictionnaire", "'T'", "'I'", "'E'"),
-        attendu="les trois codes, cités du dictionnaire",
+        # Chaque code compte pour un fait, et vaut par sa CITATION — quelle que
+        # soit la convention de guillemets — ou par son SENS écrit en clair.
+        # Une réponse qui dit « le code T signifie terminée » est juste ; elle
+        # échouait parce qu'elle n'écrivait pas `'T'`.
+        faits=(
+            ("'t'", "`t`", '"t"', "« t »", "terminé"),
+            ("'i'", "`i`", '"i"', "« i »", "interrompu"),
+            ("'e'", "`e`", '"e"', "« e »", "erreur"),
+            ("dictionnaire", "dictionary"),
+        ),
+        attendu="les trois codes et leur sens, attribués",
     ),
     Tour(
         cle="sens-puissance",
@@ -281,7 +324,18 @@ PARCOURS: tuple[Tour, ...] = (
         fragments=("dictionnaire", "sentinelle"),
         attendu="la sentinelle, citée du dictionnaire",
     ),
-    # --- la réserve de forme : la question DOIT nommer sa source -------------
+    # --- la réserve de forme, LEVÉE : la question n'a plus à nommer sa source -
+    #
+    # Cet oracle attendait l'INVENTAIRE, et il avait raison de l'attendre : la
+    # cascade de ciblage ne savait reconnaître qu'un nom de source ou de table,
+    # jamais un nom de colonne, et « que veut dire la colonne puissance_kw ? »
+    # rendait donc la liste des tables. C'était écrit dans la documentation
+    # comme une réserve de FORME — « la question doit nommer sa source ».
+    #
+    # Ce n'en était pas une : `puissance_kw` n'existe que dans une source sur
+    # cinq, donc la question n'a jamais été ambiguë. L'oracle consacrait un trou
+    # de la cascade (`introspection._cible`) en exigence d'utilisateur. Il
+    # demande maintenant ce que la question demande : le sens.
     Tour(
         cle="reserve-de-forme",
         fil="reserve",
@@ -289,7 +343,20 @@ PARCOURS: tuple[Tour, ...] = (
         courte="c'est quoi puissance_kw ?",
         longue="Pourrais-tu m'expliquer ce que représente la colonne puissance_kw ?",
         fragments=("source",),
-        attendu="routée comme un inventaire — la question ne nomme pas sa source",
+        faits=(
+            (
+                "pas une puissance",
+                "n'est pas une puissance",
+                "aucune mesure",
+                "absence de mesure",
+                "rien remonté",
+                "pas de mesure",
+                "non mesuré",
+                "sentinelle",
+            ),
+            ("kilowatt", "kw"),
+        ),
+        attendu="le sens de la colonne, sans que la source soit nommée",
     ),
 )
 
@@ -304,6 +371,8 @@ class Releve:
     valeurs: list[float] = field(default_factory=list)
     verdict: str = ""
     pourquoi: str = ""
+    # Le verdict de l'oracle d'AVANT desserrage. Hors de tout total.
+    verdict_strict: str = ""
     appels_llm: int = 0
     duree_ms: int = 0
 
@@ -317,7 +386,16 @@ def phrase(tour: Tour, formulation: str) -> str:
     return {"canonique": tour.message, "courte": tour.courte, "longue": tour.longue}[formulation]
 
 
-def juger(tour: Tour, reponse: ChatAnswer, valeurs: list[float], texte: str) -> tuple[str, str]:
+def juger(
+    tour: Tour, reponse: ChatAnswer, valeurs: list[float], texte: str, liee: str = ""
+) -> tuple[str, str]:
+    """Le verdict qui fait foi : les chiffres, puis les FAITS.
+
+    Un tour qui déclare des ``faits`` est jugé sur eux et non sur ses
+    ``fragments`` : la disjonction remplace la conjonction de sous-chaînes.
+    ``juger_strict`` garde l'ancien verdict, pour que l'écart entre les deux
+    soit un chiffre et non une affirmation.
+    """
     if reponse.error:
         return "échec", f"erreur : {reponse.error}"
     manquants = [c for c in tour.nombres if not any(abs(v - c) <= 0.5 for v in valeurs)]
@@ -326,10 +404,37 @@ def juger(tour: Tour, reponse: ChatAnswer, valeurs: list[float], texte: str) -> 
     presents = [c for c in tour.interdits if any(abs(v - c) <= 0.5 for v in valeurs)]
     if presents:
         return "échec", f"chiffre du voisin : {', '.join(f'{c:g}' for c in presents)}"
-    absents = [f for f in tour.fragments if f.lower() not in texte.lower()]
-    if absents:
-        return "échec", f"fragment(s) absent(s) : {', '.join(absents)}"
+    if tour.faits:
+        plat = texte.lower()
+        absents = [f[0] for f in tour.faits if not any(t.lower() in plat for t in f)]
+        if absents:
+            return "échec", f"fait(s) absent(s) : {', '.join(absents)}"
+    else:
+        absents = [f for f in tour.fragments if f.lower() not in texte.lower()]
+        if absents:
+            return "échec", f"fragment(s) absent(s) : {', '.join(absents)}"
+    if tour.liee and liee != tour.liee:
+        return "échec", f"source liée : `{liee or '(aucune)'}` au lieu de `{tour.liee}`"
     return "conforme", tour.attendu
+
+
+def juger_strict(tour: Tour, reponse: ChatAnswer, valeurs: list[float], texte: str) -> str:
+    """Le verdict de l'oracle d'AVANT, conservé pour mesurer le desserrage.
+
+    Il n'entre dans aucun total ; il n'existe que pour répondre à la seule
+    question qui compte quand on desserre un oracle : combien de points
+    viennent du desserrage, et combien du produit. Sans lui, les deux se
+    confondent et le chiffre ne prouve plus rien.
+    """
+    if reponse.error:
+        return "échec"
+    if [c for c in tour.nombres if not any(abs(v - c) <= 0.5 for v in valeurs)]:
+        return "échec"
+    if [c for c in tour.interdits if any(abs(v - c) <= 0.5 for v in valeurs)]:
+        return "échec"
+    if [f for f in tour.fragments if f.lower() not in texte.lower()]:
+        return "échec"
+    return "conforme"
 
 
 def poser(
@@ -355,7 +460,7 @@ def poser(
     tableau = " ".join(a.data for a in reponse.artifacts if a.mime == "application/json")
     texte = f"{reponse.answer}\n{tableau}"
     valeurs = nombres(texte)
-    verdict, pourquoi = juger(tour, reponse, valeurs, texte)
+    verdict, pourquoi = juger(tour, reponse, valeurs, texte, liees[tour.fil])
     return Releve(
         tour=tour,
         formulation=formulation,
@@ -365,6 +470,7 @@ def poser(
         valeurs=valeurs,
         verdict=verdict,
         pourquoi=pourquoi,
+        verdict_strict=juger_strict(tour, reponse, valeurs, texte),
         appels_llm=(compteur.appels - avant) if isinstance(compteur, ModeleCompteur) else 0,
         duree_ms=duree,
     )
@@ -389,6 +495,18 @@ def rapport(releves: list[Releve], reglages) -> str:
         f"{sum(r.appels_llm for r in releves)} appels LLM.**",
         "",
     ]
+    desserres = [r for r in releves if r.tour.faits]
+    if desserres:
+        stricts = sum(1 for r in desserres if r.verdict_strict == "conforme")
+        larges = sum(1 for r in desserres if r.verdict == "conforme")
+        lignes += [
+            f"Sur les {len(desserres)} tours dont l'oracle a été desserré "
+            f"(`{'`, `'.join(dict.fromkeys(r.tour.cle for r in desserres))}`) : "
+            f"**{stricts}/{len(desserres)}** avec l'oracle d'avant, "
+            f"**{larges}/{len(desserres)}** avec celui d'après. "
+            f"L'écart est ce que le desserrage donne, et rien d'autre.",
+            "",
+        ]
     if len(formulations) > 1:
         lignes += ["Par formulation :", ""]
         for formulation in formulations:
@@ -397,8 +515,8 @@ def rapport(releves: list[Releve], reglages) -> str:
             lignes.append(f"- **{formulation}** : {bons}/{len(lot)}")
         lignes.append("")
     lignes += [
-        "| tour | formulation | message | nœuds | appels | score | ce qui a décidé |",
-        "|---|---|---|---|---|---|---|",
+        "| tour | formulation | message | nœuds | appels | score | strict | ce qui a décidé |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for cle in dict.fromkeys(r.tour.cle for r in releves):
         for formulation in formulations:
@@ -410,9 +528,14 @@ def rapport(releves: list[Releve], reglages) -> str:
             echecs = dict.fromkeys(r.pourquoi for r in lot if r.verdict != "conforme")
             pourquoi = " ; ".join(echecs) if echecs else lot[0].pourquoi
             appels = sum(r.appels_llm for r in lot)
+            strict = (
+                f"{sum(1 for r in lot if r.verdict_strict == 'conforme')}/{len(lot)}"
+                if lot[0].tour.faits
+                else "—"
+            )
             lignes.append(
                 f"| `{cle}` | {formulation} | {' '.join(lot[0].message.split())} | {noeuds} "
-                f"| {appels} | **{bons}/{len(lot)}** | {pourquoi} |"
+                f"| {appels} | **{bons}/{len(lot)}** | {strict} | {pourquoi} |"
             )
     return "\n".join(lignes)
 

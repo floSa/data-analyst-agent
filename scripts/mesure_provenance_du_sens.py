@@ -81,6 +81,16 @@ class Question:
     message: str
     provenance: str  # "exigee" | "interdite"
     fragments: tuple[str, ...] = ()
+    # Les FAITS attendus, chacun une disjonction dont une seule tournure suffit.
+    # `fragments` est une conjonction de sous-chaînes exactes : dès qu'un fait
+    # peut s'énoncer de deux façons, il mesure notre vocabulaire. `S4` exigeait
+    # « sentinelle » — le mot du dictionnaire et du produit, pas celui d'une
+    # réponse juste : « -1 ne correspond à aucune mesure et doit être exclu des
+    # moyennes » dit exactement le bon fait et échouait (dette E).
+    #
+    # `fragments` reste calculé à côté (``verdict_strict``) : c'est la seule
+    # façon de dire combien de points viennent du desserrage.
+    faits: tuple[tuple[str, ...], ...] = ()
     attendu: str = ""
 
 
@@ -136,7 +146,45 @@ SENS: tuple[Question, ...] = (
         message="puissance_kw, ça signifie quoi ?",
         provenance="exigee",
         fragments=("sentinelle",),
-        attendu="la sentinelle -1, attribuée au dictionnaire",
+        # Deux faits, et aucun mot obligatoire : `-1` n'est pas une puissance,
+        # et il sort des agrégats. C'est ce qu'un utilisateur doit emporter du
+        # tour ; la façon de le dire ne le regarde pas.
+        faits=(
+            (
+                "pas une puissance",
+                "n'est pas une puissance",
+                "aucune mesure",
+                "absence de mesure",
+                "rien remonté",
+                "rien remonte",
+                "pas de mesure",
+                "non mesuré",
+                "non mesure",
+                "sentinelle",
+                "compteur muet",
+            ),
+            (
+                "écarter",
+                "ecarter",
+                "exclure",
+                "exclu",
+                "ne pas inclure",
+                "fausse",
+                "filtrer",
+                ">= 0",
+                ">=0",
+                "hors moyenne",
+                "pas être inclus",
+                "pas etre inclus",
+                "pas inclus",
+                "pas prise en compte",
+                "pas prises en compte",
+                "à ignorer",
+                "a ignorer",
+                "fausserait",
+            ),
+        ),
+        attendu="-1 n'est pas une puissance et sort des moyennes, attribué",
     ),
     Question(
         cle="S5",
@@ -223,6 +271,8 @@ class Releve:
     valeurs: list[float] = field(default_factory=list)
     verdict: str = ""
     pourquoi: str = ""
+    # Le verdict de l'oracle d'AVANT desserrage. Hors de tout total.
+    verdict_strict: str = ""
     appels_llm: int = 0
     duree_ms: int = 0
 
@@ -242,15 +292,39 @@ def juger(question: Question, reponse: ChatAnswer, texte: str) -> tuple[str, str
     """
     if reponse.error:
         return "échec", f"erreur : {reponse.error}"
-    absents = [f for f in question.fragments if f.lower() not in texte.lower()]
-    if absents:
-        return "échec", f"contenu absent : {', '.join(absents)}"
+    if question.faits:
+        plat = texte.lower()
+        manquants = [f[0] for f in question.faits if not any(t.lower() in plat for t in f)]
+        if manquants:
+            return "échec", f"fait absent : {', '.join(manquants)}"
+    else:
+        absents = [f for f in question.fragments if f.lower() not in texte.lower()]
+        if absents:
+            return "échec", f"contenu absent : {', '.join(absents)}"
     cite = attribue(texte)
     if question.provenance == "exigee" and not cite:
         return "échec", "provenance non dite — le dictionnaire n'est pas nommé"
     if question.provenance == "interdite" and cite:
         return "échec", "dictionnaire CITÉ alors que la source n'en déclare aucun"
     return "conforme", question.attendu
+
+
+def juger_strict(question: Question, reponse: ChatAnswer, texte: str) -> str:
+    """Le verdict de l'oracle d'AVANT, conservé pour mesurer le desserrage.
+
+    Il n'entre dans aucun total. Sans lui, un oracle desserré et un produit
+    réparé rendent le même chiffre, et ce chiffre ne prouve plus rien.
+    """
+    if reponse.error:
+        return "échec"
+    if [f for f in question.fragments if f.lower() not in texte.lower()]:
+        return "échec"
+    cite = attribue(texte)
+    if question.provenance == "exigee" and not cite:
+        return "échec"
+    if question.provenance == "interdite" and cite:
+        return "échec"
+    return "conforme"
 
 
 def poser(orchestrateur: Orchestrator, question: Question, tirage: int) -> Releve:
@@ -274,6 +348,7 @@ def poser(orchestrateur: Orchestrator, question: Question, tirage: int) -> Relev
         attribue=attribue(texte),
         verdict=verdict,
         pourquoi=pourquoi,
+        verdict_strict=juger_strict(question, reponse, texte),
         appels_llm=(compteur.appels - avant) if isinstance(compteur, ModeleCompteur) else 0,
         duree_ms=duree,
     )
@@ -290,6 +365,18 @@ def rapport(releves: list[Releve], reglages, titre: str) -> str:
         f"{sum(r.appels_llm for r in releves)} appels LLM.**",
         "",
     ]
+    desserres = [r for r in releves if r.question.faits]
+    if desserres:
+        stricts = sum(1 for r in desserres if r.verdict_strict == "conforme")
+        larges = sum(1 for r in desserres if r.verdict == "conforme")
+        lignes += [
+            f"Sur les {len(desserres)} tours dont l'oracle a été desserré "
+            f"(`{'`, `'.join(dict.fromkeys(r.question.cle for r in desserres))}`) : "
+            f"**{stricts}/{len(desserres)}** avec l'oracle d'avant, "
+            f"**{larges}/{len(desserres)}** avec celui d'après. "
+            f"L'écart est ce que le desserrage donne, et rien d'autre.",
+            "",
+        ]
     volets = [v for v in VOLETS if any(r.question.volet == v for r in releves)]
     if len(volets) > 1:
         lignes += ["Par volet :", ""]
@@ -300,8 +387,9 @@ def rapport(releves: list[Releve], reglages, titre: str) -> str:
             lignes.append(f"- **{volet}** : {bons}/{len(lot)}, {appels} appels LLM")
         lignes.append("")
     lignes += [
-        "| clé | source | message | nœuds | appels | provenance dite | score | ce qui a décidé |",
-        "|---|---|---|---|---|---|---|---|",
+        "| clé | source | message | nœuds | appels | provenance dite | score | strict | "
+        "ce qui a décidé |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for cle in dict.fromkeys(r.question.cle for r in releves):
         lot = [r for r in releves if r.question.cle == cle]
@@ -310,10 +398,15 @@ def rapport(releves: list[Releve], reglages, titre: str) -> str:
         echecs = dict.fromkeys(r.pourquoi for r in lot if r.verdict != "conforme")
         pourquoi = " ; ".join(echecs) if echecs else lot[0].pourquoi
         dits = sum(1 for r in lot if r.attribue)
+        strict = (
+            f"{sum(1 for r in lot if r.verdict_strict == 'conforme')}/{len(lot)}"
+            if lot[0].question.faits
+            else "—"
+        )
         lignes.append(
             f"| `{cle}` | `{lot[0].question.source}` | {' '.join(lot[0].question.message.split())} "
             f"| {noeuds} | {sum(r.appels_llm for r in lot)} | {dits}/{len(lot)} "
-            f"| **{bons}/{len(lot)}** | {pourquoi} |"
+            f"| **{bons}/{len(lot)}** | {strict} | {pourquoi} |"
         )
     return "\n".join(lignes)
 
