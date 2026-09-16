@@ -49,6 +49,31 @@ compose() {
     docker compose --file "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
 }
 
+# Quand l'unité systemd est installée, c'est ELLE qui commande le démarrage et
+# l'arrêt — et ce n'est pas une préférence de style.
+#
+# Mesuré : l'unité activée mais jamais démarrée par systemd, `daactl start`
+# lance bien l'application ; `systemctl stop daa` ne l'arrête PAS, parce que
+# systemd tient l'unité pour inactive et n'exécute donc aucun ExecStop. Le
+# service tournait, systemd le disait éteint, et un exploitant qui coupe avant
+# une sauvegarde sauvegardait un service en marche sans le savoir.
+#
+# INVOCATION_ID est posé par systemd dans l'environnement du service : sa
+# présence dit qu'on est DÉJÀ dans l'unité, et coupe la récursion.
+unite_installee() {
+    [[ -z "${INVOCATION_ID:-}" ]] \
+        && command -v systemctl >/dev/null 2>&1 \
+        && systemctl list-unit-files daa.service >/dev/null 2>&1 \
+        && [[ -f /etc/systemd/system/daa.service ]]
+}
+
+par_systemd() {
+    if unite_installee; then
+        echo "daactl: l'unité systemd est installée — \`systemctl $1 daa\`"
+        exec systemctl "$1" daa
+    fi
+}
+
 # L'image du bac à sable N'EST PAS reconstruite si elle est là : c'est celle que
 # la CI publie, à partir du même contexte. On vérifie sa présence, on ne
 # s'approprie pas sa fabrication.
@@ -77,6 +102,7 @@ arborescence() {
 
 case "${1:-}" in
     start)
+        par_systemd start
         arborescence
         # Le catalogue est une DÉCLARATION LOCALE : il n'est ni dans l'image ni
         # dans le dépôt de la machine, il vit dans le dossier de données. Sans
@@ -96,9 +122,11 @@ case "${1:-}" in
         echo "en service sur http://${DAA_HTTP_BIND:-127.0.0.1}:${DAA_HTTP_PORT:-8000}/"
         ;;
     stop)
+        par_systemd stop
         compose down
         ;;
     restart)
+        par_systemd restart
         compose down
         exec "$0" start
         ;;

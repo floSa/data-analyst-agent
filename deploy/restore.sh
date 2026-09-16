@@ -49,6 +49,8 @@ echo "cible    : $CIBLE"
 
 if (( ! A_BLANC )); then
     echo "arrêt du service…"
+    # daactl délègue à systemctl si l'unité est installée : restaurer sous le
+    # dos de systemd lui laisserait un état faux (cf. daactl, `par_systemd`).
     "$DEPLOY_DIR/daactl" stop || true
 fi
 
