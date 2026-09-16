@@ -189,3 +189,26 @@ def test_les_prompts_sont_embarques_dans_la_distribution(tmp_path: Path):
 
     for nom in TOUS:
         assert f"data_analyst_agent/prompts/{nom}" in embarques
+
+
+# --- ce qu'un prompt doit continuer de dire --------------------------------------
+#
+# Un seul test de CONTENU dans ce fichier, et il tient une consigne qu'une
+# mesure a payée. Le reste des prompts n'est pas testé à la lettre — une
+# reformulation ne doit pas faire tomber la suite — mais cette ligne-là a un
+# avant et un après chiffrés, et la retirer ferait revenir le défaut sans que
+# rien n'échoue.
+
+
+def test_le_prompt_sql_exige_la_grandeur_qui_classe_dans_le_select():
+    """« les trois stations avec le plus de sessions ? donne leur code et leur nom »
+
+    Le modèle s'en tenait à la lettre : code et nom projetés, le compte
+    seulement dans le ORDER BY. Le classement et les stations étaient justes,
+    le SQL n'était pas filtré — une réponse littérale, pas un chiffre faux, et
+    un palmarès sans ses chiffres. Mesuré sur vLLM : 0/5 avant, 5/5 après.
+    """
+    prompt = prompts.render(prompts.RETRIEVAL, dialect="postgresql")
+
+    assert "CLASSEMENT" in prompt
+    assert "ORDER BY" in prompt

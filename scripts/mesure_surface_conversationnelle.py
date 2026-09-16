@@ -688,6 +688,59 @@ def poser(orchestrateur: Orchestrator, compteur: ModeleCompteur, q: QuestionMeta
     )
 
 
+# Un nombre écrit à la française ou à l'anglaise, groupes de milliers compris.
+# Écrit en alternatives EXPLICITES plutôt qu'avec une classe de séparateurs, et
+# c'est une correction : `\\d[\\d\\s,.]*\\d` avalait « 2025.\\n\\n3 table(s) » en un
+# seul nombre — un point de fin de phrase, deux retours à la ligne, et le compte
+# de tables disparaissait du relevé. Un séparateur n'en est un que COLLÉ à des
+# chiffres des deux côtés, et par groupes de trois.
+#
+# Les deux gardes qui encadrent l'alternative comptent autant qu'elle : sans
+# elles, « ST-029 911 » rendait 29 911, un code de station recollé au compte de
+# la ligne suivante. Un nombre commence après autre chose qu'un mot, un tiret ou
+# un séparateur, et finit avant autre chose qu'un mot.
+NOMBRE = re.compile(
+    r"(?<![\w.,-])(?:"
+    r"\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[.,]\d+)?"  # 1 757 519,23
+    r"|\d{1,3}(?:,\d{3})+(?:\.\d+)?"  # 1,757,519.23
+    r"|\d{1,3}(?:\.\d{3})+(?:,\d+)?"  # 1.757.519,23
+    r"|\d+(?:[.,]\d+)?"  # 48000, 1757519.23, 3
+    r")(?!\w)"
+)
+
+
+def nombres(texte: str) -> list[float]:
+    """Les nombres du texte, séparateurs français comme anglais.
+
+    Sert d'oracle à plusieurs runners : une réponse se juge sur les CHIFFRES
+    qu'elle porte, et « 1 757 519,23 » comme « 1,757,519.23 » désignent la même
+    valeur. Le dernier séparateur suivi d'une ou deux décimales est le décimal.
+    """
+    trouves: list[float] = []
+    for brut in NOMBRE.findall(texte):
+        nettoye = re.sub(r"[\s\u00a0\u202f]", "", brut)
+        if "," in nettoye and "." in nettoye:
+            nettoye = (
+                nettoye.replace(",", "")
+                if nettoye.rindex(".") > nettoye.rindex(",")
+                else nettoye.replace(".", "").replace(",", ".")
+            )
+        elif re.search(r",\d{1,2}$", nettoye):
+            nettoye = nettoye.replace(",", ".")
+        else:
+            nettoye = nettoye.replace(",", "").replace(".", "") if _groupe(nettoye) else nettoye
+        try:
+            trouves.append(float(nettoye))
+        except ValueError:
+            continue
+    return trouves
+
+
+def _groupe(nettoye: str) -> bool:
+    """Un séparateur de MILLIERS seul (« 1,757,519 » ou « 1.757.519 »)."""
+    return bool(re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", nettoye))
+
+
 def une_ligne(texte: str, largeur: int = 320) -> str:
     """La réponse ramenée sur une ligne, pour une cellule de tableau Markdown."""
     plat = " ".join(texte.split()).replace("|", "\\|")

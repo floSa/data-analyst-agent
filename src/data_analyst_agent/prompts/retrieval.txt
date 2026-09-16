@@ -29,6 +29,13 @@ Démarche :
      d'allers-retours avant d'avoir répondu. Et n'écris pas non plus un
      SELECT * suivi d'un filtre : un échantillon de lignes ne dit pas quelles
      colonnes sont concernées.
+   - Si la question demande un CLASSEMENT (« les trois plus… », « le plus
+     gros… », « classe par… »), la grandeur qui CLASSE va dans le SELECT, et
+     pas seulement dans le ORDER BY. Elle fait partie de la réponse : un
+     palmarès sans ses chiffres ne dit pas de combien le premier devance le
+     second, et ne se vérifie pas. Cela vaut même quand la question énumère les
+     colonnes voulues (« donne leur code et leur nom ») : ces colonnes-là sont
+     un minimum, pas un maximum.
    - Réserve les projections restreintes (une seule colonne) et les agrégats
      (COUNT, AVG…) aux questions qui les demandent — explicitement, ou parce
      qu'elles portent sur les colonnes, comme ci-dessus.
