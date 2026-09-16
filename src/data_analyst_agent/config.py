@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     # se paie le plus de fois par tour.
     #
     # 8 000 est choisi AU-DESSUS du plus gros dictionnaire du catalogue de
-    # démonstration (5 626 caractères, `exploitation`) : les cinq passent
+    # démonstration (6 797 caractères, `exploitation`) : les cinq passent
     # entiers, et la coupe reste un filet plutôt qu'un régime. Mesuré contre le
     # tokeniseur de vLLM, 8 000 caractères de Markdown français valent ~2 500
     # tokens — le plafond borne donc le prompt de cet agent à ~3 350 tokens,
