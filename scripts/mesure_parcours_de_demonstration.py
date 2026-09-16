@@ -42,6 +42,10 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mesure_provenance_du_sens import (
+    SENTINELLE_N_EST_PAS_UNE_PUISSANCE,
+    SENTINELLE_SORT_DES_AGREGATS,
+)
 from mesure_surface_conversationnelle import ModeleCompteur, nombres
 
 from data_analyst_agent.agents.inference.registry import Registry
@@ -311,6 +315,19 @@ PARCOURS: tuple[Tour, ...] = (
         ),
         attendu="les trois codes et leur sens, attribués",
     ),
+    # Son oracle a changé, et c'est la dette `G`. Il exigeait la sous-chaîne
+    # « sentinelle » — le mot du dictionnaire et du produit, pas celui d'une
+    # réponse juste — et il passait 3/3, donc rien ne l'obligeait. C'est
+    # précisément ce qui le rendait dangereux : il aurait passé jusqu'au jour où
+    # une reformulation juste l'aurait fait tomber, et on aurait lu une
+    # régression là où il n'y en avait pas. La dette `F` a appris ce que coûte
+    # une régression mal imputée ; on ne laisse pas un troisième oracle la
+    # préparer.
+    #
+    # Il mesure désormais les MÊMES deux faits que `S4`, et il les IMPORTE
+    # plutôt que de les recopier : c'est la même colonne, le même dictionnaire
+    # et la même question, deux runners ne doivent pas pouvoir en juger
+    # différemment. Le verdict strict garde l'ancien à côté, comme partout.
     Tour(
         cle="sens-puissance",
         fil="sens-puissance",
@@ -322,7 +339,12 @@ PARCOURS: tuple[Tour, ...] = (
         ),
         source="telemetrie",
         fragments=("dictionnaire", "sentinelle"),
-        attendu="la sentinelle, citée du dictionnaire",
+        faits=(
+            SENTINELLE_N_EST_PAS_UNE_PUISSANCE,
+            SENTINELLE_SORT_DES_AGREGATS,
+            ("dictionnaire", "dictionary"),
+        ),
+        attendu="-1 n'est pas une puissance et sort des moyennes, attribué",
     ),
     # --- la réserve de forme, LEVÉE : la question n'a plus à nommer sa source -
     #

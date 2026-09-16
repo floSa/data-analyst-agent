@@ -96,6 +96,56 @@ class Question:
 
 VOLETS = ("sens", "temoin")
 
+# --- les deux FAITS que le dictionnaire porte sur `puissance_kw` -------------
+#
+# Nommés ici, et non écrits en place, parce qu'ils sont mesurés à DEUX endroits :
+# par `S4` de ce runner, et par `sens-puissance` du parcours de démonstration,
+# qui les importe. Deux copies d'une même disjonction, ce seraient deux oracles
+# qui divergent en silence — celui qu'on élargit un jour et l'autre qu'on
+# oublie — et ils sont alors censés mesurer la même chose. C'est le même motif
+# que `MAX_DISTINCT_VALUES` dans le socle, et pour la même raison.
+#
+# Aucun mot n'y est obligatoire : `-1` n'est pas une puissance, et il sort des
+# agrégats. C'est ce qu'un utilisateur doit emporter du tour ; la façon de le
+# dire ne le regarde pas.
+SENTINELLE_N_EST_PAS_UNE_PUISSANCE = (
+    "pas une puissance",
+    "n'est pas une puissance",
+    "aucune mesure",
+    "absence de mesure",
+    "rien remonté",
+    "rien remonte",
+    "pas de mesure",
+    "non mesuré",
+    "non mesure",
+    "sentinelle",
+    "compteur muet",
+)
+SENTINELLE_SORT_DES_AGREGATS = (
+    "écarter",
+    "ecarter",
+    "exclure",
+    "exclu",
+    "ne pas inclure",
+    "fausse",
+    "filtrer",
+    ">= 0",
+    ">=0",
+    "hors moyenne",
+    "pas être inclus",
+    "pas etre inclus",
+    "pas inclus",
+    "pas prise en compte",
+    "pas prises en compte",
+    "à ignorer",
+    "a ignorer",
+    "fausserait",
+)
+FAITS_DE_LA_SENTINELLE = (
+    SENTINELLE_N_EST_PAS_UNE_PUISSANCE,
+    SENTINELLE_SORT_DES_AGREGATS,
+)
+
 # --- volet 1 : six questions de sens, deux sources à dictionnaire ------------
 #
 # Trois par source, court et long mélangés. Les fragments attendus sont du
@@ -146,44 +196,7 @@ SENS: tuple[Question, ...] = (
         message="puissance_kw, ça signifie quoi ?",
         provenance="exigee",
         fragments=("sentinelle",),
-        # Deux faits, et aucun mot obligatoire : `-1` n'est pas une puissance,
-        # et il sort des agrégats. C'est ce qu'un utilisateur doit emporter du
-        # tour ; la façon de le dire ne le regarde pas.
-        faits=(
-            (
-                "pas une puissance",
-                "n'est pas une puissance",
-                "aucune mesure",
-                "absence de mesure",
-                "rien remonté",
-                "rien remonte",
-                "pas de mesure",
-                "non mesuré",
-                "non mesure",
-                "sentinelle",
-                "compteur muet",
-            ),
-            (
-                "écarter",
-                "ecarter",
-                "exclure",
-                "exclu",
-                "ne pas inclure",
-                "fausse",
-                "filtrer",
-                ">= 0",
-                ">=0",
-                "hors moyenne",
-                "pas être inclus",
-                "pas etre inclus",
-                "pas inclus",
-                "pas prise en compte",
-                "pas prises en compte",
-                "à ignorer",
-                "a ignorer",
-                "fausserait",
-            ),
-        ),
+        faits=FAITS_DE_LA_SENTINELLE,
         attendu="-1 n'est pas une puissance et sort des moyennes, attribué",
     ),
     Question(
