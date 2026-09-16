@@ -382,6 +382,33 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
     return agent
 
 
+def _avec_le_tour_precedent(question: str, echange: tuple[str, str] | None) -> str:
+    """Le message, précédé du tour d'avant quand il y en a un.
+
+    En tête et non en queue : ce qu'on lit en dernier est ce à quoi on répond,
+    et c'est le message de l'utilisateur qu'il faut traiter. Le rappel est du
+    CONTEXTE, pas une seconde question — d'où l'étiquette explicite, sans
+    laquelle le modèle répond parfois au tour d'avant.
+
+    La réponse précédente est bornée : elle peut peser un inventaire entier, et
+    ce prompt repart à chaque aller-retour de la boucle d'outils.
+    """
+    if echange is None:
+        return question
+    precedente, reponse = echange
+    if not precedente.strip() and not reponse.strip():
+        return question
+    extrait = reponse.strip()
+    if len(extrait) > 600:
+        extrait = extrait[:600] + " […]"
+    return (
+        "TOUR PRÉCÉDENT, pour comprendre ce qui suit — n'y réponds pas.\n"
+        f"L'utilisateur avait dit : {precedente.strip()}\n"
+        f"Tu avais répondu : {extrait}\n\n"
+        f"MESSAGE À TRAITER MAINTENANT : {question}"
+    )
+
+
 def _ontologies(precision: str, deps: SystemeDeps) -> list[introspection.Ontologie]:
     """Ce que les sources disent d'elles-mêmes — celle qui est visée, ou toutes.
 
@@ -411,8 +438,23 @@ def run_systeme(
     request_limit: int,
     releves: RelevesDuCatalogue | None = None,
     source_de_travail: str = "",
+    echange_precedent: tuple[str, str] | None = None,
 ) -> ResultatSysteme:
-    """Soumet la question à l'agent système et rend ce qu'il en a fait."""
+    """Soumet la question à l'agent système et rend ce qu'il en a fait.
+
+    ``echange_precedent`` : le tour d'avant, ``(ce que l'utilisateur a dit, ce
+    que l'agent a répondu)``. L'agent système n'en recevait AUCUN, et un message
+    qui renvoie au tour précédent n'a alors aucun sens à trouver. Mesuré le
+    2026-09-16, et c'est l'agent lui-même qui pose le piège : il demande
+    « souhaitez-vous que je consulte le schéma de `referentiel` et
+    `facturation` ? », l'utilisateur répond « oui », et « oui » tout seul ne
+    concerne aucun outil — le tour repart au planificateur, qui rend « je n'ai
+    pas bien compris ta demande ».
+
+    Un tour, pas la transcription entière : ce qui manque à « oui », à « et
+    dedans ? » ou à « tu ne m'as pas répondu » est le tour d'avant, et le prompt
+    de cet agent est déjà le plus chargé du socle.
+    """
     deps = SystemeDeps(
         catalogue_declare=catalogue_declare,
         catalogue_effectif=catalogue_effectif,
@@ -422,7 +464,7 @@ def run_systeme(
         source_de_travail=source_de_travail,
     )
     run = build_systeme_agent().run_sync(
-        question,
+        _avec_le_tour_precedent(question, echange_precedent),
         model=model,
         deps=deps,
         usage_limits=UsageLimits(request_limit=request_limit),

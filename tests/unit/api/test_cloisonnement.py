@@ -44,6 +44,7 @@ class FakeOrchestrator:
         conversation_id=None,
         workspace_root: Path | None = None,
         source_de_travail=None,
+        echange_precedent=None,
     ) -> ChatAnswer:
         self.workspace_roots.append(workspace_root)
         return ChatAnswer(answer=f"réponse à : {question}")

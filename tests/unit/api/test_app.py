@@ -60,6 +60,7 @@ class FakeOrchestrator:
         conversation_id=None,
         workspace_root: Path | None = None,
         source_de_travail=None,
+        echange_precedent=None,
     ) -> ChatAnswer:
         self.calls.append((question, source, pending))
         self.workspace_roots.append(workspace_root)
@@ -582,3 +583,29 @@ def test_la_page_ne_porte_aucun_bandeau_de_source(client: TestClient):
     assert "Source de travail" not in page
     assert "<select" not in page
     assert 'id="source-liee"' not in page
+
+
+def test_le_dernier_echange_est_relu_du_fil():
+    """Le tour d'avant vient du DISQUE, comme la source liée et la prédiction en attente.
+
+    Le client ne l'envoie pas : `ChatRequest` ne porte pas de champ pour ça, et
+    c'est délibéré — un fil se relit, il ne se raconte pas depuis le navigateur.
+    Le rôle stocké est « agent » et non « assistant » : l'avoir cherché sous le
+    mauvais nom rendait toujours `None`, donc le rappel n'atteignait jamais
+    l'agent système, et « oui » restait incompris (mesuré le 2026-09-16).
+    """
+    from data_analyst_agent.api.app import _dernier_echange
+    from data_analyst_agent.orchestrator.conversations import Conversation, Message
+
+    fil = Conversation(
+        id="x",
+        messages=[
+            Message(role="user", content="premiere"),
+            Message(role="agent", content="reponse 1"),
+            Message(role="user", content="deuxieme"),
+            Message(role="agent", content="reponse 2"),
+        ],
+    )
+
+    assert _dernier_echange(fil) == ("deuxieme", "reponse 2")
+    assert _dernier_echange(Conversation(id="y")) is None

@@ -602,3 +602,38 @@ def test_une_source_IMPOSEE_par_l_appelant_ne_lie_rien_depuis_l_agent_systeme(
     )
 
     assert "Je travaille sur la source" not in reponse.answer
+
+
+def test_le_tour_precedent_est_rappele_en_tete_du_message():
+    """« Oui » n'a de sens que si l'on sait à quoi il répond.
+
+    Mesuré le 2026-09-16, et c'est l'agent qui pose le piège : il demande
+    « souhaitez-vous que je consulte le schéma de `referentiel` et
+    `facturation` ? », l'utilisateur répond « oui », et « oui » tout seul ne
+    concerne aucun outil — le tour repartait au planificateur, qui rendait
+    « je n'ai pas bien compris ta demande ». Après le rappel : les deux schémas.
+
+    En TÊTE, et étiqueté : ce qu'on lit en dernier est ce à quoi on répond, et
+    le rappel est du contexte, pas une seconde question.
+    """
+    from data_analyst_agent.orchestrator.systeme import _avec_le_tour_precedent
+
+    rendu = _avec_le_tour_precedent(
+        "oui", ("que contient referentiel ?", "Souhaitez-vous que je consulte son schéma ?")
+    )
+
+    assert rendu.index("TOUR PRÉCÉDENT") < rendu.index("MESSAGE À TRAITER")
+    assert "que contient referentiel ?" in rendu
+    assert rendu.rstrip().endswith("oui")
+    # sans tour précédent, le message part tel quel : rien ne change au premier tour
+    assert _avec_le_tour_precedent("oui", None) == "oui"
+
+
+def test_la_reponse_precedente_est_bornee():
+    """Ce prompt repart à chaque aller-retour d'outil : l'inventaire y tiendrait deux fois."""
+    from data_analyst_agent.orchestrator.systeme import _avec_le_tour_precedent
+
+    rendu = _avec_le_tour_precedent("oui", ("et ?", "x" * 5000))
+
+    assert len(rendu) < 1200
+    assert "[…]" in rendu

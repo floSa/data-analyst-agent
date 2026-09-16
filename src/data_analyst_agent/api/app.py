@@ -193,6 +193,25 @@ def _annoncer_lexposition(reglages: Settings, reseaux: tuple) -> None:
         )
 
 
+def _dernier_echange(conversation: Conversation) -> tuple[str, str] | None:
+    """La dernière question de l'utilisateur et la réponse qui l'a suivie.
+
+    ``None`` quand le fil commence : il n'y a alors rien à rappeler. On ne rend
+    que le DERNIER tour — c'est lui que « oui », « et dedans ? » ou « tu ne m'as
+    pas répondu » désignent, et le prompt de l'agent système est déjà le plus
+    chargé du socle.
+    """
+    question = ""
+    reponse = ""
+    for message in reversed(conversation.messages):
+        if not reponse and message.role == "agent":
+            reponse = message.content
+        elif reponse and message.role == "user":
+            question = message.content
+            break
+    return (question, reponse) if question or reponse else None
+
+
 def create_app(
     orchestrator_factory: Callable[[], Orchestrator] | None = None,
     settings: Settings | None = None,
@@ -501,6 +520,10 @@ def create_app(
             # chaque tour comme la prédiction en attente — le client ne l'envoie
             # pas, et `ChatRequest` ne porte pas de champ pour ça.
             source_de_travail=conversation.source_de_travail,
+            # Le tour d'avant, pour que « oui » ou « et dedans ? » aient un sens
+            # à trouver. Il est relu du disque comme la source et la prédiction
+            # en attente : le client ne l'envoie pas.
+            echange_precedent=_dernier_echange(conversation),
         )
         magasin.record_turn(
             conversation.id,

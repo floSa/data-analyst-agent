@@ -72,6 +72,7 @@ class OrchestrateurLent:
         conversation_id=None,
         workspace_root: Path | None = None,
         source_de_travail=None,
+        echange_precedent=None,
     ) -> ChatAnswer:
         with self._verrou:
             self.racines.append(workspace_root)

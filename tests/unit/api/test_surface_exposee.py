@@ -24,6 +24,7 @@ class OrchestrateurMuet:
         conversation_id=None,
         workspace_root=None,
         source_de_travail=None,
+        echange_precedent=None,
     ):
         return ChatAnswer(answer="ok")
 

@@ -176,6 +176,11 @@ class OrchestratorState(TypedDict, total=False):
     batch: BatchInferenceOutcome | None
     pending_in: PendingInference | None
     pending_out: PendingInference | None
+    # Le tour d'avant : (ce que l'utilisateur a dit, ce que l'agent a répondu).
+    # Sans lui, « oui », « et dedans ? » ou « tu ne m'as pas répondu » n'ont
+    # aucun sens à trouver — et c'est l'agent lui-même qui pose la question
+    # fermée à laquelle « oui » répond.
+    echange_precedent: tuple[str, str] | None
     source_in: str | None  # la source liée au fil, telle que reçue
     source_out: str | None  # ce que le fil retient de ce tour
     avis_de_source: str  # « je travaille sur X », mis en tête de la réponse
@@ -332,6 +337,7 @@ class Orchestrator:
         conversation_id: str | None = None,
         workspace_root: Path | None = None,
         source_de_travail: str | None = None,
+        echange_precedent: tuple[str, str] | None = None,
     ) -> ChatAnswer:
         """Répond à une question, dans la mémoire de ``conversation_id`` s'il y en a une.
 
@@ -364,6 +370,7 @@ class Orchestrator:
                 "source_name": source,
                 "pending_in": pending,
                 "source_in": source_de_travail,
+                "echange_precedent": echange_precedent,
                 "workspace": workspace,
                 "artifacts": [],
                 "trace": [],
@@ -1321,6 +1328,7 @@ class Orchestrator:
                 releves=self.releves,
                 request_limit=self.settings.systeme_request_limit,
                 source_de_travail=state.get("source_in") or "",
+                echange_precedent=state.get("echange_precedent"),
             )
         except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
             incident = reference_dincident()

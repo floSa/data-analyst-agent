@@ -34,6 +34,7 @@ class FakeOrchestrator:
         conversation_id=None,
         workspace_root=None,
         source_de_travail=None,
+        echange_precedent=None,
     ) -> ChatAnswer:
         return ChatAnswer(answer="Il y a 3 femmes.")
 

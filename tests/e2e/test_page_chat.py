@@ -77,6 +77,7 @@ class FakeOrchestrator:
         conversation_id=None,
         workspace_root=None,
         source_de_travail=None,
+        echange_precedent=None,
     ) -> ChatAnswer:
         # Un message réduit au NOM d'une source la lie : c'est le court-circuit
         # du produit, et c'est par là — en parlant — qu'on choisit sa source.
