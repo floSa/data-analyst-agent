@@ -191,22 +191,37 @@ def test_les_prompts_sont_embarques_dans_la_distribution(tmp_path: Path):
         assert f"data_analyst_agent/prompts/{nom}" in embarques
 
 
-# --- ce qu'un prompt doit continuer de dire --------------------------------------
+# --- ce qu'un prompt tient, et ce qu'il ne tient pas -----------------------------
 #
-# Un seul test de CONTENU dans ce fichier, et il tient une consigne qu'une
-# mesure a payée. Le reste des prompts n'est pas testé à la lettre — une
-# reformulation ne doit pas faire tomber la suite — mais cette ligne-là a un
-# avant et un après chiffrés, et la retirer ferait revenir le défaut sans que
-# rien n'échoue.
+# Ce fichier porte UN test de contenu, et sa raison a changé. Il tenait la
+# consigne de classement du prompt SQL comme si elle était LE correctif : la
+# grandeur qui classe va dans le SELECT, annoncée 0/5 → 5/5.
+#
+# Remesurée sur DIX formulations de la même demande, trois tirages chacune,
+# elle tient 27 SQL en règle sur 30 — elle lâche sur « les plus sollicitées »,
+# qu'elle n'énumère pas. Sa reformulation abstraite, la règle dite sur la
+# requête au lieu des mots de la question, fait PIRE : 12/30. Un prompt ne tient
+# pas cette propriété.
+#
+# Elle est tenue par du CODE : `agents/retrieval/classement` lit le SQL produit
+# et signale toute expression du ORDER BY absente du SELECT ; la boucle de
+# `run_sql` renvoie la remarque au modèle. 30/30, avec ou sans la consigne
+# (cf. `tests/unit/retrieval/test_classement.py` et
+# `tests/unit/retrieval/test_retrieval_agent.py`).
+#
+# La consigne reste, DÉGRADÉE de garantie en économie : elle fait écrire la
+# projection juste du premier coup plus souvent, donc la vérification relance
+# moins — 153 appels LLM contre 164 sans elle, sur les mêmes 30 tirages. C'est
+# ce que ce test tient maintenant, et rien de plus.
 
 
-def test_le_prompt_sql_exige_la_grandeur_qui_classe_dans_le_select():
-    """« les trois stations avec le plus de sessions ? donne leur code et leur nom »
+def test_le_prompt_sql_garde_la_consigne_de_classement_comme_economie():
+    """Elle ne garantit rien — elle évite des allers-retours, et c'est mesuré.
 
-    Le modèle s'en tenait à la lettre : code et nom projetés, le compte
-    seulement dans le ORDER BY. Le classement et les stations étaient justes,
-    le SQL n'était pas filtré — une réponse littérale, pas un chiffre faux, et
-    un palmarès sans ses chiffres. Mesuré sur vLLM : 0/5 avant, 5/5 après.
+    La retirer ne casserait aucun chiffre : la vérification structurelle rend
+    30/30 sans elle. Elle coûterait 14 relances au lieu de 3 sur trente tirages.
+    Si ce test tombe, relire `docs/sources-de-demonstration.md` avant de
+    conclure qu'il ne sert plus à rien.
     """
     prompt = prompts.render(prompts.RETRIEVAL, dialect="postgresql")
 

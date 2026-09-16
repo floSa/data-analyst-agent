@@ -26,6 +26,7 @@ from data_analyst_agent.agents.dictionnaire import (
     bloc_de_prompt,
     preparer,
 )
+from data_analyst_agent.agents.retrieval.classement import grandeurs_non_projetees
 from data_analyst_agent.agents.retrieval.sql import (
     DatabaseAdapter,
     QueryError,
@@ -34,6 +35,29 @@ from data_analyst_agent.agents.retrieval.sql import (
 )
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
+
+# Ce qu'on renvoie au modèle quand sa requête ordonne le résultat sur une
+# grandeur que le SELECT ne rend pas (cf. `agents/retrieval/classement`).
+#
+# Appendu au résultat, jamais à sa place : le tableau est déjà calculé, il est
+# juste, et le retenir pour forcer une correction transformerait un palmarès
+# sans ses chiffres en tour mort. Le modèle reste libre de répondre avec ce
+# qu'il a — c'est exactement le comportement d'avant ce correctif.
+#
+# **Sans porte de sortie, et c'est mesuré.** Une première rédaction offrait au
+# modèle de garder son résultat « si le tri ne sert qu'à rendre la sortie
+# lisible » : il a pris cette sortie 3 fois sur 3 sur la question qui a motivé
+# tout ceci, et la relance ne réparait rien. Une consigne qui propose de ne
+# rien faire se fait suivre à la lettre. Le coût de l'avoir retirée est qu'un
+# tri purement cosmétique paiera un aller-retour — borné à UN par récupération,
+# et mesuré à côté sur les 48 questions du parcours.
+RELANCE_DE_CLASSEMENT = (
+    "REMARQUE — ta requête ordonne le résultat sur {grandeurs}, que le SELECT ne "
+    "rend pas. Le tableau ci-dessus montre l'ordre sans montrer ce qui le décide : "
+    "il ne dit pas de combien le premier devance le second, et ne se vérifie pas. "
+    "Ajoute {grandeurs} au SELECT, en gardant les colonnes déjà présentes, et "
+    "rappelle run_sql avant de répondre."
+)
 
 
 class ExecutedQuery(BaseModel):
@@ -82,6 +106,11 @@ class RetrievalDeps:
     # de classification floristique… ») : c'est du savoir encyclopédique, pas une
     # lecture de la source, et sur des données privées ce serait de l'invention.
     tools_used: list[str] = field(default_factory=list)
+    # Une relance de classement, et une seule, par récupération. Sans ce verrou,
+    # un modèle qui passe outre se la verrait resservir à chaque requête
+    # suivante, et la boucle mangerait `retrieval_request_limit` sur une
+    # remarque qu'il a déjà lue.
+    relance_de_classement: bool = False
 
 
 def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
@@ -119,7 +148,13 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
             return f"ERREUR SQL : {exc}\nCorrige la requête et réessaie."
         ctx.deps.executed.append(ExecutedQuery(sql=query, ok=True))
         ctx.deps.last_success = (query, result)
-        return result.to_markdown()
+        rendu = result.to_markdown()
+        absentes = grandeurs_non_projetees(query)
+        if not absentes or ctx.deps.relance_de_classement:
+            return rendu
+        ctx.deps.relance_de_classement = True
+        grandeurs = " et ".join(f"`{g}`" for g in absentes)
+        return f"{rendu}\n\n{RELANCE_DE_CLASSEMENT.format(grandeurs=grandeurs)}"
 
     return agent
 

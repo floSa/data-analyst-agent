@@ -267,3 +267,120 @@ def test_un_nom_de_table_decore_est_reconnu(adapter):
         rendu = _schema_lisible(adapter.schema(), ecriture)
         assert "inconnue" not in rendu
         assert "sexe" in rendu
+
+
+# --- un palmarès porte la grandeur qui l'ordonne ------------------------------
+#
+# La vérification est STRUCTURELLE et vit dans la boucle de `run_sql` : elle
+# lit le SQL produit, pas la question posée. C'est ce qui la rend testable
+# ici — sans serveur, sans modèle, et sans dépendre de la tournure française
+# qui a déclenché le classement.
+
+
+def retours_de_tool(messages) -> list[str]:
+    """Le texte que les outils ont rendu au modèle, dans l'ordre."""
+    from pydantic_ai.messages import ModelRequest, ToolReturnPart
+
+    return [
+        str(part.content)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+
+
+def modele_espion(steps: list[list]) -> tuple:
+    """Un modèle scripté qui garde ce que les outils lui ont rendu."""
+    from pydantic_ai.messages import ModelResponse
+    from pydantic_ai.models.function import FunctionModel
+
+    remaining = [ModelResponse(parts=parts) for parts in steps]
+    vus: list[str] = []
+
+    def responder(messages, info):
+        vus[:] = retours_de_tool(messages)
+        return remaining.pop(0)
+
+    return FunctionModel(responder), vus
+
+
+CLASSEMENT_NU = "SELECT sexe FROM mini GROUP BY sexe ORDER BY COUNT(*) DESC"
+CLASSEMENT_PROJETE = "SELECT sexe, COUNT(*) AS n FROM mini GROUP BY sexe ORDER BY COUNT(*) DESC"
+
+
+def test_un_tri_hors_du_select_est_signale_au_modele(adapter):
+    modele, vus = modele_espion(
+        [
+            [ToolCallPart("run_sql", {"query": CLASSEMENT_NU})],
+            [ToolCallPart("run_sql", {"query": CLASSEMENT_PROJETE})],
+            [TextPart("f arrive en tête avec 3 lignes.")],
+        ]
+    )
+    outcome = run_retrieval(
+        "quelles sont les modalités les plus fréquentes ?",
+        adapter=adapter,
+        model=modele,
+        settings=make_settings(),
+    )
+    assert "COUNT(*)" in vus[0]  # la grandeur, citée telle que le modèle l'a écrite
+    assert "ajoute" in vus[0].lower()
+    # ... et le tableau reste rendu AVEC la remarque : on ne retient pas un
+    # résultat juste pour forcer une correction.
+    assert "sexe" in vus[0]
+    assert outcome.succeeded
+    assert outcome.result.columns == ["sexe", "n"]
+    assert [q.sql for q in outcome.executed] == [CLASSEMENT_NU, CLASSEMENT_PROJETE]
+
+
+def test_un_sql_en_regle_ne_declenche_aucune_remarque(adapter):
+    modele, vus = modele_espion(
+        [
+            [ToolCallPart("run_sql", {"query": CLASSEMENT_PROJETE})],
+            [TextPart("f arrive en tête avec 3 lignes.")],
+        ]
+    )
+    outcome = run_retrieval(
+        "quelles sont les modalités les plus fréquentes ?",
+        adapter=adapter,
+        model=modele,
+        settings=make_settings(),
+    )
+    assert "REMARQUE" not in vus[0]
+    assert outcome.succeeded
+
+
+def test_la_remarque_ne_part_qu_une_fois(adapter):
+    """Sinon elle se resservirait à chaque requête et mangerait le budget.
+
+    Le modèle passe outre ici — il repose une requête au tri non projeté. La
+    seconde ne doit rien déclencher : la remarque a été lue, la redire ne fait
+    que dépenser `retrieval_request_limit`.
+    """
+    modele, vus = modele_espion(
+        [
+            [ToolCallPart("run_sql", {"query": CLASSEMENT_NU})],
+            [ToolCallPart("run_sql", {"query": "SELECT sexe FROM mini ORDER BY survie DESC"})],
+            [TextPart("Voilà.")],
+        ]
+    )
+    run_retrieval("…", adapter=adapter, model=modele, settings=make_settings())
+    assert "REMARQUE" not in vus[-1]
+
+
+def test_le_modele_qui_ignore_la_remarque_garde_son_resultat(adapter):
+    """La remarque ne peut pas transformer un tour juste en tour mort.
+
+    Le tableau est déjà calculé quand elle part ; le modèle est libre de
+    répondre avec. C'est le cas d'avant ce correctif, à l'identique.
+    """
+    modele, _ = modele_espion(
+        [
+            [ToolCallPart("run_sql", {"query": CLASSEMENT_NU})],
+            [TextPart("f arrive en tête.")],
+        ]
+    )
+    outcome = run_retrieval("…", adapter=adapter, model=modele, settings=make_settings())
+    assert outcome.succeeded
+    assert outcome.result.columns == ["sexe"]
+    assert outcome.summary == "f arrive en tête."
