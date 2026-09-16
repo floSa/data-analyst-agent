@@ -3195,3 +3195,289 @@ La phrase est retirée. Le critère reste — c'est lui qui fait basculer les
 questions de sens — mais il n'affirme plus, sur des exemples écrits avant lui,
 une chose qui n'est vraie que la plupart du temps. **Un critère qui se
 généralise à des cas qu'on n'a pas vérifiés cesse d'être un critère.**
+
+## 23. Un message qui ne se suffit pas à lui-même
+
+« Oui ». « Vas-y ». « Et dedans ? ». « Tu ne m'as pas répondu ». Ces
+messages-là ne portent pas leur sujet : ils le prennent au tour d'avant. Et
+c'est l'agent lui-même qui pose le piège — il termine par une question fermée,
+l'utilisateur l'accepte, et il répond « je n'ai pas bien compris ta demande »
+suivi de son menu.
+
+Le mécanisme existait déjà et ne suffisait pas : `run_systeme` recevait
+`echange_precedent`, et `prompts/systeme.txt` portait une clause « UN MESSAGE
+QUI NE SE SUFFIT PAS À LUI-MÊME ». Ce §23 dit pourquoi cela ne suffisait pas,
+et la réponse n'est pas celle qu'on aurait devinée.
+
+### 23.1 La cause, montrée par le fil brut — et ce n'était pas la compréhension
+
+Le tour d'avant était **recopié en tête du message de l'utilisateur**, sous une
+étiquette explicite. Voici ce que le modèle en faisait, amorce « Quelles
+sources de données as-tu ? », continuation « Oui » :
+
+```
+ENVOI  [SystemPromptPart] <4795 caractères>
+ENVOI  [UserPromptPart]   "TOUR PRÉCÉDENT, pour comprendre ce qui suit — n'y réponds pas.
+                           L'utilisateur avait dit : Quelles sources de données as-tu ?
+                           Tu avais répondu : J'ai accès aux sources […] Je peux vous donner
+                           les détails sur `referentiel` et `facturation`. Souhaitez-vous
+                           que je fasse cela ?
+                           MESSAGE À TRAITER MAINTENANT : Oui"
+RETOUR [TextPart]         "travailler_sur_une_source(source='referentiel')"
+```
+
+**Le modèle avait compris.** Il nomme le bon outil et le bon argument. Mais il
+l'ÉCRIT au lieu de l'ÉMETTRE : aucun `ToolCallPart`, donc `outils_appeles`
+vide, donc « ce n'est pas une question sur le système », donc le tour repart au
+planificateur, qui rend le repli. Le signal de routage est l'appel d'outil
+([§ plus haut](#9-le-prix-de-lagent-système)), et un appel d'outil écrit en
+prose n'en est pas un.
+
+Une seconde forme du même défaut, sur « et dedans ? » après la description de
+`telemetrie` : le modèle recopie en texte la réponse du tour d'avant, sans
+appeler un seul outil. Il répond juste, et le socle refuse de le servir — à
+raison, parce qu'une réponse de mémoire n'est fondée sur rien de regardé.
+
+Ce n'est donc **ni le sens qui manquait, ni la place du rappel**. C'est la
+FORME : un bloc de prose qui RACONTE un dialogue ne met pas le modèle dans la
+position de continuer un dialogue.
+
+### 23.2 Trois formes, mesurées côte à côte
+
+Trois façons de donner le même tour d'avant, cinq continuations, trois tirages
+chacune, sur vLLM. Le score est « un outil a-t-il été appelé » — le seul
+signal dont le socle se sert :
+
+| continuation | rappel en TÊTE (l'existant) | rappel en QUEUE | tour d'avant en VRAIS messages |
+|---|---|---|---|
+| « Oui, je souhaite que tu fasses ça » | 3/3 | 0/3 | 3/3 |
+| « Oui » | 0/3 | 0/3 | **3/3** |
+| « vas-y » | 0/3 | 0/3 | **3/3** |
+| « et dedans ? » | 0/3 | 0/3 | 0/3 |
+| « tu ne m'as pas répondu » | 0/3 | 0/3 | 0/3 |
+
+La place du rappel ne décide de rien : en queue, c'est pire. Les **vrais
+messages** — `message_history` de `pydantic-ai`, une question et sa réponse —
+font émettre de vrais appels d'outil. C'était la piste la moins essayée ;
+c'est la seule qui paie.
+
+### 23.3 Le prompt système survit à l'historique, et c'est une ligne
+
+La première version de cette mesure a failli conclure trop vite : l'historique
+seul donnait 9/9 là où le prompt système en place donnait 6/9. Le fil brut a
+dit pourquoi, et c'est un piège de bibliothèque :
+
+> `UserPromptNode.run` : `if not messages: parts.extend(await self._sys_parts(...))`
+
+`pydantic-ai` n'émet un `system_prompt` que lorsque l'historique est **vide**.
+Passer un historique, c'est donc faire tourner l'agent système **sans son
+prompt** — sans la règle qui lui interdit d'inventer un nom de source, sans le
+test qui sépare ce qui se lit de ce qui se calcule. Le « gain » de 9/9 était
+celui d'un agent désarmé.
+
+Le prompt part donc en `instructions`, que `pydantic-ai` réémet à chaque
+requête quel que soit l'historique. Un test l'ancre — il fait tourner l'agent
+AVEC un historique et vérifie que le prompt est bien dans ce qui part.
+
+La doublure de test suit : elle routait ses réponses sur le `SystemPromptPart`
+seul, et lit maintenant les deux formes. Sans cette ligne, ce n'est pas un test
+qui tombe, c'est chacun de ceux qui traversent ce nœud.
+
+### 23.4 La clause de continuation : la même idée, au dernier rang
+
+Le prompt portait déjà la clause, au milieu, et le modèle répondait quand même
+`AUTRE`. Elle a été **déplacée en fin de prompt** — après le bloc qui ordonne
+de répondre `AUTRE` — et reformulée sur ce que le fil brut a montré :
+« APPELLE l'outil que tu proposais. Ne l'écris pas, ne le décris pas ».
+Mesurée, à historique constant : **6/15 → 9/15**, sans rien perdre sur les
+témoins. C'est le dernier lu qui pèse.
+
+Un second paragraphe a été ajouté après mesure d'une régression (§23.6) : une
+absence se constate en regardant, jamais en se souvenant.
+
+### 23.5 La batterie, et ce qu'elle a appris sur elle-même
+
+`scripts/mesure_continuation.py` : douze cas, trois situations de tour
+précédent, trois tirages — trente-six tours de continuation, chacun précédé de
+son tour d'amorce. Elle a été corrigée deux fois, et les deux corrections
+valent d'être dites.
+
+**Un tour d'amorce joué ne pose pas de question fermée.** La première campagne
+attendait « souhaitez-vous que… ? » et recevait « Quelle source souhaitez-vous
+explorer ? » — une question OUVERTE, à laquelle « oui » ne répond à rien. La
+situation (a) ne mesurait pas ce qu'elle annonçait. Ses quatre réponses
+d'amorce sont désormais **figées**, sur le patron de celle que l'agent a
+réellement écrite le jour du défaut. Une question fermée ne se commande pas.
+
+**Un nom attendu trouvé dans un déballage ne prouve rien.** L'oracle
+demandait qu'au moins un nom attendu figure dans la réponse. Or à « oui » sur
+une proposition portant sur `referentiel` et `facturation`, l'agent d'avant
+déballait l'inventaire des CINQ sources : le tour est perdu, et la réponse
+contient les deux noms. L'oracle porte maintenant des **interdits** — le
+complément des attendus, tiré de la même vérité terrain : ce que le tour
+d'avant EXCLUAIT. Deux cas ont basculé de « tenu » à « à côté », et ils
+avaient raison de basculer.
+
+C'est la leçon de méthode de ce chantier : **une mesure se corrige avec les
+mêmes exigences que le produit.** Les deux corrections abaissent le score
+d'avant ET celui d'après ; elles ne servent aucun camp.
+
+### 23.6 Avant et après, trente-six tours
+
+Même batterie, même oracle, même moteur — vLLM seul, sur le catalogue de
+démonstration. Trois tirages par cas.
+
+| | avant | après |
+|---|---|---|
+| **(a) l'agent a posé une question fermée** | 6/12 | **12/12** |
+| **(b) l'agent a répondu, l'utilisateur relance** | 9/12 | 9/12 |
+| **(c) l'utilisateur conteste** | 3/12 | 3/12 |
+| **total** | **18/36** | **24/36** |
+
+Le détail, cas par cas :
+
+| cas | continuation | avant | après | ce qui a changé |
+|---|---|---|---|---|
+| `a-oui-explicite` | « Oui, je souhaite que tu fasses ça » | 3/3 | 3/3 | — |
+| `a-oui-nu` | « Oui » | 0/3 | **3/3** | déballait les cinq sources, sert les deux proposées |
+| `a-vas-y` | « vas-y » | 0/3 | **3/3** | déballait les cinq sources, sert les tables promises |
+| `a-accord` | « d'accord, fais-le » | 3/3 | 3/3 | — |
+| `b-et-dedans` | « et dedans ? » | 0/3 | 0/3 | **dette** (§23.9) |
+| `b-et-les-colonnes` | « et les colonnes ? » | 3/3 | 3/3 | — |
+| `b-lesquelles` | « lesquelles portent des dates ? » | 3/3 | 3/3 | — |
+| `b-et-pour-l-autre` | « et pour `iris` ? » | 3/3 | 3/3 | régressé, puis réparé (§23.7) |
+| `c-pas-repondu` | « tu ne m'as pas répondu » | 3/3 | 3/3 | — |
+| `c-pas-ce-que-je-demandais` | « ce n'est pas ce que je demandais » | 0/3 | 0/3 | **dette** (§23.9) |
+| `c-pas-ma-question` | « tu n'as pas répondu à ma question » | 0/3 | 0/3 | **dette** (§23.9) |
+| `c-pas-ca` | « ce n'est pas ça que je voulais savoir » | 0/3 | 0/3 | **dette** (§23.9) |
+
+Ce qui est réparé est la situation (a) **en entier** : ce que l'agent propose,
+il le tient maintenant douze fois sur douze. Et il le tient **sans passer par
+le planificateur** — `system → synthesize`, un tour direct là où il en fallait
+trois pour finir sur un menu.
+
+### 23.7 Une régression, et pourquoi elle valait une seconde mesure
+
+La première version de la clause a **cassé un cas qui marchait** :
+`b-et-pour-l-autre`, « et pour `iris` ? » après les attributs de `titanic`,
+3/3 → 0/3. Le fil brut :
+
+```
+ENVOI  [UserPromptPart] "De quels attributs a besoin le modèle `titanic` pour prédire ?"
+ENVOI  [TextPart]       "Pour prédire avec le modèle `titanic` […] il me faut 7 attribut(s) […]"
+ENVOI  [UserPromptPart] "et pour `iris` ?"
+RETOUR [TextPart]       "Je n'ai pas d'information sur le modèle `iris` dans mon registre."
+```
+
+Il en a une. Le modèle a affirmé une ABSENCE sans regarder — l'exact symétrique
+de ce que la clause lui interdisait, qui ne visait que les affirmations
+positives. Le second paragraphe de la clause le dit : « une absence se constate
+en regardant, jamais en se souvenant », et « quand le message demande la même
+chose d'une AUTRE cible, appelle l'outil avec cette autre cible ». Mesuré sur
+ce seul cas, trois tirages : **0/3 → 3/3**.
+
+Sans la mesure avant/après cas par cas, ce gain net de +6 aurait masqué une
+perte de −3 : le total serait passé de 18 à 21, et personne n'aurait su qu'un
+cas qui marchait avait cessé de marcher.
+
+### 23.8 La proposition en attente : ce n'est pas un `pending`, et voici pourquoi
+
+La question posée était nette : le mécanisme de `pending` — la prédiction en
+attente de features, déjà persistée dans le fil — est-il la bonne forme pour
+« une proposition en attente, reprise au tour suivant » ? **Non**, et trois
+faits le disent.
+
+**Un `pending` retient un fait STRUCTURÉ ; une proposition est du texte.** La
+prédiction en attente naît d'une validation qui échoue : on sait exactement
+quel `dataset` et quelles `features` manquent. Une proposition en conversation
+est une phrase libre. La retenir demanderait soit de l'analyser après coup —
+c'est-à-dire un lexique de tournures, ce que la règle de C33 interdit et que ce
+chantier a déjà payé trois fois — soit de contraindre la sortie de l'agent
+système, qui est aujourd'hui du texte libre et dont toute la surface mesurée
+dans ce document dépend.
+
+**Il n'y a le plus souvent RIEN à retenir.** La première campagne l'a mesuré
+sans le chercher : l'agent, à qui le prompt demande de « terminer par une
+phrase courte invitant à la suite », termine par une question **ouverte** —
+« Quelle source souhaitez-vous explorer ? », « Que souhaitez-vous savoir sur
+ces tables ? ». Aucune action n'y est proposée ; un `pending` n'aurait rien à
+persister. C'est d'ailleurs pour cette raison que les quatre cas de la
+situation (a) ont dû figer leur tour d'amorce (§23.5).
+
+**Et l'état a déjà été essayé, ici même.** Un second champ — « une proposition
+attend une réponse » — a vécu sur la source de travail de la conversation, et
+il a été retiré après mesure : il créait une dépendance à l'ordre des tours qui
+a fait perdre un message de validation sur le parcours mesuré
+(`orchestrator/graph.py`, le commentaire au-dessus de `OrchestratorState`).
+
+Le fil, lui, porte déjà l'information, et il la porte **sans état** : la
+proposition est dans la réponse du tour d'avant, qui est relue du disque à
+chaque tour comme la source de travail et la prédiction en attente. Il ne
+manquait que de la donner sous la forme que le modèle sait lire. 12/12 sur la
+situation (a) est la réponse expérimentale : **ce que l'agent propose, il le
+tient, et rien n'a eu besoin d'être persisté pour ça.**
+
+### 23.9 Ce que la clause a coûté, et la limite qui l'a rendue tenable
+
+Le §22 a appris qu'une phrase de renfort ajoutée au prompt de l'agent système
+se paie ailleurs. Ce chantier l'a payé une seconde fois, et au même endroit.
+
+La clause de continuation, telle qu'écrite d'abord, a fait perdre **un tour du
+parcours de démonstration** — `verrou-bascule`, la question « Et si l'on regarde
+maintenant du côté de la source `facturation`, quelle y est l'énergie totale en
+kWh ? » :
+
+| prompt | ce que fait l'agent | score |
+|---|---|---|
+| avant la clause | `system → plan → retrieval → synthesize` — il calcule | **3/3** |
+| avec la clause | `system → synthesize` — il sert le schéma de `facturation` | **0/3** |
+
+Le message commence par « Et si l'on regarde maintenant… ». La clause citait
+« et dedans ? » parmi ses exemples : l'agent a classé un CALCUL parmi les
+continuations, s'en est emparé, et a répondu par le schéma d'une source à qui
+demandait une somme.
+
+La clause porte donc sa propre limite, en dernier :
+
+> **LE TEST, LUI, NE BOUGE PAS.** Un message qui porte SA PROPRE question n'est
+> pas une continuation, même s'il commence par « et ». Et un message qui
+> continue ton tour en demandant un CALCUL reste un calcul — la réponse est
+> `AUTRE`.
+
+Mesuré des deux côtés, et c'est la seule façon d'ajouter une phrase à ce
+prompt : `verrou-bascule` **0/3 → 3/3**, et les cinq cas de continuation qui
+avaient gagné restent à **15/15**. Une consigne qui n'énonce pas où elle
+s'arrête finit par s'appliquer là où elle n'a rien à faire.
+
+### 23.10 Ce qui reste ouvert après le §23
+
+**Quatre cas sur douze restent perdus, avant comme après**, et ils ne sont pas
+du même bois :
+
+- `b-et-dedans` — « et dedans ? » après la description de `telemetrie` : le
+  modèle recopie en texte la réponse du tour d'avant, sans appeler un seul
+  outil. Il répond juste, et le socle refuse de le servir — à raison : le
+  contrat est qu'une réponse non fondée sur un outil de CE tour-ci n'est pas
+  servie. Le défaut n'est pas dans la ceinture, il est dans le modèle qui
+  préfère se souvenir plutôt que regarder.
+- `c-pas-ce-que-je-demandais`, `c-pas-ma-question`, `c-pas-ca` — la
+  contestation. Le modèle répond `AUTRE` à « ce n'est pas ce que je
+  demandais », et le tour finit sur le menu du planificateur ou sur un
+  déballage de l'inventaire. **La situation (c) n'a pas bougé d'un tour** : 3/12
+  avant, 3/12 après. Le paragraphe qui lui est consacré dans la clause ne l'a
+  pas déplacée, et le prompt est déjà l'endroit le plus cher du dépôt — il
+  faudra autre chose qu'une phrase de plus.
+
+**Le tour d'avant a cessé d'atteindre les OUTILS.** `SystemeDeps.question`
+sert de précision à deux outils qui devinent leur cible (`schema_d_une_source`,
+`attributs_d_un_modele`). Elle contenait, par accident, le message COMPOSÉ —
+donc le tour d'avant. Elle ne porte plus que le message nu. Aucun cas mesuré
+ne s'en plaint, et rien n'a été ajouté pour le compenser : ajouter du code que
+rien ne réclame serait retomber dans ce que ce document reproche ailleurs. Mais
+c'est un fait dont on ne sait pas encore ce qu'il coûte.
+
+**Ce que l'agent propose reste une question ouverte — au sens propre.** La
+consigne « termine par une phrase courte invitant à la suite » lui fait
+produire « Quelle source souhaitez-vous explorer ? » bien plus souvent que
+« souhaitez-vous que je fasse cela ? ». Le socle tient désormais ce qu'il
+propose quand il propose quelque chose ; il propose rarement quelque chose.
