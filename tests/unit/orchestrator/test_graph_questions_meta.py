@@ -24,6 +24,7 @@ from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Capability, Plan
+from data_analyst_agent.orchestrator.systeme import build_systeme_agent
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from helpers.doubles import FakeClassifier
 from helpers.scripted_llm import (
@@ -459,3 +460,30 @@ def test_un_complement_de_features_ne_passe_pas_par_l_agent_systeme(
     assert llm.prompts_for(SYSTEME) == []  # l'agent système n'a pas été appelé
     detail = next(s for s in reponse.trace if s.node == "system").detail
     assert "prédiction en attente" in detail
+
+
+def test_l_outil_de_schema_annonce_qu_il_porte_le_SENS_et_pas_que_la_structure():
+    """Ce qu'un outil DIT porter décide du routage de tout un tour.
+
+    Mesuré avant correctif : l'agent système répondait ``AUTRE`` à huit
+    formulations sur huit de « que veut dire cette colonne ? ». Le prompt lui
+    disait pourtant que le sens d'une colonne le concerne. Mais aucun de ses
+    six outils n'annonçait porter un sens — celui-ci disait « tables, colonnes,
+    types et clés », c'est-à-dire de la structure. Un modèle qui ne voit aucun
+    outil capable de répondre conclut que la question n'est pas pour lui, et il
+    a raison de le conclure.
+
+    Ce test ne pèse aucune tournure : il exige que la description dise les deux
+    genres de fait que la fonction rend RÉELLEMENT — la structure, et ce que le
+    dictionnaire de la source écrit sur la colonne visée
+    (``introspection.decrire_le_schema``). Une description qui n'annonce que la
+    moitié de son retour est un défaut d'interface, pas de style.
+    """
+    (toolset,) = build_systeme_agent().toolsets
+    description = toolset.tools["schema_d_une_source"].description or ""
+
+    assert "dictionnaire" in description.lower()
+    assert "veut dire" in description.lower()
+    # et la structure reste annoncée : le correctif ajoute, il ne remplace pas
+    assert "colonnes" in description.lower()
+    assert "types" in description.lower()

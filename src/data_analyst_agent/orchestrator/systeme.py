@@ -205,7 +205,17 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
 
     @agent.tool
     def schema_d_une_source(ctx: RunContext[SystemeDeps], cible: str = "") -> str:
-        """Tables, colonnes, types et clés d'une source, lus dans la source elle-même.
+        """Ce qu'une source contient ET ce que son contenu VEUT DIRE.
+
+        Rend deux choses pour ce que la question vise : d'une part les tables,
+        les colonnes, leurs types et leurs clés, lus dans la source elle-même ;
+        d'autre part ce que le DICTIONNAIRE de cette source écrit sur la
+        colonne visée — l'unité dans laquelle elle est exprimée, ce que
+        signifie chacun de ses codes, et quelles de ses valeurs n'en sont pas
+        (un compteur muet, une saisie absente) et faussent donc un calcul.
+
+        C'est la seule façon de répondre à ce qu'une colonne VEUT DIRE : le DDL
+        ne donne qu'un type, et le sens n'est écrit nulle part ailleurs.
 
         `cible` : ce sur quoi porte la question — un nom de source
         (« titanic »), de table (« passengers ») ou de colonne (« class_id »).
@@ -216,7 +226,9 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         precision = f"{cible} {ctx.deps.question}".strip()
         return ctx.deps.retenir(
             "schema_d_une_source",
-            introspection.decrire_le_schema(precision, _ontologies(precision, ctx.deps)),
+            introspection.decrire_le_schema(
+                precision, _ontologies(precision, ctx.deps), ctx.deps.source_de_travail
+            ),
         )
 
     @agent.tool

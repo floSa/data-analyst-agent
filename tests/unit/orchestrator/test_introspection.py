@@ -349,10 +349,48 @@ def test_un_deux_points_en_fin_de_ligne_n_enumere_rien():
 
 def test_une_citation_du_dictionnaire_n_enumere_rien():
     """Le seul texte de faits que ce module n'écrit pas : sa ponctuation
-    n'engage personne, et un `>` n'est pas une déclaration de nos artefacts."""
+    n'engage personne, et un `>` n'est pas une déclaration de nos artefacts.
+
+    La réponse attribue, parce que les faits attribuent : c'est l'autre règle
+    (``_attribution_qui_ne_colle_pas``), et ce test-ci ne porte pas sur elle.
+    """
     faits = "Ce qu'en dit le dictionnaire de `titanic` :\n> tarif : en `livres` sterling"
 
-    assert introspection.defaut_de_fondation("Le tarif est en livres.", faits) == ""
+    reponse = "Selon le dictionnaire, le tarif est en livres."
+    assert introspection.defaut_de_fondation(reponse, faits) == ""
+
+
+# --- l'attribution : elle suit les faits, dans les deux sens -------------------
+
+
+def test_une_provenance_tue_ne_se_sert_pas():
+    """Les faits citent le dictionnaire, la réponse le passe sous silence.
+
+    Mesuré 3 fois sur 3 sur « le statut RET, il recouvre quoi au juste ? » : le
+    bon fait, sans dire d'où il vient. C'est ce qui sépare une lecture du
+    référentiel de quelqu'un d'un savoir général sur les codes d'état.
+    """
+    faits = "Ce qu'en dit le dictionnaire de `referentiel` :\n> `RET` : station démontée"
+
+    defaut = introspection.defaut_de_fondation("`RET` veut dire démontée.", faits)
+
+    assert defaut == "provenance tue : les faits citent le dictionnaire, la réponse non"
+
+
+def test_une_provenance_INVENTEE_ne_se_sert_pas():
+    """L'autre sens, et c'est le pire des deux : la source n'a pas de dictionnaire.
+
+    Une attribution inventée donne l'autorité de la base à un savoir général.
+    Le témoin sans dictionnaire n'était tenu que par une campagne de mesure ;
+    il l'est désormais par du code.
+    """
+    faits = "Dans la table `passengers`, la colonne `sex` est de type TEXT."
+
+    defaut = introspection.defaut_de_fondation(
+        "Selon le dictionnaire de la source, `sex` est le sexe du passager.", faits
+    )
+
+    assert defaut == "provenance inventée : aucun fait ne cite de dictionnaire"
 
 
 def test_une_reponse_vide_ou_hors_sujet_ne_se_sert_pas():
@@ -591,6 +629,130 @@ def test_le_dictionnaire_est_cite_sur_une_colonne(ontologie_titanic):
     reponse = introspection.decrire_le_schema("que signifie la colonne class_id ?", [avec])
     assert "pont supérieur" in reponse
     assert "autre chose" not in reponse  # seules les lignes qui citent le terme
+
+
+# --- la cascade de ciblage : un nom cité désigne la source qui le porte --------
+
+
+def _deux_sources(ontologie_titanic) -> list[introspection.Ontologie]:
+    """`titanic` et une source qui ne partage AUCUN nom avec elle, sauf un."""
+    fleurs = introspection.Ontologie(
+        source=FileSource(name="iris", path=Path("i.csv")),
+        schema=SchemaInfo(
+            tables=[
+                TableInfo(
+                    name="fleurs",
+                    columns=[
+                        ColumnInfo(name="petal_length", type="REAL"),
+                        # Partagée avec `passengers` : c'est le cas où le nom
+                        # seul ne suffit pas, et où la source de travail tranche.
+                        ColumnInfo(name="class_id", type="INTEGER"),
+                    ],
+                )
+            ]
+        ),
+    )
+    return [fleurs, ontologie_titanic]
+
+
+def test_une_colonne_que_seule_une_source_porte_designe_cette_source(ontologie_titanic):
+    """La voie qui manquait, et qui passait pour une réserve de formulation.
+
+    « c'est quoi petal_length ? » ne nomme ni source ni table. Elle n'est
+    pourtant pas ambiguë : une seule source porte ce nom. Avant, la cascade
+    s'arrêtait à la table et rendait le tour d'horizon — ce que la
+    documentation appelait « la question doit nommer sa source ».
+    """
+    reponse = introspection.decrire_le_schema(
+        "c'est quoi petal_length ?", _deux_sources(ontologie_titanic)
+    )
+    assert "petal_length" in reponse
+    assert "REAL" in reponse
+    # Le tour d'horizon aurait listé les tables des DEUX sources.
+    assert "passengers" not in reponse
+
+
+def test_une_colonne_portee_par_deux_sources_est_tranchee_par_celle_du_travail(
+    ontologie_titanic,
+):
+    """C'est le verrou de source, appliqué au sens comme il l'est aux chiffres.
+
+    `class_id` vit des deux côtés. Sans source de travail, rien ne le départage
+    et le tour d'horizon est la seule réponse honnête ; avec elle, la question
+    se lit dans la source où l'on travaille.
+    """
+    ontologies = _deux_sources(ontologie_titanic)
+    indecidable = introspection.decrire_le_schema("que veut dire class_id ?", ontologies)
+    assert "Voici les tables de chacune de mes sources" in indecidable
+
+    tranchee = introspection.decrire_le_schema(
+        "que veut dire class_id ?", ontologies, source_de_travail="titanic"
+    )
+    # La fiche de la colonne, servie depuis `titanic` — et non le tour
+    # d'horizon. Quelle table de `titanic` la porte n'est pas le sujet : le
+    # verrou a tranché la SOURCE, ce que personne d'autre ne pouvait faire.
+    assert "la colonne `class_id` est de type INTEGER" in tranchee
+    assert "Voici les tables de chacune de mes sources" not in tranchee
+
+
+def test_la_source_de_travail_n_ecrase_jamais_un_nom_cite(ontologie_titanic):
+    """Elle départage, elle ne décide pas à la place de l'utilisateur.
+
+    La conversation est sur `iris` ; la question nomme `petal_length`, qui n'y
+    est pas ambiguë — mais elle nomme surtout `passengers`. C'est la table
+    citée qui gagne, sinon la source de travail deviendrait un filtre et non un
+    défaut.
+    """
+    reponse = introspection.decrire_le_schema(
+        "les colonnes de passengers", _deux_sources(ontologie_titanic), source_de_travail="iris"
+    )
+    assert "passenger_id" in reponse
+    assert "petal_length" not in reponse
+
+
+def test_sans_rien_de_cite_la_source_de_travail_repond(ontologie_titanic):
+    """« quelles colonnes ? » dans une conversation liée n'est plus indécidable."""
+    reponse = introspection.decrire_le_schema(
+        "quelles colonnes ?", _deux_sources(ontologie_titanic), source_de_travail="iris"
+    )
+    assert "petal_length" in reponse
+
+
+def test_le_ciblage_par_colonne_sert_le_dictionnaire_de_la_bonne_source(ontologie_titanic):
+    """Le point de tout l'exercice : la question de sens reçoit le SENS.
+
+    Sans la voie de la colonne, `decrire_le_schema` rendait la liste des tables
+    et le dictionnaire n'était jamais atteint — la réponse à « c'est quoi
+    puissance_kw ? » ne pouvait donc pas porter ce que seul le dictionnaire
+    sait.
+    """
+    avec = introspection.Ontologie(
+        source=FileSource(name="telemetrie", path=Path("t.duckdb")),
+        schema=SchemaInfo(
+            tables=[
+                TableInfo(name="releves", columns=[ColumnInfo(name="puissance_kw", type="DOUBLE")])
+            ]
+        ),
+        dictionnaire="- `puissance_kw` : -1 n'est pas une puissance, à écarter des moyennes.\n",
+    )
+    reponse = introspection.decrire_le_schema(
+        "c'est quoi puissance_kw exactement ?", [avec, ontologie_titanic]
+    )
+    assert "à écarter des moyennes" in reponse
+    assert "dictionnaire de `telemetrie`" in reponse
+
+
+def test_une_source_sans_dictionnaire_n_en_voit_apparaitre_aucun(ontologie_titanic):
+    """Le témoin de tout ce chantier, tenu par du code et pas seulement mesuré.
+
+    La voie de la colonne fait atteindre la fiche d'une colonne sans que la
+    source soit nommée. Elle ne doit pas, ce faisant, faire naître une
+    provenance : `titanic` ne déclare aucun dictionnaire, et une réponse qui
+    citerait le sien donnerait l'autorité de la base à un savoir général.
+    """
+    reponse = introspection.decrire_le_schema("c'est quoi sex ?", [ontologie_titanic])
+    assert "`sex` (TEXT)" in reponse or "colonne `sex`" in reponse
+    assert "dictionnaire" not in reponse.lower()
 
 
 def test_le_dictionnaire_borne_son_extrait():

@@ -477,23 +477,71 @@ class Ontologie:
     dictionnaire: str | None = None
 
 
-def _cible(question: str, ontologies: list[Ontologie]) -> Ontologie | None:
+def _entre_les_porteuses(porteuses: list[Ontologie], liee: Ontologie | None) -> Ontologie | None:
+    """Laquelle des sources qui portent ce nom la question désigne-t-elle ?
+
+    Une seule le porte : c'est elle, et rien n'est deviné. Plusieurs le
+    portent : c'est la source de TRAVAIL qui tranche, si elle est du nombre —
+    et c'est le verrou de source, le même qui fait répondre 1 757 519 et non
+    531 098 à « quelle énergie totale ? » quand la conversation est sur
+    `exploitation`. Aucune des deux voies ne s'applique : ``None``, et l'appelant
+    rendra le tour d'horizon plutôt qu'un sens pris au hasard.
+    """
+    if len(porteuses) == 1:
+        return porteuses[0]
+    if liee is not None and liee in porteuses:
+        return liee
+    return None
+
+
+def _cible(
+    question: str, ontologies: list[Ontologie], source_de_travail: str = ""
+) -> Ontologie | None:
     """L'ontologie sur laquelle porte la question, ou ``None`` si c'est indécidable.
 
-    Trois voies, dans cet ordre. La source nommée ; à défaut la source qui
-    porte la table nommée — « quelles colonnes dans la table passengers ? »
-    ne nomme aucune source et n'est pourtant pas ambiguë ; à défaut l'unique
-    source, s'il n'y en a qu'une.
+    Quatre voies, dans cet ordre, et une seule propriété : **un nom cité
+    désigne la source qui le porte**. La source nommée ; à défaut la source qui
+    porte la TABLE nommée — « quelles colonnes dans la table passengers ? » ne
+    nomme aucune source et n'est pourtant pas ambiguë ; à défaut la source qui
+    porte la COLONNE nommée, pour exactement la même raison ; à défaut la
+    source de travail de la conversation ; à défaut l'unique source, s'il n'y
+    en a qu'une.
+
+    **La voie de la colonne est celle qui manquait**, et son absence se lisait
+    dans la documentation comme une réserve de forme : « que veut dire la
+    colonne puissance_kw ? », sans « dans la source telemetrie », rendait la
+    liste des tables. Une colonne est pourtant un nom comme un autre, et
+    `puissance_kw` n'existe que dans une source sur cinq. Ce qui était présenté
+    comme une contrainte de formulation était un trou dans la cascade.
+
+    La source de travail ne sert jamais à écraser un nom cité : elle départage
+    quand plusieurs sources portent le même (``_entre_les_porteuses``), et elle
+    ne décide seule que lorsque la question ne nomme rien.
     """
     nomme = _nomme_dans(question, [o.source.name for o in ontologies])
     if nomme:
         return next(o for o in ontologies if o.source.name == nomme)
+    liee = next((o for o in ontologies if o.source.name == source_de_travail), None)
     tables = _dedoublonne(t.name for o in ontologies for t in o.schema.tables)
     table = _nomme_dans(question, tables)
     if table:
         porteuses = [o for o in ontologies if table in o.schema.table_names()]
-        if len(porteuses) == 1:
-            return porteuses[0]
+        choisie = _entre_les_porteuses(porteuses, liee)
+        if choisie is not None:
+            return choisie
+    colonnes = _dedoublonne(c.name for o in ontologies for t in o.schema.tables for c in t.columns)
+    colonne = _nomme_dans(question, colonnes)
+    if colonne:
+        porteuses = [
+            o
+            for o in ontologies
+            if any(c.name == colonne for t in o.schema.tables for c in t.columns)
+        ]
+        choisie = _entre_les_porteuses(porteuses, liee)
+        if choisie is not None:
+            return choisie
+    if liee is not None:
+        return liee
     return ontologies[0] if len(ontologies) == 1 else None
 
 
@@ -511,7 +559,9 @@ def _dedoublonne(noms) -> list[str]:
     return list(vus)
 
 
-def decrire_le_schema(question: str, ontologies: list[Ontologie]) -> str:
+def decrire_le_schema(
+    question: str, ontologies: list[Ontologie], source_de_travail: str = ""
+) -> str:
     """Les tables, les colonnes ou le sens d'une colonne — au bon niveau de détail.
 
     Quatre niveaux, choisis sur ce que la question nomme réellement. Une
@@ -520,10 +570,16 @@ def decrire_le_schema(question: str, ontologies: list[Ontologie]) -> str:
     décidable : le tour d'horizon — chaque source et le nom de ses tables,
     sans les colonnes, parce que déplier trois cents colonnes pour répondre
     « je ne sais pas laquelle tu veux » n'aide personne.
+
+    ``source_de_travail`` est la source liée à la conversation. Elle ne sert
+    qu'à départager (cf. ``_cible``) : « c'est quoi code_station ? » se pose
+    dans quatre sources sur cinq, et la seule qui puisse trancher est celle sur
+    laquelle on travaille. Vide hors conversation, et le comportement est alors
+    celui d'avant, au caractère près.
     """
     if not ontologies:
         return "Je n'ai aucune source de données déclarée dans mon catalogue."
-    cible = _cible(question, ontologies)
+    cible = _cible(question, ontologies, source_de_travail)
     if cible is None:
         lignes = ["Voici les tables de chacune de mes sources :", ""]
         for ontologie in ontologies:
@@ -764,6 +820,8 @@ def defaut_de_fondation(reponse: str, faits: str) -> str:
       défaut mesuré : la version narrée par le modèle avait laissé tomber deux
       colonnes sur dix (mesure du 2026-09-07, §4 de
       `surface-conversationnelle.md`).
+    - **une attribution qui ne correspond pas aux faits**, dans les DEUX sens
+      (``_attribution_qui_ne_colle_pas``).
 
     Le message rendu est destiné à la **trace**, pas à l'utilisateur : ce qu'il
     lit, lui, est la réponse déterministe, qui ne dit pas qu'elle est un repli.
@@ -783,4 +841,45 @@ def defaut_de_fondation(reponse: str, faits: str) -> str:
     tues = [a for a in _actions(faits) if a not in plat]
     if tues:
         return "action(s) omise(s) : " + ", ".join(tues)
+    return _attribution_qui_ne_colle_pas(reponse, faits)
+
+
+# Comment les faits annoncent qu'ils citent le dictionnaire d'une source. C'est
+# NOTRE texte — celui de ``decrire_le_schema`` — donc la marque est fiable, et
+# c'est la seule chose qu'on cherche : on ne juge pas la phrase du modèle.
+_EN_TETE_DE_DICTIONNAIRE = "ce qu'en dit le dictionnaire de"
+_MOTS_DE_PROVENANCE = ("dictionnaire", "dictionary")
+
+
+def _attribution_qui_ne_colle_pas(reponse: str, faits: str) -> str:
+    """L'attribution de la réponse doit être celle des faits — dans les deux sens.
+
+    Une seule règle, et elle se lit à l'endroit comme à l'envers : **la
+    formulation attribue si et seulement si les faits attribuent.** Les deux
+    moitiés sont des défauts mesurés, et ce sont deux défauts différents.
+
+    **Les faits citent le dictionnaire, la réponse non.** Mesuré 3 fois sur 3
+    sur « le statut RET, il recouvre quoi au juste ? » : le modèle rend le bon
+    fait — `RET` = matériel retiré du service et démonté — et ne dit pas d'où il
+    le tient. Or c'est précisément ce qui distingue une LECTURE du référentiel
+    de quelqu'un d'un savoir général sur les codes d'état ; sans elle,
+    l'utilisateur ne peut pas savoir laquelle des deux il vient de recevoir.
+    C'est la dette B, par une autre porte que celle qui l'avait fermée.
+
+    **Les faits ne citent aucun dictionnaire, et la réponse en cite un.** Mesuré
+    sur `titanic`, qui n'en déclare pas : le modèle a écrit « selon le
+    dictionnaire de la source ». C'est pire que l'omission — une attribution
+    inventée donne l'autorité de la base à un savoir général, et c'est
+    exactement la famille ``acfd8f5``. Le témoin sans dictionnaire n'était
+    jusqu'ici tenu que par une campagne de mesure ; il est ici tenu par du code.
+
+    Dans les deux cas, ce sont les faits qui sont servis — et les faits, eux,
+    portent l'en-tête d'attribution quand il y a lieu et se taisent sinon.
+    """
+    attendue = _EN_TETE_DE_DICTIONNAIRE in faits.lower()
+    donnee = any(mot in reponse.lower() for mot in _MOTS_DE_PROVENANCE)
+    if attendue and not donnee:
+        return "provenance tue : les faits citent le dictionnaire, la réponse non"
+    if donnee and not attendue:
+        return "provenance inventée : aucun fait ne cite de dictionnaire"
     return ""
