@@ -35,16 +35,6 @@
   #colonne { flex: 1; display: flex; flex-direction: column; min-width: 0;
              max-width: 860px; margin: 0 auto; padding: 1rem; }
   h1 { font-size: 1.2rem; margin-bottom: .5rem; }
-  /* l'indicateur de source de travail : permanent, au-dessus du fil */
-  #source-de-travail { display: flex; align-items: baseline; gap: .5rem;
-                       flex-wrap: wrap; padding: .5rem .75rem; margin-bottom: .75rem;
-                       border: 1px solid #6b728055; border-radius: .5rem;
-                       background: #6b728011; font-size: .85rem; }
-  #source-de-travail label { opacity: .75; }
-  #source-liee { font-weight: 600; padding: .3rem .4rem; border-radius: .3rem;
-                     border: 1px solid #6b7280; background: transparent;
-                     color: inherit; font-size: .85rem; max-width: 20rem; }
-  #faits-de-source { flex-basis: 100%; opacity: .7; font-size: .8rem; }
   #journal { flex: 1; overflow-y: auto; display: flex; flex-direction: column;
              gap: .75rem; margin-bottom: 1rem; }
   .message { padding: .6rem .9rem; border-radius: .6rem; white-space: pre-wrap;
@@ -88,18 +78,12 @@
 </nav>
 <main id="colonne">
   <h1>data-analyst-agent</h1>
-  <!-- La source de travail : un TÉMOIN, pas une commande. On la choisit en
-       PARLANT — « quelles sources as-tu ? », « travaille sur exploitation » —
-       et ce bandeau ne fait que dire laquelle le fil porte. Un menu était monté
-       ici ; il proposait à l'ouverture un choix que personne n'avait demandé, et
-       il laissait croire qu'il fallait le faire avant de parler. C'est l'inverse
-       du produit : l'agent annonce ses sources et lie celle qu'on lui nomme.
-       L'API `PUT /conversations/<id>/source` reste, elle sert au verrou. -->
-  <div id="source-de-travail">
-    <label>Source de travail</label>
-    <span id="source-liee"></span>
-    <span id="faits-de-source"></span>
-  </div>
+  <!-- Rien au-dessus du fil. La source de travail ne s'affiche pas et ne se
+       clique pas : on la DEMANDE — « quelles sources as-tu ? » — et on la lie en
+       la nommant. L'agent l'annonce dans le fil (« Entendu : on travaille sur
+       telemetrie … »), et c'est la conversation qui en garde la trace. Un menu
+       puis un témoin ont été montés ici ; les deux posaient à l'écran une
+       question que le dialogue pose mieux. -->
   <div id="journal"></div>
   <form id="formulaire">
     <input type="text" id="message" autocomplete="off"
@@ -141,17 +125,11 @@ const formulaire = document.getElementById("formulaire");
 const champ = document.getElementById("message");
 const bouton = document.getElementById("envoyer");
 const fils = document.getElementById("fils");
-const sourceLiee = document.getElementById("source-liee");
-const faitsDeSource = document.getElementById("faits-de-source");
 // null = conversation neuve : le serveur lui attribuera un id au 1er message.
 let conversationId = null;
-// Le catalogue, tel que /sources le rend : nom, type, description, et les faits
-// LUS dans chaque source (tables, lignes, période). Chargé une fois.
-let sources = [];
 
 // Ce que dit l'indicateur quand rien n'est choisi. Ce n'est pas un manque :
 // c'est l'état normal d'un fil neuf, et il annonce ce que l'agent fera.
-const AUCUNE_SOURCE = "— aucune (demande-la-moi)";
 
 function bulle(classe) {
   const div = document.createElement("div");
@@ -242,22 +220,6 @@ function enHtml(texte) {
 
 function defiler() { journal.scrollTop = journal.scrollHeight; }
 
-// --- l'indicateur de source de travail --------------------------------------
-
-async function chargerLesSources() {
-  const reponse = await appel("/sources");
-  sources = await reponse.json();
-}
-
-// Affiche l'état SANS le renvoyer au serveur : appelée après chaque réponse et
-// à l'ouverture d'un fil, c'est-à-dire à chaque fois que la source a pu changer
-// du fait de l'agent (bascule annoncée) et non de ce menu.
-function afficherLaSource(nom) {
-  const source = sources.find(s => s.name === nom);
-  sourceLiee.dataset.nom = nom || "";
-  sourceLiee.textContent = nom || AUCUNE_SOURCE;
-  faitsDeSource.textContent = source ? (source.faits || source.description) : "";
-}
 
 async function rafraichirFils() {
   const reponse = await appel("/conversations");
@@ -314,7 +276,6 @@ async function ouvrir(id) {
   if (!reponse.ok) { rafraichirFils(); return; }
   const conversation = await reponse.json();
   conversationId = conversation.id;
-  afficherLaSource(conversation.source_de_travail);
   journal.textContent = "";
   for (const message of conversation.messages) {
     if (message.role === "user") bulle("utilisateur").textContent = message.content;
@@ -327,7 +288,6 @@ async function ouvrir(id) {
 
 function nouvelleConversation() {
   conversationId = null;
-  afficherLaSource("");
   journal.textContent = "";
   rafraichirFils();
   champ.focus();
@@ -363,7 +323,6 @@ formulaire.addEventListener("submit", async (event) => {
     // L'agent lie une source au premier tour qui en demande une, et bascule
     // quand le message en nomme une autre : l'indicateur doit le montrer sans
     // qu'on ait à rouvrir le fil.
-    afficherLaSource(corps.source_de_travail);
     rendreReponse(attente, corps.answer, corps.artifacts, corps.error);
     // 1er message : le fil vient d'être créé et titré côté serveur.
     if (nouveau) rafraichirFils();
@@ -378,13 +337,10 @@ formulaire.addEventListener("submit", async (event) => {
   }
 });
 
-// Le catalogue d'abord, la barre latérale ensuite — mais un catalogue
-// illisible ne doit pas emporter la page avec lui : sans ce `catch`, une source
-// injoignable au démarrage laisserait un chat sans aucune conversation listée.
-// Le témoin dit « aucune » dès l'ouverture, avant même qu'un fil soit choisi :
-// un bandeau vide se lirait comme un chargement qui n'en finit pas.
-afficherLaSource("");
-chargerLesSources().catch(() => {}).finally(() => { afficherLaSource(sourceLiee.dataset.nom || ""); rafraichirFils(); });
+// La page ne lit plus le catalogue : elle n'a plus rien à en afficher. Seule la
+// barre latérale se remplit au démarrage — les sources, c'est l'agent qui les
+// annonce, dans le fil, quand on les lui demande.
+rafraichirFils();
 </script>
 </body>
 </html>

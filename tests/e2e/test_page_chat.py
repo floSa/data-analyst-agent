@@ -363,23 +363,26 @@ def test_connexion_puis_deconnexion(page, url_nue: str):
 # --- l'indicateur de source de travail ----------------------------------------
 
 
-def test_aucun_menu_ne_propose_de_choisir_la_source(page, app_url: str):
-    """La source se choisit en PARLANT, et la page ne propose rien d'autre.
+def test_rien_au_dessus_du_fil_ne_parle_de_source(page, app_url: str):
+    """La page n'affiche AUCUN bandeau de source : ni menu, ni témoin.
 
-    Un menu déroulant a été monté ici, puis retiré : il posait à l'ouverture un
-    choix que personne n'avait demandé, et laissait croire qu'il fallait le
-    faire avant de parler. C'est l'inverse du produit — l'agent annonce ses
-    sources quand on les lui demande, et lie celle qu'on lui nomme.
+    Un menu déroulant a d'abord été monté ici, puis un témoin en lecture seule.
+    Les deux posaient à l'écran une question que le dialogue pose mieux : « sur
+    quoi travaille-t-on ? » se demande à l'agent, qui annonce ses sources et lie
+    celle qu'on lui nomme. Ce test tient l'absence, parce qu'une absence se
+    remet toute seule le jour où quelqu'un trouve le bandeau pratique.
     """
     connexion(page, app_url)
-    page.wait_for_selector("#source-liee")
+    page.wait_for_selector("#journal")
 
-    assert page.locator("#source-de-travail select").count() == 0
-    assert "aucune" in page.inner_text("#source-liee")
+    assert page.locator("#source-de-travail").count() == 0
+    assert page.locator("#source-liee").count() == 0
+    assert page.locator("select").count() == 0
+    assert "Source de travail" not in page.inner_text("#colonne")
 
 
-def test_nommer_une_source_dans_le_fil_la_lie_et_l_indicateur_suit(page, app_url: str):
-    """Le témoin dit ce que le FIL porte, et il ne l'apprend que de la réponse."""
+def test_nommer_une_source_dans_le_fil_la_lie(page, app_url: str):
+    """On choisit sa source en PARLANT, et c'est l'agent qui l'annonce."""
     connexion(page, app_url)
     page.click("#nouvelle")
 
@@ -387,14 +390,13 @@ def test_nommer_une_source_dans_le_fil_la_lie_et_l_indicateur_suit(page, app_url
     page.click("#envoyer")
 
     page.wait_for_selector(".message.agent")
-    assert "on travaille sur" in page.inner_text("#journal")
-    assert page.inner_text("#source-liee").strip() == "iris"
-    assert "150" in page.inner_text("#faits-de-source")
+    journal = page.inner_text("#journal")
+    assert "on travaille sur" in journal
+    assert "iris" in journal
 
 
-def test_l_indicateur_suit_le_fil_qu_on_rouvre(page, app_url: str):
-    """La source vient du FIL : rouvrir une conversation la réaffiche, et une
-    conversation neuve repart sur « aucune »."""
+def test_la_source_liee_reste_dans_le_fil_qu_on_rouvre(page, app_url: str):
+    """La source vient du FIL, et la trace de sa liaison s'y relit."""
     connexion(page, app_url)
     page.click("#nouvelle")
     page.fill("#message", "titanic")
@@ -402,8 +404,8 @@ def test_l_indicateur_suit_le_fil_qu_on_rouvre(page, app_url: str):
     page.wait_for_selector(".message.agent")
 
     page.click("#nouvelle")
-    assert "aucune" in page.inner_text("#source-liee")
+    assert "on travaille sur" not in page.inner_text("#journal")
 
     page.click(".fil-titre")
     page.wait_for_selector(".message.agent")
-    assert page.inner_text("#source-liee").strip() == "titanic"
+    assert "titanic" in page.inner_text("#journal")
