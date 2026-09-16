@@ -7,6 +7,7 @@
 # systemd (deploy/daa.service) appelle ce script — `systemctl start daa` et
 # `daactl start` font donc exactement la même chose.
 #
+#     sudo deploy/daactl init             # cree l'arborescence du dossier de donnees
 #     sudo deploy/daactl start|stop|restart|status|logs
 #     sudo deploy/daactl build            # (re)construit l'image de l'application
 #     sudo deploy/daactl sandbox          # construit l'image du bac à sable si absente
@@ -101,6 +102,15 @@ arborescence() {
 }
 
 case "${1:-}" in
+    init)
+        # Créer l'arborescence AVANT le premier démarrage, pour pouvoir y
+        # déposer le catalogue et les modèles. `start` la crée aussi — mais
+        # elle serait alors créée après, et la première ouverture de la page
+        # n'offrirait aucune source.
+        arborescence
+        echo "arborescence prête sous $DAA_DATA_DIR :"
+        ls -la "$DAA_DATA_DIR"
+        ;;
     start)
         par_systemd start
         arborescence
@@ -158,7 +168,9 @@ case "${1:-}" in
         exec "$DEPLOY_DIR/restore.sh" "$2"
         ;;
     *)
-        sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+        # L'aide EST l'en-tête du script : une seule source, qui ne peut pas
+        # diverger. On s'arrête à la première ligne qui n'est plus un commentaire.
+        awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/,""); print}' "${BASH_SOURCE[0]}"
         exit 1
         ;;
 esac

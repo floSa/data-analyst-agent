@@ -6,7 +6,7 @@ Agent conversationnel sur données, **on-premise**. À partir d'une source décl
 2. **Analyser** — calculer KPI, statistiques (χ², ANOVA…) et visualisations en exécutant du code dans un bac à sable durci (réseau coupé) ;
 3. **Prédire** — appeler un modèle de ML sur des features validées (Pydantic), en redemandant ce qui manque avant tout predict.
 
-Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM mutualisé, joint par un **endpoint OpenAI-compatible** — Ollama aujourd'hui, vLLM sans changer une ligne de code ; le service en place sert `gemma4:e4b`. Orchestration explicite et traçable, licences 100 % permissives (MIT/Apache/BSD).
+Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM mutualisé, joint par un **endpoint OpenAI-compatible** : le moteur n'est nommé nulle part dans le code, il se change en changeant une URL. En service : **vLLM**, servant `google/gemma-4-E4B-it-qat-w4a16-ct` ([docs/VLLM.md](docs/VLLM.md)). Orchestration explicite et traçable, **composants logiciels** sous licences 100 % permissives (MIT/Apache/BSD) — les poids du modèle relèvent, eux, de la licence de son éditeur.
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
@@ -89,6 +89,8 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 
 | Document | Contenu |
 |---|---|
+| [docs/INSTALLATION.md](docs/INSTALLATION.md) | installer le service sur une machine nue : prérequis, variables obligatoires, premier compte, première source, la question qui vérifie — et ce qui manquait à la procédure quand elle a été suivie |
+| [docs/EXPLOITATION.md](docs/EXPLOITATION.md) | commander le service, lire ses journaux, sauvegarder, restaurer, ranger les conversations par propriétaire |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | schémas architectural et fonctionnel, description de chaque service, sécurité, configuration, stratégie de tests |
 | [docs/CADRAGE.md](docs/CADRAGE.md) | cahier des charges : contraintes, décisions, stack, roadmap, arborescence, exigences de tests |
 | [docs/AUDIT-2026-09.md](docs/AUDIT-2026-09.md) | état des lieux mesuré et backlog priorisé (multi-utilisateurs, mémoire, moteur LLM, sécurité, qualité) |
@@ -101,7 +103,9 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 
 ## Démarrage
 
-Prérequis : [uv](https://docs.astral.sh/uv/) (Python 3.12 géré automatiquement), **Docker** (sandbox d'exécution + tests d'intégration), et un serveur LLM à endpoint OpenAI-compatible pour l'usage réel — [Ollama](https://ollama.com) aujourd'hui, [vLLM](https://docs.vllm.ai) sans changer une ligne de code ([docs/VLLM.md](docs/VLLM.md)).
+**Pour installer le service**, ce n'est pas ici : c'est **[docs/INSTALLATION.md](docs/INSTALLATION.md)**, qui part d'une machine nue et n'exige que Docker. Ce qui suit est le démarrage d'un poste de **développement**.
+
+Prérequis : [uv](https://docs.astral.sh/uv/) (Python 3.12 géré automatiquement), **Docker** (sandbox d'exécution + tests d'intégration), et un serveur LLM à endpoint OpenAI-compatible pour l'usage réel. En service : [vLLM](https://docs.vllm.ai) sur le port 8100 ([docs/VLLM.md](docs/VLLM.md)) ; [Ollama](https://ollama.com) marche tout aussi bien, l'application ne les distingue pas.
 
 ```bash
 uv sync                                              # environnement + dépendances
@@ -135,8 +139,8 @@ Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`). 51 ré
 
 | Réglage | Défaut | Quand y toucher |
 |---|---|---|
-| `DAA_LLM_BASE_URL` | `http://localhost:11434/v1` | changer de serveur LLM (Ollama → vLLM) |
-| `DAA_LLM_MODEL` | `gemma4:e4b` | changer de modèle servi |
+| `DAA_LLM_BASE_URL` | `http://localhost:11434/v1` | pointer le moteur : `http://localhost:8100/v1` pour le vLLM en service |
+| `DAA_LLM_MODEL` | `gemma4:e4b` | le modèle réellement servi : `google/gemma-4-E4B-it-qat-w4a16-ct` sous vLLM |
 | `DAA_SESSION_COOKIE_SECURE` | `true` | `false` pour un développement local en http |
 | `DAA_WORKSPACE_DIR` | `var/workspaces` | pointer un volume dédié en production |
 | `DAA_API_DOCS_ENABLED` | `false` | `true` pour développer contre l'OpenAPI |
@@ -373,8 +377,11 @@ fin ; les deux mémoires ci-dessus ne pèsent rien.
 Réinjecter tous les tableaux à chaque tour n'avait aucune borne : mesuré à
 100 tours, le `docker run` de l'analyse portait 100 arguments `--volume` et le
 prompt du planificateur 13 348 caractères de catalogue d'objets. Au-delà de la
-fenêtre du serveur, Ollama tronque **sans erreur ni message** — 48 350 tokens
-envoyés pour 32 768 servis, et l'agent répond « je n'ai pas bien compris ».
+fenêtre du serveur, le moteur tronque **sans erreur ni message** — mesuré sous
+Ollama : 48 350 tokens envoyés pour 32 768 servis, et l'agent répond « je n'ai
+pas bien compris ». vLLM, lui, refuse en 400 plutôt que de tronquer ; les deux
+plafonds ci-dessous valent donc pour les deux, l'un contre une réponse fausse,
+l'autre contre un refus.
 
 Deux plafonds, appliqués **aux trois axes à la fois** (prompt du planificateur,
 montages de la sandbox, catalogue des sources éphémères) — les désaccorder
@@ -510,8 +517,10 @@ src/data_analyst_agent/   # package
 ├── prompts/              # les 6 prompts système, hors du code (.txt)
 ├── sandbox/              # client durci + image/ (Dockerfile, bridge Jupyter)
 └── api/                  # app.py (HTTP seul) + templates/ (chat, connexion)
-docs/                     # ARCHITECTURE, CADRAGE, AUDIT, VLLM, spike-vanna,
-                          #   surface-conversationnelle, axes-amelioration
+deploy/                   # la livraison : image de l'app (Dockerfile), compose, unité
+                          #   systemd, daactl (pilote), backup.sh / restore.sh
+docs/                     # INSTALLATION, EXPLOITATION, ARCHITECTURE, CADRAGE, AUDIT,
+                          #   VLLM, spike-vanna, surface-conversationnelle, axes-amelioration
 models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
 sources/                  # catalogue des sources + datasets vendorisés
 scripts/                  # comptes, migration du workspace, seed Postgres, runners de mesure, bancs
@@ -543,6 +552,7 @@ L'arborescence détaillée, fichier par fichier, est dans [docs/CADRAGE.md §10]
 | PyYAML | Catalogue de sources, registre de modèles, comptes | MIT |
 | argon2-cffi | Empreintes de mots de passe (argon2id) | MIT |
 | python-multipart | Lecture du formulaire de connexion | Apache-2.0 |
-| Ollama | Serveur du LLM mutualisé, local | MIT |
-| `gemma4:e4b` | Modèle servi par l'instance en place | Apache-2.0 — licence **déclarée par le modèle lui-même** (`POST /api/show`), à revérifier si le modèle servi change |
+| vLLM | Serveur du LLM mutualisé, local (moteur en service) | Apache-2.0 |
+| Ollama | Serveur du LLM mutualisé, local (autre moteur possible, même endpoint) | MIT |
+| `google/gemma-4-E4B-it-qat-w4a16-ct` | Modèle servi par l'instance en place | **non vérifiée ici, et plus lisible depuis l'application.** Ollama déclarait la licence du modèle (`POST /api/show`) ; vLLM n'expose rien d'équivalent — elle se lit désormais sur la fiche du modèle chez son éditeur, et doit y être relue à chaque changement de modèle servi |
 | **Ce projet** | Code applicatif | MIT annoncé, **mais aucun fichier `LICENSE` n'est présent** et `pyproject.toml` ne déclare rien : l'annonce est donc sans portée juridique en l'état (cf. [axes-amelioration](docs/axes-amelioration.md)) |
