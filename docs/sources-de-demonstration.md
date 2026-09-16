@@ -197,6 +197,19 @@ pandas sur le classeur.
 
 **16 tours sur 16 justes, 69 appels LLM.**
 
+Ce parcours a été **rejoué intégralement** après la réparation des deux défauts
+du socle, sur vLLM : **16/16, 56 appels LLM**
+(cf. [Les garde-fous, et ce qui n'a pas bougé](#les-garde-fous-et-ce-qui-na-pas-bougé)).
+Les oracles de ce tableau ont été recalculés hors de l'agent à cette occasion :
+ils sont inchangés.
+
+**Ce que comptent les seize tours**, puisque le décompte n'était pas détaillé :
+trois tours d'**ouverture** qui nomment une source et lient la conversation
+(`exploitation`, `telemetrie`, `facturation` — la table du verrou en montre un,
+marqué « — ») ; les **sept** questions Q1 à Q7 ; les **trois** tours du verrou de
+source ; les **deux** questions sur le sens d'une colonne piégeuse ; et la
+**réserve de forme**, la même question posée sans nommer sa source.
+
 | # | Source | Question | Oracle (calculé à part) | Réponse de l'agent |
 |---|---|---|---|---|
 | **Q1** | `exploitation` | « combien de sessions de recharge y a-t-il en tout ? » | 48 000 | **48 000** ✔ |
@@ -262,20 +275,205 @@ Une réserve de forme : **la question doit nommer sa source**. « que veut dire 
 colonne puissance_kw ? », sans « dans la source telemetrie », a été routée comme
 une demande d'inventaire et a rendu la liste des tables.
 
-## Ce que ce catalogue a fait apparaître dans le socle
+## Ce que ce catalogue a fait apparaître dans le socle, et ce qu'on en a fait
 
 Un catalogue réaliste éprouve le socle, et il a trouvé deux choses que
-`titanic` et `iris` ne déclenchaient pas. **Les deux sont dans `src/` et n'ont
-pas été corrigées ici** : ce chantier fournit le catalogue, pas la réparation du
-moteur.
+`titanic` et `iris` ne déclenchaient pas. Le chantier qui a fourni le catalogue
+les a **constatées sans les réparer** ; celui-ci les a réparées. Les deux
+sections qui suivent gardent le constat d'origine et lui ajoutent la mesure
+d'après.
 
-### 1. `get_schema` n'accepte aucun argument, et le budget de reprise vaut 1
+**Le moteur en service est vLLM, seul** — `google/gemma-4-E4B-it-qat-w4a16-ct`
+sur `http://localhost:8100/v1`. Tout ce qui est chiffré ici a été joué contre
+lui, depuis un message utilisateur passé à l'orchestrateur complet,
+planificateur compris. L'avant et l'après d'un même défaut sont toujours du même
+côté : une comparaison qui enjamberait deux moteurs ne vaudrait rien.
 
-L'outil `get_schema` de l'agent de récupération est sans paramètre. Le modèle
-l'appelle avec `{"table_name": "..."}`, la validation refuse, il **réessaie à
-l'identique**, et le tour meurt sur `UnexpectedModelBehavior: Tool 'get_schema'
-exceeded max retries count of 1`. Côté utilisateur : « Je n'ai pas pu répondre :
-la source de données n'a pas pu être interrogée ».
+> **Chiffres Ollama — trace historique, plus rejouée.** Une partie de ce
+> chantier a d'abord été mesurée contre Ollama (`gemma4:e4b`, port 11434). Ces
+> relevés sont datés du **15 septembre 2026** et conservés plus bas à titre de
+> trace : ils ne sont **plus rejoués**, ne servent d'oracle à rien, et aucun
+> chiffre courant ne s'y compare. Ils sont signalés là où ils apparaissent.
+
+### 1. Le dictionnaire ne descendait pas jusqu'à l'agent de récupération
+
+`source.dictionary_text()` était passé aux ontologies de l'agent **système**
+(`orchestrator/systeme.py`) — celui qui répond « que signifie cette colonne ? ».
+L'agent de **récupération**, celui qui écrit le SQL, ne le recevait pas.
+
+Conséquence mesurée, dans une seule et même conversation, à un tour d'écart :
+
+| Tour | Question | Réponse |
+|---|---|---|
+| 4 | « que signifie la colonne statut de la table sessions ? » | cite le dictionnaire : `'T'` = terminée, seules les `T` ont abouti |
+| 5 | « combien de recharges ont **réellement abouti** en 2025 ? » | **1 405** — le SQL produit était `WHERE statut = 'E'` |
+
+L'oracle est 42 281. Le modèle venait de lire la bonne réponse et a écrit le
+contraire, parce que ce qu'il avait lu ne lui était pas repassé au moment
+d'écrire la requête. C'est le défaut le plus coûteux des deux : il ne produit
+pas d'erreur, il produit **un chiffre faux et plausible**. Et c'est précisément
+ce contre quoi un dictionnaire est censé protéger.
+
+**Reproduit 5 fois sur 5** sur vLLM, la même conversation à deux tours, le même
+SQL à chaque fois :
+
+| Tirages | SQL produit au tour 5 | Réponse | Oracle |
+|---|---|---|---|
+| 5/5 | `WHERE statut = 'E' AND EXTRACT(YEAR FROM debut_session) = 2025` | **1 405** ✘ | 42 281 |
+
+*(Trace historique du 15 septembre 2026, plus rejouée : Ollama `gemma4:e4b`
+reproduisait le même défaut, 5/5, avec le même `statut = 'E'`.)*
+
+#### Le correctif : le dictionnaire entre dans le prompt de l'agent SQL
+
+`run_retrieval` prend un argument `dictionary`, l'orchestrateur y passe
+`source.dictionary_text()`, et le texte est collé **après** la démarche dans le
+prompt système — ce qu'on lit en dernier est ce qu'on a sous les yeux au moment
+d'écrire, et l'erreur corrigée est une erreur d'écriture de requête. Une source
+qui ne déclare pas de dictionnaire — `titanic`, `iris` — reçoit le prompt
+d'avant, **au caractère près**, et c'est tenu par un test.
+
+Un **outil** (`lire_le_dictionnaire`) avait été envisagé, et écarté sur la
+mesure : le défaut n'est pas que le modèle cherche le sens et ne le trouve pas,
+c'est qu'il ne le cherche **pas** — il écrivait `statut = 'E'` avec assurance,
+10 fois sur 10. Un outil qu'on n'appelle jamais ne dit rien, et il aurait coûté
+en plus un aller-retour sur `retrieval_request_limit`.
+
+Après, sur vLLM :
+
+| Tirages | SQL produit au tour 5 | Réponse | Oracle |
+|---|---|---|---|
+| 5/5 | `WHERE statut = 'T' AND debut_session >= '2025-01-01' AND debut_session < '2026-01-01'` | **42 281** ✔ | 42 281 |
+
+#### Ce que ça coûte, en tokens rendus par le serveur
+
+Le dictionnaire est du Markdown libre, et le prompt de l'agent SQL repart en
+entier à chaque aller-retour de sa boucle de correction : c'est le prompt du
+système qui se paie le plus de fois par tour. Le poids a donc été mesuré avant
+et après, par `/tokenize` de vLLM — le tokeniseur du serveur, pas une
+estimation.
+
+| Source | Prompt nu | Prompt + dictionnaire | Rapport | Dictionnaire |
+|---|---|---|---|---|
+| `exploitation` | 824 tokens | **3 324** | ×4,03 | entier |
+| `telemetrie` | 824 | **2 580** | ×3,13 | entier |
+| `facturation` | 824 | **2 519** | ×3,06 | entier |
+| `interventions` | 824 | **2 186** | ×2,65 | entier |
+| `referentiel` | 824 | **1 998** | ×2,42 | entier |
+
+Le prompt quadruple au pire, et il reste petit : 3 324 tokens pour une fenêtre
+servie de 32 768, soit **10 %**. Une source sans dictionnaire reste à 824.
+
+**Le plafond, et la règle de coupe.** Le catalogue de démonstration tient ;
+celui d'un client peut peser dix fois plus. `DAA_RETRIEVAL_DICTIONARY_MAX_CHARS`
+(8 000 caractères, ≈ 2 500 tokens) borne ce qui entre dans le prompt. Au-delà,
+la coupe garde des **sections Markdown entières**, parcourues dans l'ordre du
+document, et passe son chemin quand l'une ne tient pas dans ce qui reste. Jamais
+au milieu d'une phrase : « la valeur -1 est une sentinelle » amputé de « à
+écarter de toute moyenne » se lit comme une remarque et non comme une consigne.
+
+Elle passe son chemin au lieu de s'arrêter, et c'est un choix mesuré : dans les
+cinq dictionnaires de ce catalogue, les **pièges sont la dernière section**. Une
+règle de préfixe jetterait donc systématiquement la seule partie dont la requête
+a besoin, et garderait les fiches de colonnes que le schéma donne déjà.
+
+Ce que la règle **ne** garantit pas, et il faut le dire : qu'aucun sens utile
+n'est perdu. Une section écartée peut être celle qui comptait, et le Markdown
+ne porte aucun signal de ce qui fait autorité sur une requête. C'est pourquoi
+l'amputation n'est jamais muette — elle est écrite dans le prompt (le modèle
+sait qu'il ne voit pas tout) **et** remontée à l'utilisateur par la trace, sur
+le modèle de `Orchestrator._avis_de_troncature`. Remplacer un chiffre faux
+silencieux par un dictionnaire amputé silencieux aurait déplacé le défaut, pas
+corrigé.
+
+Ce qu'on peut donc affirmer, et qui est vérifié par un test : **au plafond par
+défaut, les cinq dictionnaires passent entiers** — la règle ne se déclenche
+jamais sur ce catalogue, et n'y perd donc rien. Le plafond est choisi au-dessus
+du plus gros d'entre eux (`exploitation`, 6 797 caractères) ; si l'un grossit au
+point de le franchir, le test le dira avant l'utilisateur.
+
+#### Ce que l'injection a cassé, et qu'il a fallu réparer
+
+Le dictionnaire ne se contente pas de réparer : il **déplace** ce que le modèle
+écrit, et pas toujours du bon côté. Trois régressions sont apparues au rejeu des
+questions métier, toutes sur la même colonne, et toutes du même côté — **un
+filtre de trop**.
+
+| Question | Oracle | Avec le dictionnaire, premières versions |
+|---|---|---|
+| Q3 « quelle énergie totale, en kWh, a été délivrée sur l'année ? » | 1 757 519,23 | **1 730 823,72** — le modèle ajoutait `WHERE statut = 'T'` |
+| Q1 « combien de sessions de recharge y a-t-il en tout ? » | 48 000 | **42 281** — même filtre |
+| Q4 « les trois stations avec le plus de sessions » | 1 015 / 911 / 872 | **907 / 818 / 759** — même filtre, appliqué à un classement |
+
+Le dictionnaire disait pourtant l'inverse pour l'énergie (« pour l'énergie
+totale délivrée, les sessions `I` comptent »). **Trois formulations d'en-tête
+successives n'y ont rien changé** — 0/3, puis 0/3 avec une consigne renforcée,
+puis 0/3 encore avec un en-tête délibérément **neutre**, pour tester l'hypothèse
+inverse. Ce n'était pas la consigne : c'était le dictionnaire lui-même. Sa
+section « pièges » énonçait la règle de comptage en gras et rangeait le
+contre-cas dans un paragraphe de fin. Impeccable pour un lecteur humain, et
+trompeur pour un modèle de quatre milliards de paramètres, qui retient ce qui
+est mis en avant.
+
+**Le dictionnaire a désormais un second lecteur.** Il a été écrit pour une
+personne ; il est maintenant lu par celui qui écrit le SQL. Le piège nº 1
+énonce donc une **règle par défaut et une exception unique**, suivies de leurs
+cas — sans rien changer à son sens :
+
+> **Règle par défaut : AUCUN filtre sur `statut`.** Tout comptage, tout
+> classement et toute somme portent sur les 48 000 sessions.
+>
+> **L'unique exception :** la question demande explicitement les recharges
+> **abouties**. On pose alors `WHERE statut = 'T'`, et dans ce cas seulement.
+
+La forme compte autant que le fond, et c'est mesuré : une **table de
+correspondance à quatre entrées** disant la même chose passait Q1, Q2, Q3 et la
+question du défaut nº 1, et rendait Q4 fausse sur vLLM ; la reformuler pour
+couvrir les classements réparait Q4 et cassait Q3. Le modèle y cherchait la
+ligne qui ressemble le plus à sa question. « Une règle, une exception » ne se
+prête pas à cette lecture, et c'est elle qui tient.
+
+*(La première de ces trois régressions, Q1, avait été vue sur Ollama le
+15 septembre 2026 ; les deux autres et toutes les vérifications d'après sont sur
+vLLM. Rien d'Ollama n'est rejoué ni comparé ici.)*
+
+Après quoi les quatre questions qui se disputent cette colonne sont justes,
+trois tirages chacune sur vLLM :
+
+| Question | Attendu | Tirages |
+|---|---|---|
+| « combien de sessions en tout ? » | 48 000 | 3/3 |
+| « combien au statut T en 2025 ? » | 42 281 | 3/3 |
+| « quelle énergie totale délivrée ? » | 1 757 519,23 | 3/3 |
+| « combien ont réellement abouti ? » | 42 281 | 3/3 |
+
+Et Q4, rejouée dans sa conversation — celle où elle échouait — rend à nouveau
+les trois stations sans filtre. Une nuance demeure, et elle n'est pas un
+chiffre faux : **le modèle ne projette pas toujours la colonne des comptes**. La
+question dit « donne leur code et leur nom », et il s'y tient parfois à la
+lettre ; les trois stations et leur ordre sont justes dans tous les cas. La
+campagne d'origine, elle, obtenait les comptes à chaque fois.
+
+Un test tient cette précision du dictionnaire
+(`test_le_code_de_statut_dit_quel_filtre_pour_quelle_question`) : il exige que
+le piège nº 1 nomme le cas où l'on filtre **et** le cas où l'on ne filtre pas,
+et cite les quatre chiffres que l'ambiguïté fait diverger. Il ne pèse aucune
+tournure — il vérifie que l'ambiguïté reste levée.
+
+C'est la leçon la plus utile de ce chantier : **porter le dictionnaire jusqu'au
+SQL rend le dictionnaire responsable de ce que le SQL filtre.** Une ambiguïté
+qu'un humain levait tout seul devient un chiffre faux, et le sens seul ne suffit
+pas — la hiérarchie du texte compte. Un dictionnaire qui alimente un agent doit
+dire quel filtre se pose pour quelle question, une règle par défaut d'abord et
+ses exceptions ensuite.
+
+### 2. `get_schema` n'acceptait aucun argument, et le budget de reprise vaut 1
+
+L'outil `get_schema` de l'agent de récupération était sans paramètre. Le modèle
+l'appelait avec `{"table_name": "..."}`, la validation refusait, il **réessayait
+à l'identique**, et le tour mourait sur `UnexpectedModelBehavior: Tool
+'get_schema' exceeded max retries count of 1`. Côté utilisateur : « Je n'ai pas
+pu répondre : la source de données n'a pas pu être interrogée ».
 
 Trace complète :
 
@@ -287,37 +485,122 @@ RETRY  get_schema   [{'type': 'extra_forbidden', 'loc': ('table_name',), ...}]
 APPEL  get_schema   args={"table_name": "referentiel"}      ← à l'identique
 ```
 
-Reproductible 3 fois sur 3 sur `referentiel`, `interventions` et `telemetrie`
-avec « combien de lignes en tout ? ». Jamais déclenché par `iris` avec la même
-question, 3 fois sur 3. Une autre formulation passe
-(« combien de lignes dans la table releves_puissance ? » → 547 200), ce qui
-rend le défaut intermittent du point de vue de l'utilisateur, donc plus pénible
-qu'une panne franche.
+**Reproduit 9 fois sur 9 sur vLLM**, trois tirages sur chacune des trois sources
+(`referentiel`, `interventions`, `telemetrie`) avec « combien de lignes en
+tout ? ». Il reste intermittent côté utilisateur : une autre formulation passe
+(« combien de lignes dans la table releves_puissance ? » → 547 200), ce qui est
+plus pénible qu'une panne franche.
 
-Deux correctifs possibles, tous deux dans `src/` : accepter et ignorer un
-`table_name` facultatif, ou relever le budget de reprise de l'outil.
+*(Trace historique du 15 septembre 2026, plus rejouée : le même modèle servi par
+Ollama ne reproduisait PAS ce défaut — 0 fois sur 19 tirages, l'appel partant
+toujours avec `{}`. Le déclencheur tenait donc au gabarit d'appel d'outil du
+moteur et non au modèle. Ce constat n'est plus vérifié et ne sert plus de
+référence ; il reste noté parce qu'il a pesé dans l'arbitrage ci-dessous.)*
 
-### 2. Le dictionnaire ne descend pas jusqu'à l'agent de récupération
+#### Le déclencheur disparaît de lui-même — et c'est la raison de ne pas s'y fier
 
-`source.dictionary_text()` est passé aux ontologies de l'agent **système**
-(`orchestrator/systeme.py`) — celui qui répond « que signifie cette colonne ? ».
-L'agent de **récupération**, celui qui écrit le SQL, ne le reçoit pas.
+Mesure faite après le correctif du défaut nº 1, l'outil laissé **exactement
+comme avant** (aucun argument, budget de reprise à 1), sur vLLM, trois tirages
+par source :
 
-Conséquence mesurée, dans une seule et même conversation, à un tour d'écart :
-
-| Tour | Question | Réponse |
+| Ce qui est en place | Tours aboutis | Reprises d'outil |
 |---|---|---|
-| 4 | « que signifie la colonne statut de la table sessions ? » | cite le dictionnaire : `'T'` = terminée, seules les `T` ont abouti |
-| 5 | « combien de recharges ont **réellement abouti** en 2025 ? » | **1 405** — le SQL produit était `WHERE statut = 'E'` |
+| L'outil d'avant, **sans** dictionnaire dans le prompt (témoin) | **0/9** | 9 |
+| L'outil d'avant, **avec** le dictionnaire | **9/9** | 0 |
 
-L'oracle est 42 281. Le modèle venait de lire la bonne réponse et a écrit le
-contraire, parce que ce qu'il avait lu ne lui était pas repassé au moment
-d'écrire la requête. La même question en citant le code — « combien de sessions
-ont le statut T en 2025 ? » — rend 42 281.
+Injecter mille à deux mille tokens de plus a suffi à faire cesser l'invention de
+`table_name`. Le défaut nº 2 n'est donc pas une propriété stable du modèle :
+c'est une réaction à un prompt donné. Un prompt qui rebouge — un autre
+dictionnaire, une autre source, une autre version du moteur — peut le ramener,
+et personne ne le verra venir.
 
-C'est le défaut le plus coûteux des deux : il ne produit pas d'erreur, il produit
-**un chiffre faux et plausible**. Et c'est précisément ce contre quoi un
-dictionnaire est censé protéger.
+#### Les trois correctifs possibles, mesurés côte à côte
+
+Aucun n'a été tranché par principe. Tous mesurés sur vLLM, trois tirages sur
+chacune des trois sources, dictionnaire injecté sauf mention contraire.
+
+| Variante | Tours aboutis | Appels LLM | Réponse sur `telemetrie` |
+|---|---|---|---|
+| **A** — l'outil **accepte** un `table_name` facultatif | **9/9** | 51 | les trois comptes, justes (380 / 240 / 547 200) |
+| **B** — l'outil n'en prend aucun, le prompt l'**interdit** explicitement | 9/9 | 51 | « **934 820** lignes » ✘ (l'oracle est 547 820) |
+| **C** — l'outil n'en prend aucun, budget de reprise porté à 2 | 9/9 | 51 | « **934 820** lignes » ✘ |
+| *témoin* — l'outil d'avant, budget à 3, **sans** dictionnaire | 6/9 | 63 | échec 3/3, après quatre `get_schema` brûlés |
+
+**A est retenue.** Trois raisons, dans cet ordre :
+
+1. C'est la seule qui **supprime la possibilité** de l'échec au lieu de parier
+   sur le comportement du modèle devant un prompt donné. Le témoin ci-dessus
+   montre que ce comportement bouge ; B et C reposent entièrement dessus.
+2. Elle ne coûte rien. Mesuré : le modèle passe `{}` dans les 15 tirages
+   d'après-correctif — l'argument est un filet, jamais un détour.
+3. B inscrirait une contrainte permanente dans le prompt de l'agent le plus
+   chargé, pour un défaut qui est une propriété de la **signature d'un outil**.
+
+Les variantes B, C et le témoin partagent en outre un défaut que A n'a pas :
+faute de pouvoir demander le schéma, le modèle enchaîne `list_tables` puis trois
+comptages séparés, et annonce en prose un total de **934 820** là où la somme
+est 547 820. Un chiffre faux et plausible, encore. La causalité est indirecte —
+c'est la liste d'outils qui change, donc le plan du modèle — et elle est
+rapportée telle qu'observée, 3/3 sur chacune des trois variantes.
+
+**Le budget de reprise reste à 1**, et la mesure le justifie. Le porter à 3 ne
+répare pas : il fait passer 6 tours sur 9 au prix de **deux allers-retours de
+plus par tour** (5 → 7), pris sur `retrieval_request_limit`, et `telemetrie`
+échoue quand même après avoir brûlé quatre appels à `get_schema`. Réessayer à
+l'identique est bien un tour dépensé pour rien ; la réparation est de ne pas
+créer l'erreur de validation, pas d'en absorber davantage.
+
+**Un nom de table inconnu ne lève pas non plus.** Il rend le schéma complet en
+disant que le nom n'existe pas et en listant ceux qui existent — même choix que
+`run_sql`, qui rend son erreur SQL en texte : une boucle de correction se
+nourrit de ce qu'on lui rend.
+
+#### Après
+
+« Combien de lignes en tout ? », sur vLLM — trois tirages avant, cinq après :
+
+| Source | Avant | Après | Oracle |
+|---|---|---|---|
+| `referentiel` | 0/3 — tour mort | **5/5** — 150 | 150 |
+| `interventions` | 0/3 — tour mort | **5/5** — 900 | 900 |
+| `telemetrie` | 0/3 — tour mort | **5/5** — 380 / 547 200 / 240 | 380 / 547 200 / 240 |
+
+Aucune reprise d'outil sur les quinze tours d'après. Sur `telemetrie`, la réponse
+est le tableau des trois comptes et non leur somme : les valeurs sont justes,
+l'agrégation est laissée à l'utilisateur — « en tout » sur une source à trois
+tables n'a pas de lecture unique.
+
+### Les garde-fous, et ce qui n'a pas bougé
+
+`assert_read_only`, `retrieval_request_limit` et `retrieval_max_rows` sont
+inchangés. La suite complète passe : **1 074 tests, 99,56 % de couverture**
+(référence d'avant : 1 046 et 99,55 %).
+
+La surface conversationnelle, rejouée sur vLLM contre `sources/catalogue.yaml`
+(`titanic` + `iris`, qui ne déclarent aucun dictionnaire et dont le prompt est
+donc inchangé au caractère près) : **36/36 questions méta et 4/4 témoins**.
+L'oracle durci ne se desserre pas.
+
+Le parcours métier complet, rejoué depuis un message utilisateur : **16/16 sur
+vLLM, 56 appels LLM** — contre 69 à la campagne d'origine. L'économie vient des
+trois tours d'ouverture, désormais servis sans aucun appel au modèle par le
+court-circuit de choix de source.
+
+**Un piège de protocole, trouvé en rejouant.** Les trois tours d'ouverture
+échouaient d'abord, et c'était le banc de mesure qui avait tort : il passait
+`source_de_travail=None` au premier tour d'un fil, là où l'API passe toujours
+une chaîne (`Conversation.source_de_travail: str = ""`). Avec `None`, le
+court-circuit déterministe de `_choix_de_source` ne se déclenche jamais et un
+message qui ne porte qu'un nom de source ne lie rien — un chemin que le produit
+ne prend pas. Un banc qui n'imite pas fidèlement l'appelant réel fabrique des
+défauts qui n'existent que pour lui, et fait perdre le temps qu'on croyait
+gagner.
+
+**Ce qui reste à traiter, et qui ne vient pas d'ici.** Le modèle ne projette pas
+toujours la colonne des comptes sur Q4 : la question dit « donne leur code et
+leur nom », et il s'y tient parfois à la lettre. Les trois stations et leur
+ordre sont justes dans tous les cas, et le SQL n'est pas filtré — c'est une
+réponse littérale, pas un chiffre faux.
 
 ## Jouer la démonstration
 
@@ -334,5 +617,6 @@ serveur LLM. Le semis recrée la base `daa_demonstration` à chaque exécution �
 il ne touche à aucune autre.
 
 Ce que le dépôt tient sans rien semer : `uv run pytest tests/catalogues/` —
-17 tests sur la déclaration, les deux CSV, la correspondance libellé → code, et
-le gel du classeur.
+18 tests sur la déclaration, les deux CSV, la correspondance libellé → code, le
+gel du classeur, et le fait que le piège nº 1 dise quel filtre pour quelle
+question.
