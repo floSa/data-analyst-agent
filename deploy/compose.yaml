@@ -37,7 +37,7 @@ services:
     # réseau Docker. Le /24 accordé, ce trafic-là devient « de confiance » et
     # peut donc se réécrire l'adresse qu'il veut dans X-Forwarded-For.
     environment:
-      DAA_TRUSTED_PROXIES: ${DAA_TRUSTED_PROXIES:-${DAA_PROXY_IP:-172.30.0.2}}
+      DAA_TRUSTED_PROXIES: ${DAA_TRUSTED_PROXIES:-${DAA_PROXY_IP:-172.30.0.254}}
 
     # LE point délicat, et la raison pour laquelle il n'y a qu'UN volume.
     #
@@ -108,9 +108,15 @@ services:
     # Laissée au hasard, la déclaration viserait à côté au premier redémarrage
     # qui change l'ordre d'attribution — et le symptôme serait un anti-force
     # brute qui compte tout le monde sur une seule adresse.
+    #
+    # EN HAUT de la plage, et pas .2 : Docker attribue les adresses libres en
+    # montant depuis .2, sans réserver d'avance celles qui sont fixées. Le
+    # mandataire démarrant APRÈS l'application — il attend sa sonde — c'est elle
+    # qui prenait .2, et le démon refusait ensuite de créer le mandataire sur
+    # « Address already in use ». Mesuré.
     networks:
       default:
-        ipv4_address: ${DAA_PROXY_IP:-172.30.0.2}
+        ipv4_address: ${DAA_PROXY_IP:-172.30.0.254}
 
     volumes:
       # Le gabarit de configuration. L'entrée de l'image le passe dans
