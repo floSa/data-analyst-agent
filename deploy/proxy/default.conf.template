@@ -20,6 +20,11 @@
 log_format daa '$remote_addr "$http_x_forwarded_for" $host '
                '"$request" $status $body_bytes_sent $request_time';
 
+# La version du serveur dans chaque réponse ne sert qu'à qui cherche une faille
+# connue. Au niveau `http`, donc pour les DEUX serveurs : posée dans le seul
+# bloc TLS, elle laissait la redirection en clair annoncer « nginx/1.27.5 ».
+server_tokens off;
+
 # Rediriger le clair vers le chiffré plutôt que de le refuser : quelqu'un qui
 # tape l'adresse sans préfixe arrive en http, et un refus sec ressemble à une
 # panne. 308 et non 302 — la méthode et le corps sont conservés.
@@ -71,10 +76,6 @@ server {
     # applicatif, pour que ce soit bien l'application qui réponde 413 sur un
     # corps simplement trop gros, et le mandataire seulement sur l'abus.
     client_max_body_size 128k;
-
-    # La version du serveur dans chaque réponse ne sert qu'à qui cherche une
-    # faille connue.
-    server_tokens off;
 
     location / {
         proxy_pass http://app:8000;

@@ -57,13 +57,17 @@ install -d -m 0700 "$TLS_DIR"
 
 # L'autorité n'est fabriquée qu'une fois. La refaire invaliderait tous les
 # postes où elle est déjà installée — c'est exactement ce qu'on veut éviter.
+# Le nom de l'autorité est en ASCII, et c'est délibéré : un CN accentué sort en
+# UTF-8 brut d'un champ que la plupart des magasins de confiance lisent encore
+# en PrintableString. Vu à l'écran — « autoritÃ© locale » — et ce qui s'affiche
+# mal se recopie mal.
 if [[ -f "$TLS_DIR/ca.key" ]]; then
     echo "autorité déjà en place : $TLS_DIR/ca.crt (conservée)"
 else
     openssl req -x509 -newkey rsa:4096 -sha256 -nodes \
         -days "$JOURS_AUTORITE" \
         -keyout "$TLS_DIR/ca.key" -out "$TLS_DIR/ca.crt" \
-        -subj "/CN=data-analyst-agent — autorité locale/O=$PRINCIPAL" \
+        -subj "/CN=data-analyst-agent local CA/O=$PRINCIPAL" \
         -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
         -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
     echo "autorité créée : $TLS_DIR/ca.crt (valable $JOURS_AUTORITE jours)"
