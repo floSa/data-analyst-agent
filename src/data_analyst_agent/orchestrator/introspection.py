@@ -694,6 +694,60 @@ def _enumeres(faits: str) -> list[str]:
     return list(noms)
 
 
+# Ce qu'on retire d'un verbe pour en garder le RADICAL. Deux caractères : c'est
+# ce qui ramène « interroger » à `interrog`, « analyser » à `analys`,
+# « prédire » à `predi` et « répondre » à `repond` — et donc ce qui fait qu'une
+# réponse compte comme portant l'action, qu'elle la conjugue (« je prédis »),
+# la nominalise (« une prédiction ») ou la reprenne telle quelle.
+#
+# C'est la même convention que l'oracle de `mesure_surface_conversationnelle.py`,
+# qui attend « analys » et « predi » plutôt que des mots entiers, et ce n'est pas
+# une coïncidence : mesurer une capacité et exiger qu'elle soit dite sont la même
+# opération, faite à deux endroits.
+_TERMINAISON = 2
+# En deçà de cette longueur, le radical ne discriminerait plus rien : « lire »
+# donnerait `li`, présent dans la moitié des phrases françaises.
+_RADICAL_MINIMAL = 5
+
+
+def _actions(faits: str) -> list[str]:
+    """Ce que les faits annoncent SAVOIR FAIRE, par le radical du verbe.
+
+    Le pendant de ``_enumeres`` pour les puces qu'il laisse passer, et c'est
+    par là qu'un défaut mesuré est entré. ``_enumeres`` n'exige d'une puce que
+    les IDENTIFIANTS qu'elle porte ; une puce dont la décoration est une phrase
+    française — « - **analyser et visualiser** — du code Python… » — n'en porte
+    aucun, donc n'exigeait rien. Toute la liste des capacités pouvait tomber de
+    la réponse sans que la ceinture bronche.
+
+    Elle ne bronchait pas, et pourtant la famille « que sais-tu faire ? » tenait
+    : par accident. ``decrire_les_capacites`` finit par « Mes sources :
+    `titanic`, `iris`… », une énumération EN LIGNE que ``_enumeres`` réclame —
+    et le modèle qui résumait les capacités laissait aussi tomber l'inventaire,
+    donc se faisait prendre sur l'inventaire. Le jour où sa formulation a cité
+    les sources tout en oubliant qu'il savait ANALYSER, plus rien ne l'arrêtait :
+    « je peux te demander quoi ? » rendait une liste de SUJETS — mes capacités,
+    mes sources, mes modèles — sans une seule des quatre actions (mesuré le
+    2026-09-16, deux campagnes).
+
+    Le RADICAL et non le mot : une réponse a le droit d'écrire « je prédis » ou
+    « des prédictions » là où le fait dit « prédire ». Ce qui est exigé, c'est
+    que l'action soit DITE, pas qu'elle soit recopiée.
+    """
+    radicaux: dict[str, None] = {}
+    for brute in faits.splitlines():
+        ligne = brute.replace("\\", "")
+        if _CITATION.match(ligne) or not _PUCE.match(ligne):
+            continue
+        decore = _DECORE.search(ligne)
+        if decore is None or _identifiants(decore.group(0), _DECORE):
+            continue
+        mots = replie(next(filter(None, decore.groups()), "")).split()
+        if mots and len(mots[0]) >= _RADICAL_MINIMAL:
+            radicaux.setdefault(mots[0][:-_TERMINAISON], None)
+    return list(radicaux)
+
+
 def defaut_de_fondation(reponse: str, faits: str) -> str:
     """Ce qui interdit de servir la formulation du modèle — ``""`` si rien.
 
@@ -726,4 +780,7 @@ def defaut_de_fondation(reponse: str, faits: str) -> str:
     omis = [n for n in _enumeres(faits) if f" {n} " not in plat]
     if omis:
         return "fait(s) omis : " + ", ".join(omis)
+    tues = [a for a in _actions(faits) if a not in plat]
+    if tues:
+        return "action(s) omise(s) : " + ", ".join(tues)
     return ""

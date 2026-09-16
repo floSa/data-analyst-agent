@@ -246,15 +246,88 @@ def test_un_inventaire_enumere_en_ligne_est_exigible(catalogue: Catalog, registr
     assert "titanic" in defaut
     assert "iris" in defaut
     # et une formulation qui porte l'inventaire reste servie : la ceinture
-    # écarte une omission, elle ne rend pas le gabarit obligatoire
+    # écarte une omission, elle ne rend pas le gabarit obligatoire. Les cinq
+    # actions y sont, chacune dans ses mots — c'est ce que `_actions` exige, et
+    # rien de plus : ni l'ordre, ni la ponctuation, ni la phrase des faits.
     assert (
         introspection.defaut_de_fondation(
-            "Je sais interroger, analyser et prédire. Mes sources : `titanic`, `iris` ; "
+            "Je sais interroger, analyser et prédire, et je réponds sur moi-même. "
+            "Mes sources : `titanic`, `iris` ; "
             "mes modèles : `titanic`, `california_housing`.",
             faits,
         )
         == ""
     )
+
+
+def test_une_capacite_tue_ne_passe_pas_parce_qu_elle_n_a_pas_de_nom(
+    catalogue: Catalog, registre: Registry
+):
+    """Le trou par lequel « je peux te demander quoi ? » est tombé.
+
+    ``_enumeres`` n'exige d'une puce que les IDENTIFIANTS qu'elle porte, et une
+    puce de capacité n'en porte aucun : « - **analyser et visualiser** — du code
+    Python… » ne nomme rien au sens technique. La famille tenait quand même,
+    mais par ACCIDENT — le modèle qui résumait les capacités laissait aussi
+    tomber l'inventaire de la dernière ligne, et se faisait prendre là-dessus.
+
+    Le 2026-09-16, sa formulation a cité `titanic`, `iris` et
+    `california_housing` tout en oubliant qu'il savait ANALYSER. L'inventaire
+    étant sauf, plus rien ne l'arrêtait. La réponse ci-dessous est celle qui a
+    été mesurée, mot pour mot, deux campagnes de suite.
+    """
+    faits = introspection.decrire_les_capacites(catalogue, registre)
+    inventaire_sauf_actions_tues = (
+        "Je peux te demander des informations sur mes capacités, mes sources de "
+        "données (`titanic`, `iris`), mes modèles de prédiction "
+        "(`california_housing`, `titanic`), ainsi que les détails de ces éléments "
+        "(schémas, dictionnaires, attributs attendus)."
+    )
+
+    defaut = introspection.defaut_de_fondation(inventaire_sauf_actions_tues, faits)
+
+    assert defaut.startswith("action(s) omise(s)")
+    assert "analys" in defaut
+    assert "interrog" in defaut
+
+
+def test_une_action_compte_par_son_radical_et_non_par_sa_conjugaison(
+    catalogue: Catalog, registre: Registry
+):
+    """« Je fais des prédictions » DIT qu'on sait prédire.
+
+    La ceinture exige que l'action soit dite, pas qu'elle soit recopiée : une
+    réponse a le droit de nominaliser (« une analyse », « des prédictions ») ou
+    de conjuguer (« j'interroge »). Sans cette tolérance, elle rejetterait des
+    réponses justes et servirait le gabarit à leur place — le travers même que
+    ``_enumeres`` a déjà eu à corriger.
+    """
+    faits = introspection.decrire_les_capacites(catalogue, registre)
+
+    conjuguee = (
+        "J'interroge les sources en SQL, je fais des analyses et des figures, "
+        "je produis des prédictions, et je réponds sur moi-même. "
+        "Mes sources : `titanic`, `iris`. Mes modèles : `california_housing`, `titanic`."
+    )
+
+    assert introspection.defaut_de_fondation(conjuguee, faits) == ""
+
+
+def test_les_faits_sans_puce_de_capacite_n_exigent_aucune_action(
+    catalogue: Catalog, registre: Registry
+):
+    """La nouvelle exigence ne déborde pas sur les autres textes de faits.
+
+    Les puces de l'inventaire, du registre et d'un schéma portent toutes un
+    identifiant décoré — c'est ``_enumeres`` qui s'en occupe, et ``_actions``
+    n'y voit rien à réclamer. Une exigence d'action sur ces textes-là voudrait
+    dire que « titanic » est un verbe.
+    """
+    for faits in (
+        introspection.decrire_les_sources(catalogue),
+        introspection.decrire_les_modeles(registre),
+    ):
+        assert introspection._actions(faits) == []
 
 
 def test_un_deux_points_en_fin_de_ligne_n_enumere_rien():
