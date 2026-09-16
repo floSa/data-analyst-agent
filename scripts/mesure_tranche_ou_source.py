@@ -1,16 +1,31 @@
 """Un chiffre calculé sur une TRANCHE sort-il en se disant chiffre de la source ?
 
 ``analysis_table_max_rows`` matérialise chaque table SQL en CSV, coupée à
-10 000 lignes, et c'est le seul endroit du socle qui livre une donnée
-incomplète sans que la donnée le dise : un ``SELECT *`` coupé rend un CSV
-parfaitement lisible où rien ne signale les lignes manquantes. Le code engendré
-y compte, et le compte est celui de l'échantillon.
+10 000 lignes : un ``SELECT *`` coupé rend un CSV parfaitement lisible où rien
+ne signale les lignes manquantes. Le code engendré y compte, et le compte est
+celui de l'échantillon.
+
+La PROPRIÉTÉ que ce runner mesure tient en une phrase : *une grandeur qui sort
+d'une tranche porte la mention de sa tranche jusque dans la réponse.* Pas « le
+bon chiffre » — un chiffre d'échantillon annoncé comme tel est une réponse
+honnête, et c'est le chiffre d'échantillon MUET qui est faux.
 
 Le défaut a été vu par la dette `H` sur une seule phrase (`N1`) et rangé sous
 « le routage n'atteint pas l'agent système ». Le routage est la CAUSE de cette
-phrase-là ; il n'est pas le défaut. Le défaut est une propriété du nœud
-d'analyse, et il concerne **toute** question qui compte sur une source plus
-grande que la tranche — quel que soit le chemin qui l'y a menée.
+phrase-là ; il n'est pas le défaut.
+
+**Et la dette se trompait deux fois de plus**, ce que ce runner a établi et ce
+qui explique sa forme :
+
+- elle écrivait « rien dans le texte n'avertit l'utilisateur ». Faux :
+  ``_with_context_notices`` appose l'avis de troncature à la RÉPONSE, pas
+  seulement à la trace. La dette avait été écrite sur une citation coupée avant
+  l'avis ;
+- elle affirmait que le défaut concerne **toute** question qui compte sur une
+  source plus grande que la tranche. Faux aussi : les huit questions du premier
+  volet partent au SQL, qui ne connaît pas la tranche — 24/24 sur la source.
+  Ce qui compte sur la tranche, c'est ce qui finit dans le nœud d'ANALYSE, et
+  `N1` y finit parce que c'est une question de sens mal routée.
 
 D'où ce runner, et ses DEUX volets — le second n'était pas prévu, il a été
 ajouté parce que le premier a rendu un résultat qu'on n'attendait pas.
