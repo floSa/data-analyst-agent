@@ -656,6 +656,15 @@ fois sur l'alias `'H'` déprécié de pandas et se corrige d'elle-même : **deux
 essais au lieu d'un**, dans une boucle qui en autorise trois. La réponse est
 juste dans les deux lectures ; la question est ambiguë et le coût est réel.
 
+**Une règle de prompt a été essayée pour récupérer cet aller-retour, et elle est
+retirée.** Dire au modèle que pandas 2 a retiré les alias de fréquence en
+majuscule le lui fait bien écrire en minuscule du premier coup — et ne récupère
+rien : les cinq tirages tiennent toujours en deux essais, sur une autre erreur,
+et le tour passe de 34 s à 51 s parce que le code produit devient une agrégation
+par borne **puis** par heure. Une consigne qui déplace la faute sans la retirer,
+et qui coûte la moitié du temps du tour, ne vaut pas d'être gardée. C'est, à une
+autre échelle, la leçon de la section suivante.
+
 #### Le module de coupe est partagé, pas dupliqué
 
 `agents/retrieval/dictionnaire` est devenu
