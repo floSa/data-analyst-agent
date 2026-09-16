@@ -18,8 +18,16 @@ déterministe de `_choix_de_source` ne se déclenche pas, un message qui ne port
 qu'un nom de source ne lie rien, et le banc fabrique un défaut que le produit
 n'a pas. C'est arrivé ; c'est écrit dans le document.
 
+**Chaque tour se pose de TROIS façons, et c'est le défaut que ce runner a
+d'abord eu.** Il rejouait seize phrases que nous avions écrites nous-mêmes, une
+par question, et rendait 16/16 : ce chiffre mesurait ces phrases-là, pas les
+questions. Chaque tour porte donc deux paraphrases d'utilisateur en plus de la
+sienne — l'une courte et familière, l'autre longue et polie — avec le MÊME
+oracle. Quarante-huit questions, qu'on peut regarder en face.
+
     uv run python scripts/mesure_parcours_de_demonstration.py
-    uv run python scripts/mesure_parcours_de_demonstration.py --markdown /tmp/p.md
+    uv run python scripts/mesure_parcours_de_demonstration.py --tirages 3
+    uv run python scripts/mesure_parcours_de_demonstration.py --formulations canonique
 
 Prérequis : ``DAA_CATALOG_PATH=sources/demonstration/catalogue.yaml``, le
 catalogue semé, Postgres joignable, le serveur LLM en place.
@@ -55,6 +63,13 @@ class Tour:
     cle: str
     fil: str
     message: str
+    # Les DEUX paraphrases du même tour : même intention, même oracle, autre
+    # phrase. L'une courte et familière, l'autre longue et polie — les deux
+    # bords de ce qu'un utilisateur écrit vraiment. Le 16/16 d'avant se lisait
+    # sur la seule `message`, et ne disait donc rien de la QUESTION : seulement
+    # de la phrase qu'on avait nous-mêmes écrite pour la poser.
+    courte: str = ""
+    longue: str = ""
     source: str = ""
     # Ce que la réponse (ou le tableau) doit porter : des nombres, à la
     # tolérance près, et des fragments de texte.
@@ -65,12 +80,19 @@ class Tour:
     attendu: str = ""
 
 
+FORMULATIONS = ("canonique", "courte", "longue")
+
+
 PARCOURS: tuple[Tour, ...] = (
     # --- trois ouvertures : un message qui ne porte qu'un nom de source -------
     Tour(
         cle="ouverture-exploitation",
         fil="ouverture-exploitation",
         message="exploitation",
+        courte="on bosse sur exploitation",
+        longue=(
+            "Bonjour, j'aimerais travailler sur la source exploitation. Peux-tu me la présenter ?"
+        ),
         fragments=("exploitation",),
         nombres=(6.0,),
         attendu="la source est annoncée avec ses 6 tables",
@@ -79,6 +101,8 @@ PARCOURS: tuple[Tour, ...] = (
         cle="ouverture-telemetrie",
         fil="ouverture-telemetrie",
         message="telemetrie",
+        courte="passe sur telemetrie",
+        longue="Pourrais-tu m'ouvrir la source telemetrie et me dire ce qu'elle contient ?",
         fragments=("telemetrie",),
         nombres=(3.0,),
         attendu="la source est annoncée avec ses 3 tables",
@@ -87,6 +111,11 @@ PARCOURS: tuple[Tour, ...] = (
         cle="ouverture-facturation",
         fil="ouverture-facturation",
         message="facturation",
+        courte="facturation, vas-y",
+        longue=(
+            "Je souhaiterais consulter la source facturation ; peux-tu m'indiquer ce "
+            "qu'on y trouve ?"
+        ),
         fragments=("facturation",),
         nombres=(3.0,),
         attendu="la source est annoncée avec ses 3 feuilles",
@@ -96,6 +125,11 @@ PARCOURS: tuple[Tour, ...] = (
         cle="Q1",
         fil="metier-exploitation",
         message="combien de sessions de recharge y a-t-il en tout ?",
+        courte="ça fait combien de recharges en tout ?",
+        longue=(
+            "Pourrais-tu me dire quel est le nombre total de sessions de recharge "
+            "enregistrées dans cette source ?"
+        ),
         source="exploitation",
         nombres=(48000.0,),
         attendu="48 000",
@@ -104,6 +138,8 @@ PARCOURS: tuple[Tour, ...] = (
         cle="Q2",
         fil="metier-exploitation",
         message="combien de sessions ont le statut T en 2025 ?",
+        courte="en 2025, combien en statut T ?",
+        longue="Sur l'année 2025, combien de sessions portent-elles le statut T ?",
         source="exploitation",
         nombres=(42281.0,),
         attendu="42 281",
@@ -112,6 +148,11 @@ PARCOURS: tuple[Tour, ...] = (
         cle="Q3",
         fil="metier-exploitation",
         message="quelle énergie totale, en kWh, a été délivrée sur l'année ?",
+        courte="ça fait combien de kWh au total sur l'année ?",
+        longue=(
+            "Peux-tu me calculer l'énergie totale délivrée sur l'ensemble de l'année, "
+            "exprimée en kWh ?"
+        ),
         source="exploitation",
         nombres=(1757519.23,),
         attendu="1 757 519,23 kWh",
@@ -122,6 +163,11 @@ PARCOURS: tuple[Tour, ...] = (
         message=(
             "quelles sont les trois stations avec le plus de sessions ? donne leur code et leur nom"
         ),
+        courte="le top 3 des stations, code et nom",
+        longue=(
+            "Pourrais-tu m'indiquer quelles sont les trois stations les plus "
+            "sollicitées, en précisant leur code et leur nom ?"
+        ),
         source="exploitation",
         nombres=(1015.0, 911.0, 872.0),
         fragments=("ST-097", "ST-029", "ST-016"),
@@ -131,6 +177,11 @@ PARCOURS: tuple[Tour, ...] = (
         cle="Q5",
         fil="metier-exploitation",
         message="combien de sessions par région ? classe-les de la plus active à la moins active",
+        courte="les sessions par région, de la plus grosse à la plus petite",
+        longue=(
+            "Peux-tu me donner le nombre de sessions pour chaque région, en les "
+            "ordonnant de la plus active à la moins active ?"
+        ),
         source="exploitation",
         nombres=(9673.0, 9500.0, 8866.0, 7664.0, 6372.0, 5925.0),
         attendu="les six régions, dans l'ordre",
@@ -139,6 +190,11 @@ PARCOURS: tuple[Tour, ...] = (
         cle="Q6",
         fil="metier-telemetrie",
         message="combien de lignes dans la table releves_puissance ?",
+        courte="releves_puissance, ça fait combien de lignes ?",
+        longue=(
+            "Pourrais-tu m'indiquer le nombre total d'enregistrements présents dans la "
+            "table releves_puissance ?"
+        ),
         source="telemetrie",
         nombres=(547200.0,),
         attendu="547 200",
@@ -147,6 +203,11 @@ PARCOURS: tuple[Tour, ...] = (
         cle="Q7",
         fil="metier-facturation",
         message="combien de factures as-tu, et quel est le montant total hors taxes facturé ?",
+        courte="combien de factures, et ça fait combien en HT ?",
+        longue=(
+            "Peux-tu me dire combien de factures sont enregistrées, ainsi que le "
+            "montant total hors taxes facturé ?"
+        ),
         source="facturation",
         nombres=(1200.0, 574408.10),
         attendu="1 200 factures, 574 408,10 € HT",
@@ -159,6 +220,8 @@ PARCOURS: tuple[Tour, ...] = (
         cle="verrou-ouverture",
         fil="verrou",
         message="exploitation",
+        courte="on repart sur exploitation",
+        longue="J'aimerais reprendre le travail sur la source exploitation, peux-tu la charger ?",
         fragments=("exploitation",),
         nombres=(6.0,),
         attendu="la source est liée au fil du verrou",
@@ -167,6 +230,11 @@ PARCOURS: tuple[Tour, ...] = (
         cle="verrou-source-liee",
         fil="verrou",
         message="quelle est l'énergie totale en kWh dans cette source ?",
+        courte="ça fait combien de kWh là-dedans ?",
+        longue=(
+            "Pourrais-tu me donner l'énergie totale, en kWh, pour la source sur "
+            "laquelle nous travaillons actuellement ?"
+        ),
         source="exploitation",
         nombres=(1757519.23,),
         interdits=(531098.10,),
@@ -176,6 +244,11 @@ PARCOURS: tuple[Tour, ...] = (
         cle="verrou-bascule",
         fil="verrou",
         message="et dans facturation, quelle est l'énergie totale en kWh ?",
+        courte="et côté facturation, ça donne quoi en kWh ?",
+        longue=(
+            "Et si l'on regarde maintenant du côté de la source facturation, quelle y "
+            "est l'énergie totale en kWh ?"
+        ),
         source="exploitation",
         nombres=(531098.10,),
         interdits=(1757519.23,),
@@ -187,6 +260,10 @@ PARCOURS: tuple[Tour, ...] = (
         cle="sens-statut",
         fil="sens-statut",
         message="que signifie la colonne statut de la table sessions ?",
+        courte="statut dans sessions, ça veut dire quoi ?",
+        longue=(
+            "Pourrais-tu m'expliquer la signification de la colonne statut de la table sessions ?"
+        ),
         source="exploitation",
         fragments=("dictionnaire", "'T'", "'I'", "'E'"),
         attendu="les trois codes, cités du dictionnaire",
@@ -195,6 +272,11 @@ PARCOURS: tuple[Tour, ...] = (
         cle="sens-puissance",
         fil="sens-puissance",
         message="que veut dire la colonne puissance_kw dans la source telemetrie ?",
+        courte="c'est quoi puissance_kw dans telemetrie ?",
+        longue=(
+            "Peux-tu m'expliquer ce que représente la colonne puissance_kw dans la "
+            "source telemetrie ?"
+        ),
         source="telemetrie",
         fragments=("dictionnaire", "sentinelle"),
         attendu="la sentinelle, citée du dictionnaire",
@@ -204,6 +286,8 @@ PARCOURS: tuple[Tour, ...] = (
         cle="reserve-de-forme",
         fil="reserve",
         message="que veut dire la colonne puissance_kw ?",
+        courte="c'est quoi puissance_kw ?",
+        longue="Pourrais-tu m'expliquer ce que représente la colonne puissance_kw ?",
         fragments=("source",),
         attendu="routée comme un inventaire — la question ne nomme pas sa source",
     ),
@@ -213,6 +297,7 @@ PARCOURS: tuple[Tour, ...] = (
 @dataclass
 class Releve:
     tour: Tour
+    formulation: str
     reponse: str
     tableau: str
     noeuds: list[str]
@@ -221,6 +306,15 @@ class Releve:
     pourquoi: str = ""
     appels_llm: int = 0
     duree_ms: int = 0
+
+    @property
+    def message(self) -> str:
+        return phrase(self.tour, self.formulation)
+
+
+def phrase(tour: Tour, formulation: str) -> str:
+    """La phrase de ce tour dans cette formulation."""
+    return {"canonique": tour.message, "courte": tour.courte, "longue": tour.longue}[formulation]
 
 
 def juger(tour: Tour, reponse: ChatAnswer, valeurs: list[float], texte: str) -> tuple[str, str]:
@@ -238,12 +332,18 @@ def juger(tour: Tour, reponse: ChatAnswer, valeurs: list[float], texte: str) -> 
     return "conforme", tour.attendu
 
 
-def poser(orchestrateur: Orchestrator, tour: Tour, fil: str, liees: dict[str, str]) -> Releve:
+def poser(
+    orchestrateur: Orchestrator,
+    tour: Tour,
+    formulation: str,
+    fil: str,
+    liees: dict[str, str],
+) -> Releve:
     compteur = orchestrateur.model
     avant = compteur.appels if isinstance(compteur, ModeleCompteur) else 0
     depart = time.monotonic()
     reponse = orchestrateur.ask(
-        tour.message,
+        phrase(tour, formulation),
         conversation_id=fil,
         # Toujours une CHAÎNE, jamais None : c'est ce que l'API passe, et le
         # court-circuit de choix de source en dépend. La source retenue par le
@@ -258,6 +358,7 @@ def poser(orchestrateur: Orchestrator, tour: Tour, fil: str, liees: dict[str, st
     verdict, pourquoi = juger(tour, reponse, valeurs, texte)
     return Releve(
         tour=tour,
+        formulation=formulation,
         reponse=reponse.answer,
         tableau=tableau,
         noeuds=[s.node for s in reponse.trace],
@@ -270,7 +371,15 @@ def poser(orchestrateur: Orchestrator, tour: Tour, fil: str, liees: dict[str, st
 
 
 def rapport(releves: list[Releve], reglages) -> str:
+    """Le tableau, agrégé par (tour, formulation) — une ligne par question posée.
+
+    Agrégé et non ligne à ligne : à trois tirages sur trois formulations, le
+    détail fait 144 lignes que personne ne lit. Ce qu'on veut voir est ce qui
+    CHANGE d'une phrase à l'autre pour une même question, et les raisons des
+    échecs, dédoublonnées.
+    """
     conformes = sum(1 for r in releves if r.verdict == "conforme")
+    formulations = [f for f in FORMULATIONS if any(r.formulation == f for r in releves)]
     lignes = [
         "## Le parcours de démonstration, rejoué",
         "",
@@ -279,15 +388,32 @@ def rapport(releves: list[Releve], reglages) -> str:
         f"**{conformes}/{len(releves)} tours conformes, "
         f"{sum(r.appels_llm for r in releves)} appels LLM.**",
         "",
-        "| tour | message | nœuds | appels | verdict | ce qui a décidé |",
-        "|---|---|---|---|---|---|",
     ]
-    for r in releves:
-        message = " ".join(r.tour.message.split())
-        lignes.append(
-            f"| `{r.tour.cle}` | {message} | {' → '.join(r.noeuds)} | {r.appels_llm} "
-            f"| **{r.verdict}** | {r.pourquoi} |"
-        )
+    if len(formulations) > 1:
+        lignes += ["Par formulation :", ""]
+        for formulation in formulations:
+            lot = [r for r in releves if r.formulation == formulation]
+            bons = sum(1 for r in lot if r.verdict == "conforme")
+            lignes.append(f"- **{formulation}** : {bons}/{len(lot)}")
+        lignes.append("")
+    lignes += [
+        "| tour | formulation | message | nœuds | appels | score | ce qui a décidé |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for cle in dict.fromkeys(r.tour.cle for r in releves):
+        for formulation in formulations:
+            lot = [r for r in releves if r.tour.cle == cle and r.formulation == formulation]
+            if not lot:
+                continue
+            bons = sum(1 for r in lot if r.verdict == "conforme")
+            noeuds = " / ".join(dict.fromkeys(" → ".join(r.noeuds) for r in lot))
+            echecs = dict.fromkeys(r.pourquoi for r in lot if r.verdict != "conforme")
+            pourquoi = " ; ".join(echecs) if echecs else lot[0].pourquoi
+            appels = sum(r.appels_llm for r in lot)
+            lignes.append(
+                f"| `{cle}` | {formulation} | {' '.join(lot[0].message.split())} | {noeuds} "
+                f"| {appels} | **{bons}/{len(lot)}** | {pourquoi} |"
+            )
     return "\n".join(lignes)
 
 
@@ -296,7 +422,15 @@ def main() -> None:
     parseur.add_argument("--markdown", type=Path, default=None)
     parseur.add_argument("--json", type=Path, default=None)
     parseur.add_argument("--seulement", nargs="*", default=None)
+    # Le défaut joue les TROIS formulations, et c'est le sujet : un parcours
+    # qui ne rejoue que les phrases qu'on a écrites mesure ces phrases-là.
+    parseur.add_argument("--formulations", nargs="*", default=list(FORMULATIONS))
+    parseur.add_argument("--tirages", type=int, default=1)
     args = parseur.parse_args()
+
+    formulations = [f for f in FORMULATIONS if f in args.formulations]
+    if not formulations:
+        parseur.error(f"formulations connues : {', '.join(FORMULATIONS)}")
 
     reglages = get_settings()
     catalogue = load_catalog(reglages.catalog_path)
@@ -310,15 +444,31 @@ def main() -> None:
         registry=Registry.load(reglages.models_registry_path),
     )
     suffixe = uuid.uuid4().hex[:8]
-    liees: dict[str, str] = {}
     releves: list[Releve] = []
     tours = [t for t in PARCOURS if not args.seulement or t.cle in args.seulement]
-    for numero, tour in enumerate(tours, start=1):
-        print(f"[{numero}/{len(tours)}] {tour.cle} — « {tour.message} »")
-        releve = poser(orchestrateur, tour, f"parcours-{suffixe}-{tour.fil}", liees)
-        releves.append(releve)
-        print(f"    → {releve.verdict} ({releve.pourquoi}) — {releve.duree_ms} ms")
-        print(f"    réponse : {' '.join(releve.reponse.split())[:220]}\n")
+    total = len(tours) * len(formulations) * args.tirages
+    numero = 0
+    for tirage in range(1, args.tirages + 1):
+        for formulation in formulations:
+            # Un fil NEUF par formulation ET par tirage : le verrou de source se
+            # mesure sur des tours enchaînés, et rejouer la même conversation
+            # lui donnerait le contexte du tirage précédent. Ce serait mesurer
+            # la mémoire du fil, pas la phrase.
+            liees: dict[str, str] = {}
+            for tour in tours:
+                numero += 1
+                message = phrase(tour, formulation)
+                print(f"[{numero}/{total}] {tour.cle}·{formulation}·{tirage} — « {message} »")
+                releve = poser(
+                    orchestrateur,
+                    tour,
+                    formulation,
+                    f"parcours-{suffixe}-{tirage}-{formulation}-{tour.fil}",
+                    liees,
+                )
+                releves.append(releve)
+                print(f"    → {releve.verdict} ({releve.pourquoi}) — {releve.duree_ms} ms")
+                print(f"    réponse : {' '.join(releve.reponse.split())[:220]}\n", flush=True)
 
     texte = rapport(releves, reglages)
     print(texte)
@@ -327,7 +477,14 @@ def main() -> None:
     if args.json:
         args.json.write_text(
             json.dumps(
-                [{**r.__dict__, "tour": r.tour.cle} for r in releves],
+                [
+                    {
+                        **{k: v for k, v in r.__dict__.items() if k != "tour"},
+                        "tour": r.tour.cle,
+                        "message": r.message,
+                    }
+                    for r in releves
+                ],
                 ensure_ascii=False,
                 indent=2,
             ),
