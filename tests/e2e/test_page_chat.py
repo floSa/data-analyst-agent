@@ -78,6 +78,15 @@ class FakeOrchestrator:
         workspace_root=None,
         source_de_travail=None,
     ) -> ChatAnswer:
+        # Un message réduit au NOM d'une source la lie : c'est le court-circuit
+        # du produit, et c'est par là — en parlant — qu'on choisit sa source.
+        nommee = question.strip().lower()
+        if any(s.name == nommee for s in self.SOURCES):
+            return ChatAnswer(
+                answer=self.accuser_la_source(nommee, source_de_travail or ""),
+                artifacts=[],
+                source_de_travail=nommee,
+            )
         return ChatAnswer(
             answer="Il y a 891 passagers.",
             artifacts=[MimeOutput(mime="application/json", data=TABLE_JSON)],
@@ -354,38 +363,32 @@ def test_connexion_puis_deconnexion(page, url_nue: str):
 # --- l'indicateur de source de travail ----------------------------------------
 
 
-def test_l_indicateur_liste_les_sources_et_ce_qu_on_y_a_lu(page, app_url: str):
-    """L'indicateur est permanent, et son menu porte le catalogue réel.
+def test_aucun_menu_ne_propose_de_choisir_la_source(page, app_url: str):
+    """La source se choisit en PARLANT, et la page ne propose rien d'autre.
 
-    Pas seulement des noms : le volume lu dans chaque source est là aussi, en
-    infobulle, parce que c'est sur ce texte qu'on choisit.
+    Un menu déroulant a été monté ici, puis retiré : il posait à l'ouverture un
+    choix que personne n'avait demandé, et laissait croire qu'il fallait le
+    faire avant de parler. C'est l'inverse du produit — l'agent annonce ses
+    sources quand on les lui demande, et lie celle qu'on lui nomme.
     """
     connexion(page, app_url)
-    page.wait_for_selector("#choix-de-source option[value='titanic']", state="attached")
+    page.wait_for_selector("#source-liee")
 
-    assert page.locator("#choix-de-source option").count() == 3  # « aucune » + deux sources
-    assert "aucune" in page.locator("#choix-de-source").inner_text()
-    titre = page.get_attribute("#choix-de-source option[value='titanic']", "title")
-    assert "891" in titre
+    assert page.locator("#source-de-travail select").count() == 0
+    assert "aucune" in page.inner_text("#source-liee")
 
 
-def test_changer_de_source_dans_le_menu_lie_le_fil_et_l_inscrit_dedans(page, app_url: str):
-    """« Un moyen d'en changer sans le taper », et la trace que ça laisse.
-
-    Le changement est écrit dans la transcription : relire un fil dont les
-    réponses changent de données sans que rien ne le dise serait exactement ce
-    que la bascule annoncée évite.
-    """
+def test_nommer_une_source_dans_le_fil_la_lie_et_l_indicateur_suit(page, app_url: str):
+    """Le témoin dit ce que le FIL porte, et il ne l'apprend que de la réponse."""
     connexion(page, app_url)
-    page.wait_for_selector("#choix-de-source option[value='iris']", state="attached")
     page.click("#nouvelle")
 
-    page.select_option("#choix-de-source", "iris")
+    page.fill("#message", "iris")
+    page.click("#envoyer")
 
     page.wait_for_selector(".message.agent")
     assert "on travaille sur" in page.inner_text("#journal")
-    assert "iris" in page.inner_text("#journal")
-    assert page.input_value("#choix-de-source") == "iris"
+    assert page.inner_text("#source-liee").strip() == "iris"
     assert "150" in page.inner_text("#faits-de-source")
 
 
@@ -393,14 +396,14 @@ def test_l_indicateur_suit_le_fil_qu_on_rouvre(page, app_url: str):
     """La source vient du FIL : rouvrir une conversation la réaffiche, et une
     conversation neuve repart sur « aucune »."""
     connexion(page, app_url)
-    page.wait_for_selector("#choix-de-source option[value='iris']", state="attached")
     page.click("#nouvelle")
-    page.select_option("#choix-de-source", "titanic")
+    page.fill("#message", "titanic")
+    page.click("#envoyer")
     page.wait_for_selector(".message.agent")
 
     page.click("#nouvelle")
-    assert page.input_value("#choix-de-source") == ""
+    assert "aucune" in page.inner_text("#source-liee")
 
     page.click(".fil-titre")
     page.wait_for_selector(".message.agent")
-    assert page.input_value("#choix-de-source") == "titanic"
+    assert page.inner_text("#source-liee").strip() == "titanic"
