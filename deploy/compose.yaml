@@ -30,12 +30,14 @@ services:
     ports:
       - "${DAA_HTTP_BIND:-127.0.0.1}:${DAA_HTTP_PORT:-8000}:8000"
 
-    # Les mandataires dont l'application croit les en-têtes. Par défaut le
-    # réseau du compose, et RIEN d'autre : c'est là, et seulement là, que vit le
-    # mandataire ci-dessous. Une valeur plus large — « tout le privé » — rendrait
-    # l'anti-force brute contournable par quiconque atteindrait le port 8000.
+    # Le mandataire dont l'application croit les en-têtes : SON ADRESSE, et rien
+    # d'autre. Pas le sous-réseau — mesuré, et c'est un vrai trou : la passerelle
+    # du pont (172.30.0.1) est dans le /24, et Docker lui attribue par SNAT tout
+    # ce qui arrive par le port publié depuis la machine ou depuis un autre
+    # réseau Docker. Le /24 accordé, ce trafic-là devient « de confiance » et
+    # peut donc se réécrire l'adresse qu'il veut dans X-Forwarded-For.
     environment:
-      DAA_TRUSTED_PROXIES: ${DAA_TRUSTED_PROXIES:-${DAA_NETWORK_SUBNET:-172.30.0.0/24}}
+      DAA_TRUSTED_PROXIES: ${DAA_TRUSTED_PROXIES:-${DAA_PROXY_IP:-172.30.0.2}}
 
     # LE point délicat, et la raison pour laquelle il n'y a qu'UN volume.
     #
@@ -102,6 +104,14 @@ services:
       - "${DAA_HTTPS_BIND:-0.0.0.0}:${DAA_HTTPS_PORT:-8443}:443"
       - "${DAA_HTTPS_BIND:-0.0.0.0}:${DAA_HTTP_REDIRECT_PORT:-8080}:80"
 
+    # Adresse FIXE, parce que c'est elle que l'application déclare de confiance.
+    # Laissée au hasard, la déclaration viserait à côté au premier redémarrage
+    # qui change l'ordre d'attribution — et le symptôme serait un anti-force
+    # brute qui compte tout le monde sur une seule adresse.
+    networks:
+      default:
+        ipv4_address: ${DAA_PROXY_IP:-172.30.0.2}
+
     volumes:
       # Le gabarit de configuration. L'entrée de l'image le passe dans
       # `envsubst` et écrit /etc/nginx/conf.d/default.conf.
@@ -153,15 +163,15 @@ services:
       context: ../src/data_analyst_agent/sandbox/image
     command: ["/bin/true"]
 
-# Le sous-réseau est FIXÉ, et ce n'est pas de la coquetterie : `app` ne croit
-# `X-Forwarded-For` que des adresses déclarées dans DAA_TRUSTED_PROXIES, et un
-# sous-réseau que Docker attribue au hasard rendrait cette déclaration
-# invérifiable — donc fausse un jour, en silence, avec pour seul symptôme un
+# Le sous-réseau est FIXÉ, et ce n'est pas de la coquetterie : c'est lui qui rend
+# l'adresse du mandataire (DAA_PROXY_IP) attribuable d'avance, donc déclarable.
+# Un réseau tiré au sort par Docker rendrait la déclaration de confiance
+# invérifiable — fausse un jour, en silence, avec pour seul symptôme un
 # anti-force brute qui compte tout le monde sur une seule adresse.
 #
 # À changer si 172.30.0.0/24 est déjà pris sur la machine
-# (`docker network inspect`) : DAA_NETWORK_SUBNET suffit, DAA_TRUSTED_PROXIES
-# suit tout seul.
+# (`docker network ls`, puis `inspect`) : DAA_NETWORK_SUBNET **et** DAA_PROXY_IP,
+# qui doit tomber dedans. DAA_TRUSTED_PROXIES suit tout seul.
 networks:
   default:
     ipam:
