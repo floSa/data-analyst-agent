@@ -28,6 +28,9 @@ DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${DAA_ENV_FILE:-/etc/data-analyst-agent/daa.env}"
 [[ -r "$ENV_FILE" ]] || { echo "restore: $ENV_FILE illisible (sudo ?)" >&2; exit 1; }
 set -a; source "$ENV_FILE"; set +a
+# Réglage du conteneur, pas du script : il pointerait mktemp sous le dossier
+# de données, qui n'existe pas encore sur une machine neuve (cf. daactl).
+unset TMPDIR
 
 # Essai à blanc sur un dossier jetable : ni arrêt ni relance du service.
 CIBLE="${DAA_DATA_CIBLE:-${DAA_DATA_DIR:?DAA_DATA_DIR absent de $ENV_FILE}}"

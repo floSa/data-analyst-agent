@@ -32,6 +32,9 @@ umask 077
 ENV_FILE="${DAA_ENV_FILE:-/etc/data-analyst-agent/daa.env}"
 [[ -r "$ENV_FILE" ]] || { echo "backup: $ENV_FILE illisible (sudo ?)" >&2; exit 1; }
 set -a; source "$ENV_FILE"; set +a
+# Réglage du conteneur, pas du script : il pointerait mktemp sous le dossier
+# de données, qui n'existe pas encore sur une machine neuve (cf. daactl).
+unset TMPDIR
 : "${DAA_DATA_DIR:?DAA_DATA_DIR absent de $ENV_FILE}"
 
 DESTINATION="${1:-/var/backups/data-analyst-agent}"

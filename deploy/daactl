@@ -35,6 +35,14 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+# TMPDIR est un réglage DU CONTENEUR — il désigne un dossier sous DAA_DATA_DIR
+# pour que les CSV temporaires des tables SQL soient montables dans le bac à
+# sable. Sourcer le fichier le pose aussi dans l'environnement de CE script,
+# donc dans celui du CLI docker qu'il appelle : le premier `build` sur une
+# machine neuve échouait sur « invalid output path: stat
+# /var/lib/data-analyst-agent/tmp: no such file or directory », avant même que
+# l'arborescence n'existe. Le conteneur, lui, le reçoit par `env_file`.
+unset TMPDIR
 : "${DAA_DATA_DIR:?DAA_DATA_DIR manque dans $ENV_FILE}"
 
 compose() {
@@ -70,6 +78,17 @@ arborescence() {
 case "${1:-}" in
     start)
         arborescence
+        # Le catalogue est une DÉCLARATION LOCALE : il n'est ni dans l'image ni
+        # dans le dépôt de la machine, il vit dans le dossier de données. Sans
+        # lui l'application démarre et la page de chat s'ouvre — mais elle
+        # n'offre aucune source, et l'erreur ne se lit que dans les journaux.
+        # Mieux vaut le dire ici, en clair, une fois.
+        if [[ ! -e "${DAA_CATALOG_PATH:-$DAA_DATA_DIR/sources/catalogue.yaml}" ]]; then
+            echo "daactl: ATTENTION — aucun catalogue de sources :" >&2
+            echo "  ${DAA_CATALOG_PATH:-$DAA_DATA_DIR/sources/catalogue.yaml}" >&2
+            echo "  L'application démarrera sans aucune source à interroger." >&2
+            echo "  Cf. docs/INSTALLATION.md, etape 5 (declarer une premiere source)." >&2
+        fi
         sandbox_si_absente
         # `--wait` rend la main quand la sonde /health répond, pas quand le
         # conteneur est créé : l'unité systemd peut donc dépendre de ce retour.
