@@ -239,6 +239,56 @@ def decrire_les_sources(catalogue: Catalog, faits: Faits | None = None) -> str:
     return "\n".join(lignes)
 
 
+def fiche_de_source(source: Source, releve: FaitsDeSource | None) -> str:
+    """Ce que le catalogue dit d'une source, et ce qu'on a LU dedans — rien de plus.
+
+    Des FAITS, sans promesse : le type, la description, le volume, la période.
+    C'est le moment où savoir qu'elle pèse 300 lignes et ne couvre aucune date
+    change ce qu'on va lui demander.
+
+    Séparée de ``accueil_de_source`` à cause d'un défaut trouvé par un test.
+    L'outil de liaison de l'agent système rendait directement l'accueil complet,
+    « je garde cette source pour la suite de la conversation » comprise — et ce
+    texte était servi tel quel même quand le nœud REFUSAIT de lier (nom qui n'est
+    pas celui de l'utilisateur, appel hors conversation, cf.
+    ``Orchestrator._liaison_demandee``). L'utilisateur lisait une promesse que
+    personne n'avait tenue, et son tour suivant retombait sur « sur quelle source
+    veux-tu travailler ? ». La promesse appartient au nœud qui la tient ; l'outil
+    ne rend que les faits.
+    """
+    description = source.description.strip() or "sans description"
+    faits = f"\n\n{releve.en_clair()}" if releve is not None and releve.en_clair() else ""
+    return f"La source **{source.name}** ({source.type}) — {description}{faits}"
+
+
+def accueil_de_source(source: Source, releve: FaitsDeSource | None, precedente: str = "") -> str:
+    """Ce qu'on répond quand une source vient d'être retenue pour la conversation.
+
+    Déterministe, et c'est assumé : il n'y a rien à formuler. La phrase accuse
+    réception d'un nom que l'utilisateur vient d'écrire et y ajoute la fiche de
+    la source. Un aller-retour LLM pour la reformuler ne changerait pas un fait
+    et ferait attendre l'utilisateur avant sa première vraie question.
+
+    Elle dit la source **quittée** s'il y en avait une : un choix qui en remplace
+    un autre doit se voir, exactement comme une bascule au milieu d'une question.
+
+    Vit ici, dans le module PUR, et non dans l'orchestrateur : les deux chemins
+    de liaison la servent — le court-circuit déterministe du nœud de plan, et
+    l'outil que le modèle appelle depuis l'agent système. Deux copies auraient
+    divergé au premier mot changé.
+    """
+    description = source.description.strip() or "sans description"
+    quittee = f" (on travaillait sur `{precedente}`)" if precedente else ""
+    faits = f"\n\n{releve.en_clair()}" if releve is not None and releve.en_clair() else ""
+    return (
+        f"Entendu : on travaille sur **{source.name}** ({source.type}){quittee} — "
+        f"{description}{faits}\n\n"
+        "Je garde cette source pour la suite de la conversation. Nomme-en une "
+        "autre à tout moment et je basculerai dessus.\n\n"
+        "Que veux-tu savoir ?"
+    )
+
+
 def proposer_les_sources(catalogue: Catalog, faits: Faits | None = None) -> str:
     """Le même inventaire, mais posé comme une QUESTION : laquelle prend-on ?
 

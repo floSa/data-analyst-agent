@@ -579,10 +579,10 @@ du SQL écrit pour répondre à une question de configuration — sauf
 Le lexique est retiré. La reconnaissance et la formulation sont rendues au
 modèle ; ce qui reste du code, c'est **ce que le modèle a le droit de savoir**.
 
-### L'agent système et ses cinq outils
+### L'agent système et ses six outils
 
 [`orchestrator/systeme.py`](../src/data_analyst_agent/orchestrator/systeme.py) —
-un agent `pydantic-ai` à cinq outils typés, sur le modèle des trois outils de
+un agent `pydantic-ai` à six outils typés, sur le modèle des trois outils de
 l'agent SQL, qui fonctionnent déjà avec `gemma4:e4b`. Chaque outil rend un texte
 de `introspection.py`, donc un texte **construit depuis un artefact du dépôt**.
 
@@ -593,6 +593,15 @@ de `introspection.py`, donc un texte **construit depuis un artefact du dépôt**
 | `attributs_d_un_modele` | `SCHEMAS` + `describe_features` | non |
 | `capacites_de_l_agent` | les valeurs de `Capability`, plus l'inventaire | non |
 | `schema_d_une_source` | l'ontologie de la source (+ son dictionnaire) | **oui** |
+| `travailler_sur_une_source` | le catalogue déclaré + les relevés de volume | non |
+
+Le sixième est d'une autre nature : il ne DIT pas un fait, il en **retient** un
+— la source de travail de la conversation. C'est le second chemin de la liaison
+d'une source, mesuré contre celui du planificateur et retenu parce que l'autre
+avalait les questions (`docs/sources-de-demonstration.md`, dette A). Il ne
+décide rien seul : l'appelant confronte la source demandée au texte de
+l'utilisateur avant de lier, exactement comme
+`_regle_source_de_la_conversation` le fait depuis §14.
 
 Le nœud `system` passe **en tête du graphe** : la première question d'un tour
 n'est plus « quelle capacité ? » mais « est-ce une question sur moi ? ».

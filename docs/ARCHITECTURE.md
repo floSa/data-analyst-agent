@@ -38,7 +38,7 @@ flowchart TB
             RET["① Récupération<br/>catalogue + text-to-SQL à tools"]
             ANA["② Analyse<br/>génération de code stats/viz"]
             INF["③ Inférence gardée<br/>validation → predict déterministe"]
-            SYS["④ Répondre sur soi-même<br/>5 outils de faits<br/>(le modèle décide, les faits tranchent)"]
+            SYS["④ Répondre sur soi-même<br/>6 outils (5 de faits, 1 qui lie une source)<br/>(le modèle décide, les faits tranchent)"]
             RAP["⑤ Rappeler un artefact du fil<br/>2 outils : relire, rejouer"]
         end
     end
@@ -71,7 +71,7 @@ JSON) et la trace d'exécution.
 
 ```mermaid
 flowchart LR
-    Q(["question"]) --> SYS["system<br/>« est-ce une question sur moi ? »<br/>5 outils de faits, le modèle décide"]
+    Q(["question"]) --> SYS["system<br/>« est-ce une question sur moi ? »<br/>6 outils, le modèle décide"]
     SYS -->|"un outil appelé"| SYN["synthesize"]
     SYS -->|"aucun outil appelé"| RAP["rappel<br/>« parle-t-on de ce que j'ai produit ? »<br/>2 outils, le modèle décide<br/><i>sauté si le fil n'a rien produit</i>"]
     RAP -->|"lecture d'un artefact"| SYN
@@ -91,7 +91,7 @@ flowchart LR
 
 **Le premier nœud n'est pas `plan`, et ce n'est pas un détail d'ordre.** La première
 question posée est « cette demande porte-t-elle sur l'agent lui-même ? », et c'est le
-**modèle** qui y répond : le nœud `system` lui soumet la question avec cinq outils qui
+**modèle** qui y répond : le nœud `system` lui soumet la question avec six outils qui
 rendent les faits du dépôt, et **l'appel d'un outil est le signal de routage**. Rien
 d'appelé, le tour repart au planificateur exactement comme avant. C'est la seule
 branche du graphe qui ne vient pas d'un `Plan` — `ChatAnswer.plan` reste vide pour une
@@ -241,7 +241,7 @@ les CSV, sans laisser de données orphelines.
   sources (§4.10) ; plus la ceinture qui juge une formulation du modèle contre eux
   (`defaut_de_fondation`). Module pur : aucun fichier, aucune connexion, aucun LLM.
 - `systeme.py` — l'agent qui **reconnaît** une question sur l'agent et **formule** ces
-  faits : cinq outils PydanticAI, sur le modèle des trois outils de l'agent SQL. Ici
+  faits : six outils PydanticAI, sur le modèle des trois outils de l'agent SQL. Ici
   vit l'entrée/sortie que `introspection.py` s'interdit — seul l'outil de schéma
   ouvre une connexion (§4.10).
 - `rappel.py` — l'agent qui **retrouve** un artefact du fil désigné en langage
@@ -585,7 +585,7 @@ classement : la demande n'avait aucune case où être rangée, et tombait dans l
 ([surface-conversationnelle.md](surface-conversationnelle.md)).
 
 **Le modèle reconnaît, l'outil rend les faits, le modèle formule.** Le nœud `system`
-est en tête du graphe : il soumet la question à un agent muni de cinq outils typés
+est en tête du graphe : il soumet la question à un agent muni de six outils typés
 (`pydantic-ai`, sur le modèle des trois outils de l'agent SQL, qui fonctionnent avec
 le modèle en service). Le modèle décide d'appeler, l'outil rend un texte construit
 depuis un artefact du dépôt, et le modèle le formule pour l'utilisateur.
@@ -1034,6 +1034,12 @@ tests/
   système**, oracle tiré des sources de vérité et compteur d'appels LLM —
   [surface-conversationnelle.md](surface-conversationnelle.md)),
   `scripts/mesure_choix_de_source.py` (le parcours multi-tours du choix de source),
+  `scripts/mesure_ouverture_de_source.py` (dix façons de DÉSIGNER une source pour
+  y travailler, plus une contre-épreuve : la même phrase suivie d'une vraie
+  question, qui ne doit PAS être avalée par la liaison),
+  `scripts/mesure_provenance_du_sens.py` (une réponse sur le sens d'une colonne
+  dit-elle d'où elle le tient — avec un témoin sur deux sources qui ne déclarent
+  AUCUN dictionnaire, pour voir si l'attribution déborde),
   `scripts/mesure_rappel_dartefact.py` (la profondeur d'un rappel : rejouer une
   figure au tour +2 et au tour +5, §4.12) et `scripts/mesure_artefact_absent.py`
   (l'aveu d'un artefact désigné et jamais produit),

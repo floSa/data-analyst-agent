@@ -46,6 +46,7 @@ from data_analyst_agent.agents.retrieval.catalog import (
     load_catalog,
     open_source,
 )
+from data_analyst_agent.agents.retrieval.classement import grandeur_du_classement
 from data_analyst_agent.agents.retrieval.faits import ReglagesDuReleve, RelevesDuCatalogue
 from data_analyst_agent.agents.retrieval.sql import QueryResult
 from data_analyst_agent.config import Settings, get_settings
@@ -74,7 +75,7 @@ from data_analyst_agent.orchestrator.rappel import (
     designation_dun_artefact_passe,
     run_rappel,
 )
-from data_analyst_agent.orchestrator.systeme import run_systeme
+from data_analyst_agent.orchestrator.systeme import ResultatSysteme, run_systeme
 from data_analyst_agent.orchestrator.workspace import (
     ConversationWorkspace,
     WorkspaceArtifact,
@@ -1130,30 +1131,14 @@ class Orchestrator:
     def accuser_la_source(self, nom: str, precedente: str = "") -> str:
         """Ce qu'on répond quand l'utilisateur vient de choisir une source.
 
-        Déterministe, et c'est assumé : il n'y a rien à formuler. La phrase
-        accuse réception d'un nom que l'utilisateur vient d'écrire, en y
-        ajoutant ce que le catalogue en dit ; un aller-retour LLM pour la
-        reformuler ne changerait pas un fait et ferait attendre l'utilisateur
-        avant sa première vraie question.
-
-        Elle dit la source **quittée** s'il y en avait une : un choix qui en
-        remplace un autre doit se voir, exactement comme une bascule au milieu
-        d'une question (``_lier_la_source``).
+        Le texte vit dans ``introspection.accueil_de_source``, avec les autres
+        réponses construites depuis les artefacts : l'outil de liaison de
+        l'agent système le sert aussi, et deux copies auraient divergé au
+        premier mot changé. Ce qui reste ici est l'accès au catalogue et aux
+        relevés, qui appartient à l'orchestrateur.
         """
-        source = self.catalog.get(nom)
-        description = source.description.strip() or "sans description"
-        quittee = f" (on travaillait sur `{precedente}`)" if precedente else ""
-        # Ce qu'on a LU dedans, à l'instant où elle devient la source de
-        # travail : c'est le moment où savoir qu'elle pèse 300 lignes et ne
-        # couvre aucune date change ce qu'on va lui demander.
-        releve = self.releves.de(nom)
-        faits = f"\n\n{releve.en_clair()}" if releve is not None and releve.en_clair() else ""
-        return (
-            f"Entendu : on travaille sur **{nom}** ({source.type}){quittee} — "
-            f"{description}{faits}\n\n"
-            "Je garde cette source pour la suite de la conversation. Nomme-en une "
-            "autre à tout moment et je basculerai dessus.\n\n"
-            "Que veux-tu savoir ?"
+        return introspection.accueil_de_source(
+            self.catalog.get(nom), self.releves.de(nom), precedente
         )
 
     def _choix_de_source(self, state: OrchestratorState) -> str | None:
@@ -1335,6 +1320,7 @@ class Orchestrator:
                 registre=self.registry,
                 releves=self.releves,
                 request_limit=self.settings.systeme_request_limit,
+                source_de_travail=state.get("source_in") or "",
             )
         except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
             incident = reference_dincident()
@@ -1354,6 +1340,9 @@ class Orchestrator:
                     self._step("system", "aucun outil appelé — passe au planificateur", start)
                 ]
             }
+        liaison = self._liaison_demandee(state, resultat, start)
+        if liaison is not None:
+            return liaison
         outils = ", ".join(resultat.outils_appeles)
         defaut = introspection.defaut_de_fondation(resultat.reponse, resultat.faits)
         if defaut:
@@ -1366,6 +1355,60 @@ class Orchestrator:
         return {
             "system": resultat.reponse,
             "trace": [self._step("system", f"{outils} — formulé par le modèle", start)],
+        }
+
+    def _liaison_demandee(
+        self, state: OrchestratorState, resultat: ResultatSysteme, start: float
+    ) -> dict | None:
+        """L'agent système a demandé à lier une source : on vérifie, puis on lie.
+
+        C'est le SECOND chemin de la liaison d'une source, et non le
+        remplacement du premier. Le court-circuit déterministe de
+        ``_court_circuit_du_choix_de_source`` reste devant, intact : un message
+        réduit au nom d'une source ne paie toujours aucun aller-retour — il ne
+        passe même pas par ce nœud-ci (``_tour_deja_engage``). Ce chemin ne voit
+        que ce qui lui échappait : la même intention dite en une phrase, qui
+        partait à la récupération et s'y faisait répondre « je n'ai pas
+        interrogé la source… reformule ».
+
+        **Deux vérifications avant de lier**, et c'est ce qui empêche ce chemin
+        de faire basculer une conversation à l'insu de qui la mène.
+
+        1. La source liée est celle que l'**utilisateur** a nommée, pas celle
+           que le modèle a passée à l'outil. Le modèle propose un argument à
+           chaque appel, parfois au hasard des descriptions ; la même précaution
+           est prise par ``_regle_source_de_la_conversation`` et par
+           ``_regle_ouvrir_une_source``, pour la même raison, et elle est
+           mesurée (`docs/surface-conversationnelle.md` §14).
+        2. Hors conversation (``source_in is None``), il n'y a pas de fil à
+           lier : l'appel d'outil ne retient rien et le tour repart au
+           planificateur, exactement comme avant ce chemin.
+
+        Échouer l'une ou l'autre ne perd pas le tour : ``None`` rend la main au
+        reste du nœud système, qui servira les faits que l'outil a rendus.
+
+        La réponse servie est l'accueil **déterministe** — celui que l'outil a
+        rendu, pas la reformulation du modèle. Il n'y a rien à formuler : la
+        phrase accuse réception d'un nom et y ajoute le volume lu dans la
+        source. La vérification de fondation (``defaut_de_fondation``) ne
+        s'applique donc pas ici, faute d'avoir quoi comparer.
+        """
+        if not resultat.source_a_lier or state.get("source_in") is None:
+            return None
+        nommee = introspection.source_nommee(state["question"], self.catalog)
+        if nommee != resultat.source_a_lier:
+            return None
+        precedente = state.get("source_in") or ""
+        return {
+            "system": self.accuser_la_source(nommee, precedente),
+            "source_out": nommee,
+            "trace": [
+                self._step(
+                    "system",
+                    f"travailler_sur_une_source — source liée : {nommee}",
+                    start,
+                )
+            ],
         }
 
     # -- le nœud de rappel : « parle-t-on de ce que j'ai déjà produit ? » ------
@@ -2069,11 +2112,43 @@ class Orchestrator:
             )
         if result is not None and result.row_count > 1:
             n = result.row_count
-            phrase = f"{n} lignes retournées — voir le tableau ci-dessous."
+            phrase = f"{n} lignes retournées{Orchestrator._sur_quoi_classe(retrieval.sql)} — "
+            phrase += "voir le tableau ci-dessous."
             if result.truncated:
                 phrase += " (résultat tronqué par la limite de lignes)"
             return phrase, "résumé déterministe (multi-lignes)"
         return retrieval.summary, "résumé de la récupération"
+
+    @staticmethod
+    def _sur_quoi_classe(sql: str | None) -> str:
+        """« , classées par `x` (ordre décroissant) » — vide si la requête ne classe rien.
+
+        Ce que cette phrase répare : un palmarès rendu « 3 lignes retournées —
+        voir le tableau ci-dessous » ne dit pas sur QUOI il classe. Deux
+        réponses justes sur deux grandeurs différentes — le nombre de sessions
+        d'une station, l'énergie qu'elle a délivrée — s'y lisaient à
+        l'identique, et « qui charge le plus ? » n'a pas de réponse unique : les
+        deux lectures sont légitimes, la question ne tranche pas. Ce qu'on doit
+        à l'utilisateur n'est donc pas une grandeur en particulier, c'est de
+        savoir laquelle il lit.
+
+        La grandeur est lue sur le SQL exécuté
+        (``classement.grandeur_du_classement``), jamais sur la question : c'est
+        la même propriété vérifiable que la projection du ORDER BY, servie par
+        l'autre bout. Une consigne de prompt qui aurait demandé au modèle de
+        nommer sa grandeur aurait tenu sur les phrases qu'on lui aurait
+        montrées — ce produit a déjà payé ce pari deux fois.
+
+        Elle ne s'ajoute qu'au résumé DÉTERMINISTE multi-lignes. Le résumé d'un
+        agrégat d'une ligne vient du modèle, qui nomme déjà ce qu'il a calculé,
+        et il n'y a pas de classement à une ligne.
+        """
+        classement = grandeur_du_classement(sql or "")
+        if classement is None:
+            return ""
+        sens = "décroissant" if classement.decroissant else "croissant"
+        grandeurs = " puis ".join(f"`{g}`" for g in classement.grandeurs)
+        return f", classées par {grandeurs} (ordre {sens})"
 
     @staticmethod
     def _cause_lisible(erreur: str | None) -> str:

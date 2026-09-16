@@ -1,11 +1,22 @@
 """L'agent système : le MODÈLE reconnaît la question sur soi, et formule les faits.
 
-Cinq outils typés (`pydantic-ai`), sur le modèle des trois outils de l'agent
+Six outils typés (`pydantic-ai`), sur le modèle des trois outils de l'agent
 SQL qui fonctionnent déjà avec ``gemma4:e4b``. Chacun rend un texte de
 :mod:`data_analyst_agent.orchestrator.introspection`, donc un texte construit
 depuis un artefact du dépôt — catalogue, registre, schémas d'attributs,
 ontologie réelle de la source. Le modèle décide d'appeler, l'outil rend les
 faits, le modèle les formule.
+
+**Le sixième ne DIT pas, il FAIT** : ``travailler_sur_une_source`` retient une
+source comme source de travail de la conversation. C'est le second chemin de la
+liaison d'une source — le premier, déterministe, ne reconnaît qu'un message
+réduit au nom d'une source, et une phrase polie lui échappait. Il est ici et
+non dans le planificateur parce que les deux voies ont été mesurées : celle du
+planificateur répare toutes les ouvertures et AVALE neuf questions sur douze
+qui nommaient une source en en posant une (`docs/sources-de-demonstration.md`,
+dette A). Comme les cinq autres, il ne décide de rien tout seul : c'est
+l'appelant qui confronte la source demandée au texte de l'utilisateur avant de
+lier quoi que ce soit.
 
 **Ce qui a remplacé le lexique, et pourquoi.** La reconnaissance était un
 lexique de tournures écrites à la main (`introspection.LEXIQUE`, retiré). Il
@@ -82,11 +93,49 @@ class SystemeDeps:
     # la vérification d'après-coup, et le repli servi si elle échoue.
     faits: list[str] = field(default_factory=list)
     outils_appeles: list[str] = field(default_factory=list)
+    # La source que l'outil de liaison a retenue ("" = aucune demande). L'outil
+    # ne CHANGE rien de lui-même : il enregistre une demande que l'appelant
+    # confrontera au texte de l'utilisateur avant de lier quoi que ce soit.
+    source_a_lier: str = ""
+    # La source de travail au moment du tour, pour que l'accueil puisse dire
+    # celle qu'on QUITTE. "" = aucune, ce qui est le premier tour d'un fil.
+    source_de_travail: str = ""
 
     def retenir(self, outil: str, texte: str) -> str:
         self.outils_appeles.append(outil)
         self.faits.append(texte)
         return texte
+
+    def retenir_la_liaison(self, demandee: str) -> str:
+        """Enregistre la source que le modèle veut lier, et rend son accueil.
+
+        Un nom INCONNU ne lève pas : il rend la liste des sources déclarées,
+        comme ``_schema_lisible`` rend le schéma complet sur une table inventée.
+        Le modèle qui se trompe de nom a besoin de voir les vrais, pas d'un
+        refus — et l'outil compte alors comme appelé sans que rien ne soit lié,
+        donc le tour repart au planificateur.
+        """
+        vise = demandee.strip().strip("\"`'").lower()
+        trouvee = next((s for s in self.catalogue_declare.sources if s.name.lower() == vise), None)
+        if trouvee is None:
+            # Les noms entre accents graves, comme partout dans `introspection` :
+            # c'est ainsi que la vérification d'après-coup reconnaît ce qu'un
+            # fait NOMME, et donc ce qu'une réponse doit reprendre
+            # (``defaut_de_fondation``). Sans eux, la formulation du modèle
+            # passait en omettant les vraies sources.
+            connues = ", ".join(f"`{s.name}`" for s in self.catalogue_declare.sources) or "(aucune)"
+            return self.retenir(
+                "travailler_sur_une_source",
+                f"Source `{demandee}` inconnue. Sources déclarées : {connues}.",
+            )
+        releve = self.releves.de(trouvee.name) if self.releves is not None else None
+        self.source_a_lier = trouvee.name
+        # La FICHE, pas l'accueil : l'accueil promet de garder la source pour la
+        # suite, et cette promesse n'est tenue que si l'appelant lie vraiment.
+        # C'est lui qui la formule, une fois la liaison décidée.
+        return self.retenir(
+            "travailler_sur_une_source", introspection.fiche_de_source(trouvee, releve)
+        )
 
 
 @dataclass(frozen=True)
@@ -99,6 +148,8 @@ class ResultatSysteme:
     reponse: str
     faits: str
     outils_appeles: tuple[str, ...]
+    # La source que l'outil de liaison a retenue ("" = aucune demande).
+    source_a_lier: str = ""
 
     @property
     def concerne_le_systeme(self) -> bool:
@@ -106,7 +157,7 @@ class ResultatSysteme:
 
 
 def build_systeme_agent() -> Agent[SystemeDeps, str]:
-    """L'agent et ses cinq outils, un par sujet que le dépôt sait documenter."""
+    """L'agent et ses six outils : cinq sujets que le dépôt documente, et la liaison."""
     agent: Agent[SystemeDeps, str] = Agent(deps_type=SystemeDeps, output_type=str)
 
     @agent.system_prompt
@@ -149,6 +200,21 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
             "schema_d_une_source",
             introspection.decrire_le_schema(precision, _ontologies(precision, ctx.deps)),
         )
+
+    @agent.tool
+    def travailler_sur_une_source(ctx: RunContext[SystemeDeps], source: str) -> str:
+        """Retient une source comme source de TRAVAIL de la conversation, et l'accueille.
+
+        Appelle-le quand le message désigne une source pour y travailler et ne
+        demande rien sur son contenu. Le test, et lui seul : retire le nom de la
+        source du message ; s'il ne reste aucune question à laquelle une requête
+        ou un calcul répondrait, c'est cet outil. S'il en reste une — même
+        incidente, même polie — n'appelle AUCUN outil : réponds AUTRE et laisse
+        la question suivre son chemin.
+
+        `source` : le nom de la source, tel qu'il est écrit dans le catalogue.
+        """
+        return ctx.deps.retenir_la_liaison(source)
 
     @agent.tool
     def modeles_de_prediction(ctx: RunContext[SystemeDeps]) -> str:
@@ -208,6 +274,7 @@ def run_systeme(
     registre: Registry,
     request_limit: int,
     releves: RelevesDuCatalogue | None = None,
+    source_de_travail: str = "",
 ) -> ResultatSysteme:
     """Soumet la question à l'agent système et rend ce qu'il en a fait."""
     deps = SystemeDeps(
@@ -216,6 +283,7 @@ def run_systeme(
         registre=registre,
         question=question,
         releves=releves,
+        source_de_travail=source_de_travail,
     )
     run = build_systeme_agent().run_sync(
         question,
@@ -227,4 +295,5 @@ def run_systeme(
         reponse=run.output,
         faits="\n\n".join(deps.faits),
         outils_appeles=tuple(deps.outils_appeles),
+        source_a_lier=deps.source_a_lier,
     )
