@@ -29,6 +29,7 @@ modèle à chaque requête ordonnée du produit.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 # Ce qui ferme la liste du ORDER BY dans une requête de haut niveau.
 _FINS_DE_ORDER_BY = ("limit", "offset", "fetch", "for", "union", "intersect", "except", "window")
@@ -46,6 +47,71 @@ _ALIAS_NU = re.compile(r"^(.*[\w$)\"`])\s+(\"[^\"]+\"|`[^`]+`|[a-z_][\w$]*)\s*$"
 _TETE_DE_LISTE = re.compile(r"^\s*(?:distinct(?:\s+on\s*\([^)]*\))?|all)\s+", re.IGNORECASE)
 _REFERENCE_SIMPLE = re.compile(r"^[\w$]+(?:\.[\w$]+)*$")
 _ORDINAL = re.compile(r"^\d+$")
+
+
+@dataclass(frozen=True)
+class Classement:
+    """Ce sur quoi une requête ordonne son résultat, et dans quel sens.
+
+    ``grandeurs`` est écrite comme le modèle l'a écrite — ``total_energie_kwh``,
+    ``count(*)`` —, parce que c'est ce qui figure aussi en tête de colonne du
+    tableau rendu à l'utilisateur : la phrase et le tableau doivent se lire
+    ensemble.
+    """
+
+    grandeurs: tuple[str, ...]
+    decroissant: bool
+
+
+def grandeur_du_classement(sql: str) -> Classement | None:
+    """Ce sur quoi cette requête classe — ``None`` si elle ne classe rien.
+
+    Même lecture que ``grandeurs_non_projetees``, et pour servir la même
+    exigence par l'autre bout. Celle-là vérifie que la grandeur qui ordonne est
+    RENDUE ; celle-ci sert à la NOMMER dans la phrase.
+
+    Le défaut qu'elle répare : « qui charge le plus ? » et « où est-ce qu'on
+    recharge le plus ? » classent les stations sur l'énergie plutôt que sur le
+    nombre de sessions. Les deux lectures sont légitimes — la question ne dit
+    pas quelle grandeur — et les trois stations en tête sont d'ailleurs les
+    mêmes des deux côtés. Ce qui manquait n'est donc pas la bonne grandeur,
+    c'est de DIRE laquelle : la réponse multi-lignes était « 3 lignes
+    retournées — voir le tableau ci-dessous », qui ne dit pas sur quoi elle
+    classe, et deux réponses justes sur deux grandeurs différentes s'y lisent
+    à l'identique.
+
+    Comme sa voisine, elle ne regarde ni la question ni la langue : une
+    propriété du SQL produit. Et comme elle, elle ne lit que le niveau zéro —
+    un ``ORDER BY`` de sous-requête ou de fonction de fenêtre vit entre
+    parenthèses et n'ordonne pas le résultat rendu.
+    """
+    if not sql or not sql.strip():
+        return None
+    masque = _masquer(sql)
+    profondeurs = _profondeurs(masque)
+    debut = _dernier_au_niveau_zero(_MOT_ORDER_BY, masque, profondeurs)
+    if debut is None:
+        return None
+    termes = _liste_de_tri(sql, masque, profondeurs, debut)
+    grandeurs = tuple(ecrit for ecrit, _ in termes if ecrit.strip())
+    if not grandeurs:
+        return None
+    decroissant = _decroissant(sql, masque, profondeurs, debut)
+    return Classement(grandeurs=grandeurs, decroissant=decroissant)
+
+
+def _decroissant(sql: str, masque: str, profondeurs: list[int], debut: int) -> bool:
+    """Le PREMIER terme du ORDER BY porte-t-il ``DESC`` ?
+
+    Le premier et lui seul : c'est lui qui décide de la tête du palmarès, et
+    c'est de la tête qu'on parle. Le défaut d'un ``ORDER BY`` sans mention est
+    croissant en SQL, et donc ici.
+    """
+    apres = debut + len(_MOT_ORDER_BY.match(masque, debut).group(0))  # type: ignore[union-attr]
+    arret = _premier_au_niveau_zero(_FIN_DE_LISTE, masque, profondeurs, apres, len(masque))
+    borne = arret if arret is not None else len(masque)
+    premier = _decouper(sql[apres:borne], masque[apres:borne])
+    return bool(premier) and re.search(r"\bdesc\b", premier[0][1], re.IGNORECASE) is not None
 
 
 def grandeurs_non_projetees(sql: str) -> list[str]:

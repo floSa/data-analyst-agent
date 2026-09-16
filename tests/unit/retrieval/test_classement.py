@@ -11,7 +11,10 @@ aller-retour de modèle sur chaque requête ordonnée du produit.
 
 import pytest
 
-from data_analyst_agent.agents.retrieval.classement import grandeurs_non_projetees
+from data_analyst_agent.agents.retrieval.classement import (
+    grandeur_du_classement,
+    grandeurs_non_projetees,
+)
 
 # --- ce qui doit être signalé ------------------------------------------------
 
@@ -151,3 +154,81 @@ def test_un_select_posterieur_au_order_by_ne_decrit_pas_les_colonnes_rendues():
     assert grandeurs_non_projetees("SELECT code FROM t ORDER BY total LIMIT (SELECT 1)") == [
         "total"
     ]
+
+
+# --- sur QUOI la requête classe, pour le dire à l'utilisateur ----------------
+#
+# La même lecture du SQL, servie par l'autre bout. ``grandeurs_non_projetees``
+# vérifie que la grandeur qui ordonne est RENDUE ; ``grandeur_du_classement``
+# sert à la NOMMER dans la phrase, parce que « 3 lignes retournées — voir le
+# tableau ci-dessous » ne dit pas sur quoi il classe, et que deux réponses
+# justes sur deux grandeurs différentes s'y lisaient à l'identique.
+
+
+@pytest.mark.parametrize(
+    ("sql", "grandeurs", "decroissant"),
+    [
+        # Les deux lectures légitimes de « qui charge le plus ? », côte à côte.
+        (
+            "SELECT code, COUNT(*) AS nombre_sessions FROM t GROUP BY code "
+            "ORDER BY nombre_sessions DESC LIMIT 3",
+            ("nombre_sessions",),
+            True,
+        ),
+        (
+            "SELECT code, SUM(e) AS total_energie_kwh FROM t GROUP BY code "
+            "ORDER BY total_energie_kwh DESC LIMIT 3",
+            ("total_energie_kwh",),
+            True,
+        ),
+        # Un ORDER BY sans mention est CROISSANT en SQL, et donc ici.
+        ("SELECT code FROM t ORDER BY code", ("code",), False),
+        ("SELECT code FROM t ORDER BY code ASC", ("code",), False),
+        # Plusieurs termes : tous nommés, et c'est le PREMIER qui décide du sens,
+        # parce que c'est lui qui décide de la tête du palmarès.
+        ("SELECT a, b FROM t ORDER BY a DESC, b ASC", ("a", "b"), True),
+        ("SELECT a, b FROM t ORDER BY a ASC, b DESC", ("a", "b"), False),
+        # Une expression non triviale est rendue telle qu'elle est ÉCRITE : c'est
+        # ce qui figure en tête de colonne du tableau, et la phrase et le tableau
+        # doivent se lire ensemble.
+        (
+            "SELECT nom, SUM(x)/COUNT(*) FROM t GROUP BY nom ORDER BY SUM(x)/COUNT(*) DESC",
+            ("SUM(x)/COUNT(*)",),
+            True,
+        ),
+        # `ORDER BY 2` DÉSIGNE une colonne projetée : la requête classe bel et
+        # bien, et l'ordinal est ce que le modèle a écrit.
+        ("SELECT a, n FROM t ORDER BY 2 DESC", ("2",), True),
+    ],
+)
+def test_la_grandeur_qui_classe_est_lue_sur_le_sql(sql, grandeurs, decroissant):
+    classement = grandeur_du_classement(sql)
+    assert classement is not None
+    assert classement.grandeurs == grandeurs
+    assert classement.decroissant is decroissant
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "",
+        "   ",
+        "SELECT * FROM t",
+        "SELECT a FROM t WHERE b = 1",
+        # Un ORDER BY de fonction de fenêtre n'ordonne pas le résultat RENDU : il
+        # vit entre parenthèses, et le tableau n'en est pas classé.
+        "SELECT a, row_number() OVER (ORDER BY b DESC) AS rang FROM t",
+        # Un ORDER BY de sous-requête non plus.
+        "SELECT a FROM (SELECT a FROM t ORDER BY b) AS s",
+        # Ni un ORDER BY caché dans une chaîne ou un commentaire.
+        "SELECT a FROM t -- ORDER BY b",
+        "SELECT a FROM t WHERE nom = 'ORDER BY b'",
+        # Un ORDER BY dont la liste ne contient QUE du commentaire. Le SGBD
+        # refusera cette requête ; ce module n'est pas là pour le devancer, et
+        # il ne doit surtout pas nommer une grandeur qui n'existe pas.
+        "SELECT a FROM t ORDER BY /* rien */ LIMIT 1",
+        "SELECT a FROM t ORDER BY -- rien\nLIMIT 1",
+    ],
+)
+def test_une_requete_qui_ne_classe_rien_ne_nomme_aucune_grandeur(sql):
+    assert grandeur_du_classement(sql) is None

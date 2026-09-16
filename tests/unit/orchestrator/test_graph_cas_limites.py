@@ -308,6 +308,52 @@ def test_resultat_multi_lignes_tronque_le_dit(mini_csv: Path, registry: Registry
     assert "tronqué par la limite de lignes" in reponse.answer
 
 
+def test_un_resultat_classe_dit_sur_quoi_il_classe(mini_csv: Path, registry: Registry):
+    """Un palmarès rendu « 3 lignes retournées » ne dit pas ce qu'il a classé.
+
+    Le défaut mesuré : « qui charge le plus ? » classe les stations sur
+    l'énergie, « le top 3 des stations » sur le nombre de sessions, les deux
+    lectures sont légitimes — et les deux réponses se lisaient à l'identique.
+    La grandeur est lue sur le SQL EXÉCUTÉ, jamais sur la question : la même
+    propriété vérifiable que la projection du ORDER BY, servie par l'autre bout.
+    """
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [
+                tool_call(
+                    "run_sql",
+                    {"query": "SELECT sexe, count(*) AS n FROM mini GROUP BY sexe ORDER BY n DESC"},
+                ),
+                text("Voici."),
+            ],
+        )
+    )
+
+    reponse = orchestrateur(
+        llm,
+        catalog=Catalog(sources=[FileSource(name="mini", path=mini_csv)]),
+        registry=registry,
+    ).ask("les plus nombreux d'abord")
+
+    assert reponse.error is None
+    assert "2 lignes retournées, classées par `n` (ordre décroissant)" in reponse.answer
+
+
+def test_un_resultat_non_classe_ne_parle_pas_de_classement(mini_csv: Path, registry: Registry):
+    """Le contre-cas : sans ORDER BY, la phrase est celle d'avant, au mot près."""
+    reponse = orchestrateur(
+        requete_sur("mini"),
+        catalog=Catalog(sources=[FileSource(name="mini", path=mini_csv)]),
+        registry=registry,
+    ).ask("Donne-moi les lignes")
+
+    assert "4 lignes retournées — voir le tableau ci-dessous." in reponse.answer
+    assert "classées par" not in reponse.answer
+
+
 # --- prédiction en lot ----------------------------------------------------------
 
 
