@@ -1345,17 +1345,59 @@ class Orchestrator:
             return liaison
         outils = ", ".join(resultat.outils_appeles)
         defaut = introspection.defaut_de_fondation(resultat.reponse, resultat.faits)
-        if defaut:
-            return {
-                "system": resultat.faits,
-                "trace": [
-                    self._step("system", f"{outils} — faits servis tels quels ({defaut})", start)
-                ],
-            }
-        return {
-            "system": resultat.reponse,
-            "trace": [self._step("system", f"{outils} — formulé par le modèle", start)],
-        }
+        servie = resultat.faits if defaut else resultat.reponse
+        detail = (
+            f"{outils} — faits servis tels quels ({defaut})"
+            if defaut
+            else (f"{outils} — formulé par le modèle")
+        )
+        retenue, avis = self._lier_la_source_nommee(state)
+        if avis:
+            servie = f"{avis}\n\n{servie}"
+        rendu: dict = {"system": servie, "trace": [self._step("system", detail, start)]}
+        if retenue:
+            rendu["source_out"] = retenue
+        return rendu
+
+    def _lier_la_source_nommee(self, state: OrchestratorState) -> tuple[str, str]:
+        """La source que le message NOMME est retenue, même quand c'est l'agent
+        système qui répond — et c'est un trou qu'on bouche, pas une règle neuve.
+
+        ``_regle_source_de_la_conversation`` lie déjà la source qu'un message
+        nomme, et ``_lier_la_source`` en annonce la bascule. Les deux vivent
+        dans le nœud du PLAN. Or l'agent système court-circuite ce nœud : un
+        message qui nomme une source et pose une question à laquelle on répond
+        en LISANT la configuration n'atteignait donc aucune des deux, et
+        repartait sans que rien ne soit lié.
+
+        Mesuré, 3 tirages sur 3, sur « Je souhaiterais consulter la source
+        facturation ; peux-tu m'indiquer ce qu'on y trouve ? » : la réponse est
+        juste — les trois feuilles et leurs colonnes, ce qui est exactement ce
+        qu'on y trouve — et la source reste **déliée**. La question suivante du
+        même fil, « combien de factures ? », recevait alors l'inventaire des
+        cinq sources : le tour d'après était perdu (`docs/sources-de-demonstration.md`,
+        dette D).
+
+        C'est la réponse à l'arbitrage : ce n'est pas « accuser réception » OU
+        « répondre », c'est les deux, et la seconde moitié ne coûte rien —
+        la désignation est lue dans le texte par ``source_nommee``, sans le
+        moindre aller-retour.
+
+        Les mêmes garde-fous que dans le nœud du plan, et pour les mêmes
+        raisons : hors conversation (``source_in is None``) il n'y a pas de fil
+        à lier ; une source **imposée** par l'appelant est un paramètre d'API et
+        ne lie rien ; et une bascule est **annoncée**, parce que ce qui est
+        dangereux n'est pas de changer de source mais de changer sans le dire.
+        """
+        if state.get("source_in") is None or state.get("source_name"):
+            return "", ""
+        nommee = introspection.source_nommee(state["question"], self.catalog)
+        precedente = state.get("source_in") or ""
+        if not nommee or nommee == precedente:
+            return "", ""
+        if not precedente:
+            return nommee, f"Je travaille sur la source `{nommee}`."
+        return nommee, f"Je passe sur la source `{nommee}` — on travaillait sur `{precedente}`."
 
     def _liaison_demandee(
         self, state: OrchestratorState, resultat: ResultatSysteme, start: float

@@ -487,3 +487,82 @@ def test_l_outil_de_schema_annonce_qu_il_porte_le_SENS_et_pas_que_la_structure()
     # et la structure reste annoncée : le correctif ajoute, il ne remplace pas
     assert "colonnes" in description.lower()
     assert "types" in description.lower()
+
+
+def test_l_agent_systeme_lie_la_source_que_le_message_nomme(mini_csv: Path, registre: Registry):
+    """La dette D, tranchée : répondre ET lier, en un seul tour.
+
+    ``_regle_source_de_la_conversation`` lie la source qu'un message nomme,
+    mais elle vit dans le nœud du PLAN — que l'agent système court-circuite.
+    Une phrase qui nomme une source et demande ce qu'elle contient recevait
+    donc une bonne réponse sans que rien ne soit retenu, et la question
+    SUIVANTE du même fil repartait sans source. Mesuré 3 fois sur 3.
+    """
+    llm = agent_systeme(
+        "schema_d_une_source", {"cible": "ventes"}, "La source `ventes` porte la table `ventes`."
+    )
+    catalogue = Catalog(sources=[FileSource(name="ventes", path=mini_csv)])
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "je voudrais consulter la source ventes ; qu'est-ce qu'on y trouve ?",
+        conversation_id="fil",
+        # Comme l'API : TOUJOURS une chaîne, jamais None. Avec None il n'y a pas
+        # de fil à lier, et le banc fabriquerait un défaut que le produit n'a pas
+        # (cf. le piège de protocole de `docs/sources-de-demonstration.md`).
+        source_de_travail="",
+    )
+
+    assert reponse.source_de_travail == "ventes"
+    assert "Je travaille sur la source `ventes`." in reponse.answer
+
+
+def test_une_bascule_par_l_agent_systeme_est_ANNONCEE(
+    tmp_path: Path, mini_csv: Path, registre: Registry
+):
+    """Ce qui est dangereux n'est pas de changer de source, c'est de le taire.
+
+    Même règle que ``_lier_la_source`` dans le nœud du plan : la bascule est
+    mise en tête de la réponse, et elle nomme la source QUITTÉE — sans quoi
+    l'utilisateur lit une réponse juste en croyant qu'elle porte sur ses
+    données précédentes.
+    """
+    autre = tmp_path / "autre.csv"
+    autre.write_text("a,b\n1,2\n", encoding="utf-8")
+    llm = agent_systeme(
+        "schema_d_une_source", {"cible": "autre"}, "La source `autre` porte la table `autre`."
+    )
+    catalogue = Catalog(
+        sources=[FileSource(name="ventes", path=mini_csv), FileSource(name="autre", path=autre)]
+    )
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "et dans autre, il y a quelles colonnes ?",
+        conversation_id="fil",
+        source_de_travail="ventes",
+    )
+
+    assert reponse.source_de_travail == "autre"
+    assert "Je passe sur la source `autre` — on travaillait sur `ventes`." in reponse.answer
+
+
+def test_une_source_IMPOSEE_par_l_appelant_ne_lie_rien_depuis_l_agent_systeme(
+    mini_csv: Path, registre: Registry
+):
+    """Le paramètre `source` d'``ask()`` est une contrainte d'API pour UN tour.
+
+    Même garde-fou que dans le nœud du plan : ce n'est pas le choix de
+    l'utilisateur, et il ne doit pas s'inscrire dans le fil.
+    """
+    llm = agent_systeme(
+        "schema_d_une_source", {"cible": "ventes"}, "La source `ventes` porte la table `ventes`."
+    )
+    catalogue = Catalog(sources=[FileSource(name="ventes", path=mini_csv)])
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "qu'est-ce qu'on trouve dans ventes ?",
+        conversation_id="fil",
+        source_de_travail="",
+        source="ventes",
+    )
+
+    assert "Je travaille sur la source" not in reponse.answer
