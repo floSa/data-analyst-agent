@@ -1511,8 +1511,8 @@ class Orchestrator:
             source = catalogue.sources[0]
         if source is None:
             raise KeyError("aucune source à monter pour rejouer ce code")
-        with self._decor_de_donnees(state, source) as (data_files, data_context, _avis):
-            return run_analysis(
+        with self._decor_de_donnees(state, source) as (data_files, data_context, avis):
+            resultat = run_analysis(
                 modification,
                 data_files=data_files,
                 data_context=data_context,
@@ -1526,6 +1526,12 @@ class Orchestrator:
                 # celui d'avant.
                 dictionary=source.dictionary_text(),
             )
+        # La coupe est une propriété du DÉCOR, et le décor meurt avec le bloc
+        # ci-dessus. On l'attache donc au résultat, qui va traverser l'agent de
+        # rappel avant d'être rendu — c'est le seul chemin par lequel elle
+        # atteint la réponse. Le premier jet, lui, a son avis sous la main
+        # (``_analysis_node``) et n'a rien à faire voyager.
+        return resultat.model_copy(update={"truncation_notice": avis}) if avis else resultat
 
     @staticmethod
     def _lire_le_code(state: OrchestratorState, artefact: WorkspaceArtifact) -> str:
@@ -1712,7 +1718,12 @@ class Orchestrator:
             detail += f" — retenu sous le nom {artefact.name}"
         # Un rejeu réécrit du code, donc il a lu le dictionnaire, donc il a pu
         # le lire amputé : l'avis remonte ici comme il remonte du premier jet.
+        # Et il a tourné sur les MÊMES CSV matérialisés, donc sur la même
+        # tranche : cet avis-là remonte aussi, et il ne remontait pas. Le tour
+        # d'avant disait « sur les 10 000 relevés », le rejeu rendait 290 sans
+        # un mot — le même chiffre, redevenu muet en changeant de nœud.
         mesures = {"truncated": False, "truncation": ""}
+        self._ajoute_avis(mesures, resultat.truncation_notice)
         self._ajoute_avis(mesures, resultat.dictionary_notice)
         return {
             "plan": Plan(capability="analyze", source=source or None),
@@ -1756,36 +1767,67 @@ class Orchestrator:
         """Persiste un tableau non vide dans l'espace de travail de la conversation."""
         workspace = state.get("workspace")
         if workspace is not None and result is not None and result.rows:
-            workspace.save_table(result.columns, result.rows, state["question"])
+            workspace.save_table(
+                result.columns, result.rows, state["question"], tronque=result.truncated
+            )
 
     @staticmethod
     def _mount_workspace(
         state: OrchestratorState, data_files: dict[Path, str], data_context: str
-    ) -> str:
-        """Ajoute les CSV mémorisés aux fichiers montés et les décrit au code généré."""
+    ) -> tuple[str, list[str]]:
+        """Ajoute les CSV mémorisés aux fichiers montés et les décrit au code généré.
+
+        Rend aussi les NOMS de ceux qui sont eux-mêmes une tranche. Un tableau
+        intermédiaire est le produit d'une requête, et une requête est coupée à
+        ``retrieval_max_rows`` : le CSV mémorisé peut donc être un échantillon,
+        et rien dans le CSV ne le dit. Un tour qui le remonte pour y compter
+        recommence exactement le défaut que la matérialisation avait, avec un
+        tour d'écart en plus — c'est la même coupe, vue au tour suivant.
+        """
         workspace = state.get("workspace")
         if workspace is None or not workspace.injected:
-            return data_context
+            return data_context, []
         for host_path, name in workspace.sandbox_files().items():
             data_files.setdefault(host_path, name)
         lines = [
-            f"- /data/{a.file} ({a.row_count} lignes ; colonnes : {', '.join(a.columns)})"
+            f"- /data/{a.file} ({a.row_count} lignes{' ; TRONQUÉ' if a.tronque else ''}"
+            f" ; colonnes : {', '.join(a.columns)})"
             for a in workspace.injected
         ]
         extra = "Objets intermédiaires de la conversation (réutilisables) :\n" + "\n".join(lines)
-        return f"{data_context}\n\n{extra}" if data_context else extra
+        contexte = f"{data_context}\n\n{extra}" if data_context else extra
+        return contexte, [a.name for a in workspace.injected if a.tronque]
+
+    # Ce qu'on dit d'une grandeur calculée sur une TRANCHE, d'où qu'elle vienne.
+    #
+    # UN seul gabarit pour les deux coupes qui parlent d'ici — la table
+    # matérialisée pour l'analyse, et le tableau intermédiaire d'un tour
+    # précédent — parce que c'est UNE seule propriété : *une grandeur qui sort
+    # d'une tranche porte la mention de sa tranche jusque dans la réponse*.
+    #
+    # La troisième coupe du socle, `retrieval_max_rows`, n'est PAS ici, et c'est
+    # mesuré : la synthèse la dit déjà, dans la même phrase que le tableau
+    # (« (résultat tronqué par la limite de lignes) »). Un second message au
+    # même endroit serait du bruit, et aucune campagne n'a montré de chiffre
+    # muet sur ce chemin. Elle revient en revanche ci-dessous, au tour où elle
+    # devient dangereuse : quand un tableau gardé est REMONTÉ pour qu'on y
+    # compte, et que la phrase de la synthèse est loin derrière.
+    _COUPE = (
+        "Données tronquées : {quoi} coupée(s) à {plafond} lignes (réglage "
+        "{reglage}) — tout agrégat qui porte sur elles (somme, moyenne, "
+        "comptage) décrit cet échantillon, pas {entier}."
+    )
 
     def _avis_de_troncature(self, tables: list[str]) -> str:
         """Ce qu'on dit d'une table matérialisée AMPUTÉE ("" si rien n'a été coupé).
 
-        ``analysis_table_max_rows`` est le seul endroit du code qui livre à
-        l'analyse une donnée incomplète, et il le fait sans laisser de trace
-        dans ce qu'il livre : un ``SELECT *`` coupé à 10 000 lignes donne un CSV
-        parfaitement lisible où rien ne dit qu'il manque des lignes. Le code
-        généré y calcule alors une somme, une moyenne ou un comptage en le
-        prenant pour la table entière, et la réponse cite le chiffre sans
-        réserve. C'est le seul chemin de ce nœud qui produit un résultat FAUX au
-        lieu d'une erreur.
+        ``analysis_table_max_rows`` est l'endroit du code qui livre à l'analyse
+        une donnée incomplète, et il le fait sans laisser de trace dans ce qu'il
+        livre : un ``SELECT *`` coupé à 10 000 lignes donne un CSV parfaitement
+        lisible où rien ne dit qu'il manque des lignes. Le code généré y calcule
+        alors une somme, une moyenne ou un comptage en le prenant pour la table
+        entière, et la réponse cite le chiffre sans réserve. C'est le seul
+        chemin de ce nœud qui produit un résultat FAUX au lieu d'une erreur.
 
         Un seul message pour deux destinataires : le contexte du code généré,
         pour qu'il sache sur quoi il travaille, et la trace — d'où la réponse
@@ -1794,11 +1836,22 @@ class Orchestrator:
         """
         if not tables:
             return ""
-        return (
-            f"Données tronquées : {', '.join(tables)} coupée(s) à "
-            f"{self.settings.analysis_table_max_rows} lignes (réglage "
-            "DAA_ANALYSIS_TABLE_MAX_ROWS) — tout agrégat qui porte sur elles "
-            "(somme, moyenne, comptage) décrit cet échantillon, pas la table entière."
+        return self._COUPE.format(
+            quoi=", ".join(tables),
+            plafond=self.settings.analysis_table_max_rows,
+            reglage="DAA_ANALYSIS_TABLE_MAX_ROWS",
+            entier="la table entière",
+        )
+
+    def _avis_de_tableaux_tronques(self, noms: list[str]) -> str:
+        """Ce qu'on dit d'un tableau intermédiaire qui est lui-même une tranche."""
+        if not noms:
+            return ""
+        return self._COUPE.format(
+            quoi=", ".join(noms),
+            plafond=self.settings.retrieval_max_rows,
+            reglage="DAA_RETRIEVAL_MAX_ROWS",
+            entier="le résultat entier de la requête qui les a produits",
         )
 
     @contextmanager
@@ -1848,7 +1901,15 @@ class Orchestrator:
                     data_context = f"{data_context}\n\n{avis}"
             # objets intermédiaires de la conversation : montés aussi pour que le
             # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
-            data_context = self._mount_workspace(state, data_files, data_context)
+            data_context, tronques = self._mount_workspace(state, data_files, data_context)
+            # Les deux coupes se CUMULENT, et elles ne sont pas la même : une
+            # table de la source amputée à la matérialisation, et un tableau
+            # d'un tour précédent qui était déjà un extrait. Un tour peut porter
+            # les deux, et l'utilisateur a besoin des deux.
+            avis_des_tableaux = self._avis_de_tableaux_tronques(tronques)
+            if avis_des_tableaux:
+                data_context = f"{data_context}\n\n{avis_des_tableaux}"
+                avis = " ".join(a for a in (avis, avis_des_tableaux) if a)
             yield data_files, data_context, avis
 
     def _analysis_node(self, state: OrchestratorState) -> dict:

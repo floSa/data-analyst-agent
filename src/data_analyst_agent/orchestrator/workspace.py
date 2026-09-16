@@ -290,6 +290,13 @@ class WorkspaceArtifact(BaseModel):
     question: str  # la question qui l'a produit (aide le planificateur)
     description: str = ""  # une ligne, ce qui permet de le reconnaître
     source: str = ""  # la source interrogée, pour rejouer un code sur le même décor
+    # Ce tableau est-il lui-même une TRANCHE ? Une requête est coupée à
+    # `retrieval_max_rows`, et le CSV qu'on en garde ne porte aucune marque de
+    # ce qui manque. Un tour ultérieur qui le remonte pour y compter refait le
+    # même faux pas, un tour plus tard et sans que rien n'ait changé de place.
+    # Un manifeste écrit avant ce champ ne le porte pas et vaut `False` : c'est
+    # exact, on ne savait pas, et on ne prétend pas le contraire.
+    tronque: bool = False
 
     @property
     def est_un_tableau(self) -> bool:
@@ -645,16 +652,25 @@ class ConversationWorkspace:
             self._apply_limits()
         return artifact
 
-    def save_table(self, columns: list[str], rows: list[list], question: str) -> WorkspaceArtifact:
-        """Écrit un tableau en CSV, l'ajoute au manifeste et le renvoie."""
+    def save_table(
+        self, columns: list[str], rows: list[list], question: str, *, tronque: bool = False
+    ) -> WorkspaceArtifact:
+        """Écrit un tableau en CSV, l'ajoute au manifeste et le renvoie.
+
+        ``tronque`` dit que la requête qui l'a produit a été coupée. Il est
+        retenu et pas seulement affiché : c'est au tour SUIVANT qu'il sert, et
+        le tour suivant n'a plus le ``QueryResult`` sous la main.
+        """
         table = pd.DataFrame(rows, columns=columns)
+        coupe = " ; tronqué" if tronque else ""
         return self._enregistrer(
             KIND_TABLE,
             lambda chemin: table.to_csv(chemin, index=False),
             columns=list(columns),
             row_count=len(rows),
             question=question,
-            description=f"tableau de {len(rows)} ligne(s) ; colonnes : {', '.join(columns)}",
+            tronque=tronque,
+            description=f"tableau de {len(rows)} ligne(s){coupe} ; colonnes : {', '.join(columns)}",
         )
 
     def save_code(

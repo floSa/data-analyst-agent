@@ -28,9 +28,19 @@ from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
+from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from data_analyst_agent.sandbox.client import SandboxResult
 from helpers.doubles import FakeClassifier, ScriptedSandbox
-from helpers.scripted_llm import ANALYSIS, PLANNER, SYNTHESIS, ScriptedLLM, plan_response, text
+from helpers.scripted_llm import (
+    ANALYSIS,
+    PLANNER,
+    RAPPEL,
+    SYNTHESIS,
+    ScriptedLLM,
+    plan_response,
+    text,
+    tool_call,
+)
 
 REGISTRY_YAML = """
 models:
@@ -203,4 +213,93 @@ def test_aucun_avis_quand_rien_n_est_coupe(registry: Registry, monkeypatch):
     etape = next(s for s in reponse.trace if s.node == "analysis")
     assert etape.truncated is False
     assert etape.truncation == ""
+    assert reponse.answer == "Voici l'analyse."
+
+
+# --- la tranche se qualifie elle-même, PARTOUT où elle sort ---------------------
+#
+# Trois coupes, une seule propriété : *une grandeur qui sort d'une tranche porte
+# la mention de sa tranche jusque dans la réponse*. Une seule des trois la
+# tenait, et c'est ce qui rendait le trou invisible — la première suffisait à
+# faire croire que la propriété l'était.
+
+
+def test_un_REJEU_sur_une_table_coupee_le_dit_aussi(registry: Registry, monkeypatch, tmp_path):
+    """Le même chiffre, redevenu muet en changeant de nœud — mesuré 3/3 sur vLLM.
+
+    Le tour 1 trace une figure sur `sessions` coupée : la réponse dit « sur les
+    10 000 relevés » et porte l'avis. Le tour 2 demande de la remettre en bleu,
+    et c'est le nœud de RAPPEL qui répond — il rejoue le code sur le MÊME décor,
+    donc sur la même tranche, et rendait 290 relevés sur 547 200 sans un mot.
+
+    L'avis ne pouvait pas remonter : il naît dans le décor, qui meurt avec le
+    bloc qui le monte, et le rejeu traverse l'agent de rappel avant d'être
+    rendu. Il voyage désormais avec le résultat d'analyse
+    (``AnalysisResult.truncation_notice``).
+    """
+    base_sql(monkeypatch, {"ventes": [(i, "x") for i in range(1, 6)]})
+    espace = ConversationWorkspace(tmp_path, "fil")
+    espace.save_code("print('rouge')", "trace les ventes", source="base", figures=1)
+    llm = (
+        ScriptedLLM()
+        .script(
+            RAPPEL,
+            [
+                tool_call("rejouer_un_code", {"nom": "graphique_1", "modification": "en bleu"}),
+                text("Le graphique est en bleu : 2 ventes."),
+            ],
+        )
+        .script(ANALYSIS, [text("```python\nprint('bleu')\n```")])
+        .script(SYNTHESIS, [text("Voici le graphique repris.")])
+    )
+    orch = orchestrateur(llm, registry, analysis_table_max_rows=2, workspace_dir=tmp_path)
+
+    reponse = orch.ask("remets-le en bleu", conversation_id="fil")
+
+    etape = next(s for s in reponse.trace if s.node == "rappel")
+    assert etape.truncated is True
+    assert "ventes" in etape.truncation
+    assert "DAA_ANALYSIS_TABLE_MAX_ROWS" in reponse.answer
+
+
+def test_un_TABLEAU_INTERMEDIAIRE_coupe_reste_une_tranche_au_tour_suivant(
+    registry: Registry, monkeypatch, tmp_path
+):
+    """La même coupe, vue un tour plus tard — et personne ne la regardait là.
+
+    Le tableau d'un tour précédent est le produit d'une requête, donc il peut
+    être un extrait ; le CSV qu'on en garde ne porte aucune marque. Un tour
+    ultérieur qui le remonte pour y compter recommence le défaut, sans que rien
+    n'ait changé de place.
+    """
+    espace = ConversationWorkspace(tmp_path, "fil")
+    espace.save_table(["n"], [[1], [2]], "les ventes", tronque=True)
+    base_sql(monkeypatch, {"ventes": [(1, "a")]})
+    espion = AnalyseObservee()
+    monkeypatch.setattr("data_analyst_agent.orchestrator.graph.run_analysis", espion)
+    llm = llm_danalyse()
+    orch = orchestrateur(llm, registry, retrieval_max_rows=2, workspace_dir=tmp_path)
+
+    reponse = orch.ask("trace ce tableau", conversation_id="fil")
+
+    assert "TRONQUÉ" in espion.data_context  # le code généré sait sur quoi il travaille
+    etape = next(s for s in reponse.trace if s.node == "analysis")
+    assert "resultat_1" in etape.truncation
+    assert "DAA_RETRIEVAL_MAX_ROWS" in reponse.answer
+
+
+def test_un_tableau_intermediaire_ENTIER_ne_se_qualifie_de_rien(
+    registry: Registry, monkeypatch, tmp_path
+):
+    """Le pendant obligatoire : accuser un tableau complet ferait douter d'un chiffre juste."""
+    espace = ConversationWorkspace(tmp_path, "fil")
+    espace.save_table(["n"], [[1], [2]], "les ventes")
+    base_sql(monkeypatch, {"ventes": [(1, "a")]})
+    llm = llm_danalyse()
+    orch = orchestrateur(llm, registry, workspace_dir=tmp_path)
+
+    reponse = orch.ask("trace ce tableau", conversation_id="fil")
+
+    etape = next(s for s in reponse.trace if s.node == "analysis")
+    assert etape.truncated is False
     assert reponse.answer == "Voici l'analyse."

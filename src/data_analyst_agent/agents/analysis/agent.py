@@ -52,6 +52,14 @@ class AnalysisResult(BaseModel):
     # jusqu'à l'utilisateur par la trace : un code écrit sans la section qui
     # porte la règle rend un chiffre faux, et il le rend sans bruit.
     dictionary_notice: str = ""
+    # Ce qui a été coupé des DONNÉES montées ("" = rien). Il n'est pas rempli
+    # ici — la coupe est une propriété du décor, que seul le graphe connaît —
+    # mais il voyage avec le résultat, et c'est tout son intérêt : un REJEU
+    # traverse l'agent de rappel avant d'être rendu, et le nœud qui le rend n'a
+    # plus le décor sous la main. Sans ce champ, la mention de la tranche se
+    # perdait entre les deux, et le tour rendait 290 relevés sur 547 200 sans
+    # rien en dire (mesuré 3/3, dette `H`).
+    truncation_notice: str = ""
 
     @property
     def succeeded(self) -> bool:
