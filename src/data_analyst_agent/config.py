@@ -69,6 +69,25 @@ class Settings(BaseSettings):
     retrieval_max_rows: int = 200
     # Borne d'allers-retours LLM (tools compris) : coupe les boucles infinies.
     retrieval_request_limit: int = 10
+    # Plafond, EN CARACTÈRES, du dictionnaire de source injecté dans le prompt
+    # de l'agent SQL (cf. `agents/retrieval/dictionnaire`). Le dictionnaire est
+    # du Markdown libre : celui d'un client peut peser dix fois celui de la
+    # démonstration, et le prompt de cet agent repart en ENTIER à chaque
+    # aller-retour de sa boucle de correction — c'est le prompt du système qui
+    # se paie le plus de fois par tour.
+    #
+    # 8 000 est choisi AU-DESSUS du plus gros dictionnaire du catalogue de
+    # démonstration (5 626 caractères, `exploitation`) : les cinq passent
+    # entiers, et la coupe reste un filet plutôt qu'un régime. Mesuré contre le
+    # tokeniseur de vLLM, 8 000 caractères de Markdown français valent ~2 500
+    # tokens — le plafond borne donc le prompt de cet agent à ~3 350 tokens,
+    # pour une fenêtre servie de 32 768.
+    #
+    # En caractères et non en tokens, comme `context_token_budget` compte des
+    # caractères : il n'y a pas de tokeniseur côté client, et en embarquer un
+    # ferait dépendre ce plafond du modèle servi.
+    # 0 = pas de plafond (le dictionnaire passe entier, quelle que soit sa taille).
+    retrieval_dictionary_max_chars: int = 8000
 
     # Relevé d'une source — volumétrie et période LUES dedans (cf.
     # `agents/retrieval/faits.py`). Quatre bornes, parce que sans elles un

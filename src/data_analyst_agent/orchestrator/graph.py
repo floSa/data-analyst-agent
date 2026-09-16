@@ -1636,16 +1636,25 @@ class Orchestrator:
         source = self._resolve_source(plan, self._effective_catalog(state))
         with closing(open_source(source)) as adapter:
             outcome = run_retrieval(
-                state["question"], adapter=adapter, model=self.model, settings=self.settings
+                state["question"],
+                adapter=adapter,
+                model=self.model,
+                settings=self.settings,
+                # Ce que la source DÉCLARE vouloir dire. Un tableau
+                # intermédiaire de la conversation n'en a pas — `dictionary`
+                # vaut alors `None` et le prompt est celui d'avant.
+                dictionary=source.dictionary_text(),
             )
         artifacts = [_table_artifact(outcome.result)] if outcome.result else []
         # mémorise le tableau produit pour le réutiliser aux tours suivants
         self._memorize(state, outcome.result)
         detail = outcome.sql or f"{len(outcome.executed)} requête(s), aucune n'a abouti"
+        mesures: dict = {"truncated": False, "truncation": ""}
+        self._ajoute_avis(mesures, outcome.dictionary_notice)
         return {
             "retrieval": outcome,
             "artifacts": artifacts,
-            "trace": [self._step("retrieval", detail, start)],
+            "trace": [self._step("retrieval", detail, start, **mesures)],
         }
 
     @staticmethod
@@ -1888,6 +1897,11 @@ class Orchestrator:
                 adapter=adapter,
                 model=self.model,
                 settings=self.settings,
+                # Même dictionnaire que pour une simple récupération : les
+                # lignes qui alimentent une prédiction sont choisies par du SQL,
+                # et un code mal filtré y fait le même dégât — en pire, puisque
+                # le chiffre faux ressort en prédiction et non en tableau.
+                dictionary=source.dictionary_text(),
             )
         if not retrieval.result or not retrieval.result.rows:
             return {

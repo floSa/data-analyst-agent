@@ -173,6 +173,35 @@ def test_la_sentinelle_de_duree_est_presente_et_documentee(catalogue):
     assert "-1" in catalogue.get("interventions").dictionary_text()
 
 
+def test_le_code_de_statut_dit_quel_filtre_pour_quelle_question(catalogue):
+    """Le dictionnaire a un SECOND lecteur : celui qui écrit le SQL.
+
+    Il a été écrit pour une personne. Depuis que son texte entre dans le prompt
+    de l'agent de récupération, il décide aussi de ce que la requête filtre — et
+    une ambiguïté qu'un humain levait tout seul devient un chiffre faux.
+
+    Mesuré : tant que le piège nº 1 énonçait « le nombre de recharges réelles
+    est `WHERE statut = 'T'` » en tête et rangeait le contre-cas dans un
+    paragraphe de fin, le modèle filtrait AUSSI les sommes d'énergie — 0 fois
+    sur 3 juste sur « quelle énergie totale a été délivrée ? », 1 730 823,72 au
+    lieu de 1 757 519,23 — et sur les deux moteurs. Trois formulations d'en-tête
+    successives n'y ont rien changé ; dire dans le dictionnaire QUEL FILTRE POUR
+    QUELLE QUESTION a suffi, 3/3 sur les deux moteurs.
+
+    Ce test tient les deux bords de cette précision. Il ne pèse pas une
+    tournure : il exige que le dictionnaire nomme le cas où l'on filtre ET le
+    cas où l'on ne filtre pas, sans quoi il ne lève plus l'ambiguïté.
+    """
+    texte = catalogue.get("exploitation").dictionary_text()
+    piege = texte[texte.index("### 1.") :]
+    assert "WHERE statut = 'T'" in piege, "le cas filtré n'est plus énoncé"
+    assert "AUCUN" in piege, "le cas NON filtré n'est plus énoncé aussi nettement"
+    # Les deux chiffres que l'ambiguïté fait diverger, l'un et l'autre présents :
+    # ce sont eux qui disent qu'on parle bien de deux mesures et pas d'une.
+    for chiffre in ("48 000", "42 281", "1 757 519,23", "1 730 823,72"):
+        assert chiffre in piege, f"{chiffre} n'est plus cité : la divergence ne se lit plus"
+
+
 # --------------------------------------------------------------------------
 # Ce que le socle lit vraiment dans les sources versionnées
 # --------------------------------------------------------------------------

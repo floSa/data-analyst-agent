@@ -112,3 +112,95 @@ def test_boucle_infinie_coupee_par_la_limite(adapter):
             model=model,
             settings=make_settings(retrieval_request_limit=4),
         )
+
+
+# --- le dictionnaire de la source, jusqu'à celui qui écrit le SQL ------------
+#
+# Le dictionnaire était servi à l'agent SYSTÈME et pas à celui-ci. Mesuré sur le
+# catalogue de démonstration, dans une même conversation et à un tour d'écart :
+# l'agent cite « seules les sessions au statut `T` ont abouti », puis écrit
+# `WHERE statut = 'E'` et rend 1 405 au lieu de 42 281 — sans exception et sans
+# log. Ces tests tiennent le chemin par lequel le texte arrive au prompt.
+
+DICO_DE_SOURCE = """\
+# Dictionnaire — `mini`
+
+## Les pièges de cette source
+
+`survie` vaut 1 pour un survivant. Les lignes à 0 ne sont PAS des survivants.
+"""
+
+
+def _prompt_systeme_vu(model_calls: list) -> str:
+    """Le prompt système effectivement envoyé au modèle, au premier appel."""
+    from pydantic_ai.messages import ModelRequest, SystemPromptPart
+
+    for message in model_calls[0]:
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, SystemPromptPart):
+                    return part.content
+    raise AssertionError("aucun prompt système")
+
+
+def _mouchard(reponses: list[list]):
+    """Un modèle scripté qui garde les messages qu'on lui a envoyés."""
+    vus: list = []
+    restantes = [ModelResponse(parts=parts) for parts in reponses]
+
+    def responder(messages, info):
+        vus.append(list(messages))
+        return restantes.pop(0)
+
+    return FunctionModel(responder), vus
+
+
+def test_le_dictionnaire_arrive_dans_le_prompt_de_l_agent_sql(adapter):
+    model, vus = _mouchard([[TextPart("ok")]])
+    run_retrieval(
+        "Combien de survivants ?",
+        adapter=adapter,
+        model=model,
+        settings=make_settings(),
+        dictionary=DICO_DE_SOURCE,
+    )
+    prompt = _prompt_systeme_vu(vus)
+    assert "Les lignes à 0 ne sont PAS des survivants" in prompt
+    # et la consigne qui en fait une règle, pas une note de bas de page
+    assert "il fait autorité" in prompt
+
+
+def test_sans_dictionnaire_le_prompt_est_celui_d_avant(adapter):
+    """Une source qui n'en déclare pas ne paie rien — `titanic` et `iris` en sont."""
+    from data_analyst_agent import prompts
+
+    model, vus = _mouchard([[TextPart("ok")]])
+    run_retrieval("Combien ?", adapter=adapter, model=model, settings=make_settings())
+    attendu = prompts.render(prompts.RETRIEVAL, dialect=adapter.dialect)
+    assert _prompt_systeme_vu(vus) == attendu
+
+
+def test_un_dictionnaire_trop_long_est_coupe_et_l_amputation_remonte(adapter):
+    """L'utilisateur doit l'apprendre de l'application, pas de la qualité des réponses."""
+    model, vus = _mouchard([[TextPart("ok")]])
+    outcome = run_retrieval(
+        "Combien ?",
+        adapter=adapter,
+        model=model,
+        settings=make_settings(retrieval_dictionary_max_chars=60),
+        dictionary=DICO_DE_SOURCE,
+    )
+    assert outcome.dictionary_notice
+    assert "Les pièges de cette source" in outcome.dictionary_notice
+    assert "ATTENTION" in _prompt_systeme_vu(vus)
+
+
+def test_un_dictionnaire_entier_ne_signale_rien(adapter):
+    outcome = run_retrieval(
+        "Combien ?",
+        adapter=adapter,
+        model=scripted_model([[TextPart("ok")]]),
+        settings=make_settings(),
+        dictionary=DICO_DE_SOURCE,
+    )
+    assert outcome.dictionary_notice == ""
