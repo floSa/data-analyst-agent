@@ -31,7 +31,7 @@ entre ce qu'il lit et ce qu'il croit, et c'est cet arbitrage qu'il rate. Un
 dictionnaire prescriptif — « pour compter les recharges, `WHERE statut = 'T'` ;
 pour sommer l'énergie, aucun filtre » — ne laisse rien à arbitrer.
 
-## Les six règles d'écriture
+## Les sept règles d'écriture
 
 ### 1. Une règle par défaut d'abord, ses exceptions ensuite — jamais l'inverse
 
@@ -43,7 +43,8 @@ de 1 757 519,23.
 
 Écris donc, dans cet ordre : la règle qui s'applique **par défaut**, puis
 **l'exception**, nommée comme telle, avec le mot de la question qui la
-déclenche.
+déclenche. Et lis la **règle 7** avant de choisir ce mot : nommer les mots
+déclencheurs est utile, et le faire mal fabrique une contradiction.
 
 ```markdown
 **Règle par défaut : AUCUN filtre sur `statut`.** Tout comptage, tout classement
@@ -111,6 +112,57 @@ une demi-règle est pire que pas de règle du tout. Mais si ton dictionnaire
 dépasse, ce sont les sections de fin qui sautent — et chez nous, les pièges sont
 en fin de document. Vérifie donc la taille, ou relève le plafond en connaissance
 de cause.
+
+### 7. Un mot qui déclenche une exception ne peut pas être le mot ORDINAIRE de la chose
+
+La règle 1 demande de nommer les mots de la question qui déclenchent
+l'exception. Cette règle-ci la borne, et elle a coûté une formulation sur dix.
+
+Le dictionnaire d'`exploitation` disait, en gras, dans le corps de sa section :
+« Le nombre de recharges réelles est `WHERE statut = 'T'` ». Et il disait, deux
+paragraphes plus bas : « **Règle par défaut : AUCUN filtre sur `statut`.** Tout
+comptage, tout classement et toute somme… ». Les deux phrases sont vraies, et
+elles se contredisent sur un mot : **recharge**. C'est à la fois le mot ordinaire
+d'une ligne de `sessions` — n'importe quel statut — et le mot que le texte
+associe au filtre.
+
+« Sur quelles stations y a-t-il eu le plus de **recharges** ? » tombe exactement
+sur cette faille. Un lecteur humain lève l'ambiguïté tout seul : il lit
+« recharges **réelles** » comme un rétrécissement, et « le plus de recharges »
+comme le cas par défaut. Rien ne garantit que le modèle fasse la même lecture, et
+un `WHERE statut = 'T'` posé là fausse les comptes du classement — 907 / 818 /
+759 au lieu de 1 015 / 911 / 872.
+
+Le remède n'est pas d'allonger la liste des mots déclencheurs, qui est justement
+le pari que ce produit a déjà payé deux fois ailleurs. C'est de rendre le mot
+ordinaire **inutilisable** comme déclencheur :
+
+- choisis les mots de l'exception parmi ceux que le cas par défaut n'emploie
+  JAMAIS. « Abouties », « réussies », « terminées » qualifient un
+  aboutissement : elles ne désignent aucun comptage ordinaire. « Recharges »,
+  si ;
+- et surtout, **dis l'exception comme une propriété** et non comme une liste :
+  « la question porte sur l'ABOUTISSEMENT — elle distingue ce qui a réussi de ce
+  qui a été tenté ». Une propriété couvre les tournures que personne n'a
+  écrites ; une liste couvre celles qu'on a pensées ;
+- relis alors le corps de ta section avec cette question : **un mot y
+  a-t-il deux sens ?** Si oui, un des deux emplois doit changer de mot. Dans le
+  cas ci-dessus, « le nombre de recharges réelles » devient « le nombre de
+  sessions **abouties** », et le mot « recharge » n'est plus qu'un synonyme de
+  session.
+
+C'est le même raisonnement que les six autres règles, appliqué au VOCABULAIRE
+plutôt qu'à l'ordre des paragraphes : le format ne porte aucune autorité
+(règle 5), et un mot qui porte deux sens n'en porte aucune non plus.
+
+> **Ce que la mesure dit, et ce qu'elle ne dit pas.** Ce défaut a été observé
+> une fois — `F10` du runner de classement, 0/3 le 2026-09-15 — et il ne se
+> reproduit plus : 12/12 le 2026-09-16, à code et dictionnaire identiques. Il
+> est donc INTERMITTENT, ce qui ne le rend pas moins réel : une contradiction
+> dans le texte laisse au modèle un choix qu'il ne devrait pas avoir, et il le
+> tranchera différemment d'un tirage à l'autre. La règle est écrite pour cela.
+> Le dictionnaire d'`exploitation`, lui, est corrigé — et la correction est
+> mesurée en même temps que tout le reste.
 
 ---
 
@@ -210,6 +262,8 @@ Avant de brancher une source, relis son dictionnaire en te posant ces questions.
       en être ?
 - [ ] Mes règles tiennent-elles dans des **phrases**, et pas seulement dans un
       tableau de cas ?
+- [ ] Les mots qui déclenchent une **exception** sont-ils absents du cas par
+      défaut — aucun mot à deux sens dans la même section ?
 - [ ] Le fichier tient-il sous `DAA_DICTIONARY_MAX_CHARS` ?
 
 Et pour vérifier plutôt que croire : écris trois ou quatre questions dont tu
