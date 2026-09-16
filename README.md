@@ -89,8 +89,8 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 
 | Document | Contenu |
 |---|---|
-| [docs/INSTALLATION.md](docs/INSTALLATION.md) | installer le service sur une machine nue : prérequis, variables obligatoires, premier compte, première source, la question qui vérifie — et ce qui manquait à la procédure quand elle a été suivie |
-| [docs/EXPLOITATION.md](docs/EXPLOITATION.md) | commander le service, lire ses journaux, sauvegarder, restaurer, ranger les conversations par propriétaire |
+| [docs/INSTALLATION.md](docs/INSTALLATION.md) | installer le service sur une machine nue : prérequis, variables obligatoires, certificat et exposition HTTPS, premier compte, première source, la question qui vérifie — et ce qui manquait à la procédure quand elle a été suivie |
+| [docs/EXPLOITATION.md](docs/EXPLOITATION.md) | commander le service, l'exposer en HTTPS (certificat, en-têtes de mandataire, pare-feu), lire ses journaux, sauvegarder et faire tourner les archives, restaurer, ranger les conversations par propriétaire |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | schémas architectural et fonctionnel, description de chaque service, sécurité, configuration, stratégie de tests |
 | [docs/CADRAGE.md](docs/CADRAGE.md) | cahier des charges : contraintes, décisions, stack, roadmap, arborescence, exigences de tests |
 | [docs/AUDIT-2026-09.md](docs/AUDIT-2026-09.md) | état des lieux mesuré et backlog priorisé (multi-utilisateurs, mémoire, moteur LLM, sécurité, qualité) |
@@ -518,7 +518,8 @@ src/data_analyst_agent/   # package
 ├── sandbox/              # client durci + image/ (Dockerfile, bridge Jupyter)
 └── api/                  # app.py (HTTP seul) + templates/ (chat, connexion)
 deploy/                   # la livraison : image de l'app (Dockerfile), compose, unité
-                          #   systemd, daactl (pilote), backup.sh / restore.sh
+                          #   systemd, daactl (pilote), backup.sh / restore.sh,
+                          #   tls-cert.sh + proxy/ (la terminaison TLS, nginx)
 docs/                     # INSTALLATION, EXPLOITATION, ARCHITECTURE, CADRAGE, AUDIT,
                           #   VLLM, spike-vanna, surface-conversationnelle, axes-amelioration
 models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
