@@ -158,29 +158,38 @@ class SourceDeTravailResponse(BaseModel):
 def _annoncer_lexposition(reglages: Settings, reseaux: tuple) -> None:
     """Dit, au démarrage, ce que l'application croit de son exposition.
 
-    Deux réglages se répondent et se trahissent en silence quand ils divergent :
-    le cookie `Secure`, qui suppose du HTTPS jusqu'au navigateur, et les
-    mandataires de confiance, sans lesquels tout le monde partage une adresse.
-    Les avoir dans le journal au démarrage évite le diagnostic long : un
-    « impossible de se connecter, la page revient au formulaire » en http avec
-    un cookie `Secure` ne laisse aucune trace ailleurs — le navigateur jette le
-    cookie sans rien dire à personne.
+    Deux réglages se répondent, et l'un des quatre croisements est une panne
+    silencieuse. Le cookie `Secure` suppose du HTTPS jusqu'au navigateur ; dans
+    cette architecture l'application ne fait jamais elle-même le TLS, donc
+    `Secure` **implique** un mandataire devant. Déclaré `Secure` sans aucun
+    mandataire de confiance, on tient les deux bouts d'une contradiction :
+    quelqu'un termine TLS, et l'application ne le sait pas. Toutes les requêtes
+    lui viennent alors d'une seule adresse — celle du mandataire — et
+    l'anti-force brute, qui verrouille par adresse, verrouille tout le monde au
+    cinquième mot de passe raté de n'importe qui.
+
+    Le niveau n'est pas décoratif : `WARNING` et au-delà remontent au journal du
+    conteneur, `INFO` non — aucun gestionnaire n'est posé sur les loggers de
+    l'application, et seul le `lastResort` de la bibliothèque standard écrit.
+    Un avertissement en `info` est un avertissement que personne ne lit.
     """
-    if reseaux:
-        logger.info(
-            "mandataires de confiance : %s — X-Forwarded-For y est cru",
-            ", ".join(str(reseau) for reseau in reseaux),
-        )
-    else:
-        logger.info(
-            "aucun mandataire de confiance : l'adresse de l'appelant est celle du pair. "
-            "Derrière une terminaison TLS, renseigner DAA_TRUSTED_PROXIES — sans quoi "
-            "l'anti-force brute compterait tout le monde sur l'adresse du mandataire."
-        )
+    logger.info(
+        "mandataires de confiance : %s",
+        ", ".join(str(reseau) for reseau in reseaux) or "aucun",
+    )
     if not reglages.session_cookie_secure:
         logger.warning(
             "DAA_SESSION_COOKIE_SECURE=false : le cookie de session part en clair. "
             "Réglage de développement — en service, une terminaison TLS et `true`."
+        )
+    elif not reseaux:
+        logger.warning(
+            "cookie de session `Secure` mais AUCUN mandataire de confiance "
+            "(DAA_TRUSTED_PROXIES vide) : quelque chose termine TLS devant "
+            "l'application, et elle l'ignore. Toutes les requêtes lui viennent donc "
+            "de la même adresse, et l'anti-force brute verrouillera tout le monde au "
+            "cinquième mot de passe raté de n'importe qui. À renseigner avec le "
+            "réseau du mandataire, et rien de plus large."
         )
 
 

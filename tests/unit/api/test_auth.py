@@ -574,7 +574,9 @@ def test_lavertissement_nest_dit_quune_fois(tmp_path, caplog):
         for _ in range(3):
             client.get("/login")
 
-    assert caplog.text.count("`Secure`") == 1
+    # Le motif vise la ligne de la PAGE, pas celle du démarrage, qui parle elle
+    # aussi de `Secure` et que `create_app` vient d'émettre juste au-dessus.
+    assert caplog.text.count("page de connexion servie en clair") == 1
 
 
 def test_une_page_annoncee_https_par_le_mandataire_ne_signale_rien(tmp_path, caplog):
@@ -647,3 +649,30 @@ def test_la_page_de_chat_affiche_le_compte_connecte(connecte: TestClient):
 
     assert LOGIN in page
     assert "Se déconnecter" in page
+
+
+def test_cookie_secure_sans_mandataire_declare_est_signale_au_demarrage(tmp_path, caplog):
+    """Le croisement contradictoire : `Secure` suppose du TLS, donc un mandataire devant.
+
+    Sans déclaration, l'anti-force brute comptera tout le monde sur l'adresse de
+    ce mandataire — et verrouillera tout le monde au cinquième échec de
+    n'importe qui. `WARNING`, parce que `INFO` ne remonte pas au journal du
+    conteneur : aucun gestionnaire n'est posé sur les loggers de l'application.
+    """
+    reglages = reglages_de_test(tmp_path, session_cookie_secure=True)
+
+    with caplog.at_level("WARNING", logger="data_analyst_agent.api"):
+        create_app(orchestrator_factory=FakeOrchestrator, settings=reglages)
+
+    assert "DAA_TRUSTED_PROXIES" in caplog.text
+
+
+def test_cookie_secure_avec_mandataire_declare_ne_signale_rien(tmp_path, caplog):
+    reglages = reglages_de_test(
+        tmp_path, session_cookie_secure=True, trusted_proxies=[RESEAU_DU_MANDATAIRE]
+    )
+
+    with caplog.at_level("WARNING", logger="data_analyst_agent.api"):
+        create_app(orchestrator_factory=FakeOrchestrator, settings=reglages)
+
+    assert caplog.text == ""
