@@ -53,6 +53,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mesure_provenance_du_sens import FAITS_DE_LA_SENTINELLE
 from mesure_surface_conversationnelle import ModeleCompteur
 
 from data_analyst_agent.agents.inference.registry import Registry
@@ -141,41 +142,12 @@ SENS: tuple[Question, ...] = (
         source="telemetrie",
         message="puissance_kw à -1, je dois le comprendre comment ?",
         forme="elliptique, sur une valeur",
-        faits=(
-            (
-                "pas une puissance",
-                "n'est pas une puissance",
-                "aucune mesure",
-                "absence de mesure",
-                "rien remonté",
-                "rien remonte",
-                "pas de mesure",
-                "non mesuré",
-                "non mesure",
-                "sentinelle",
-                "compteur muet",
-            ),
-            (
-                "écarter",
-                "ecarter",
-                "exclure",
-                "exclue",
-                "ne pas inclure",
-                "fausse",
-                "filtrer",
-                ">= 0",
-                ">=0",
-                "hors moyenne",
-                "pas être inclus",
-                "pas etre inclus",
-                "pas inclus",
-                "pas prise en compte",
-                "pas prises en compte",
-                "à ignorer",
-                "a ignorer",
-                "fausserait",
-            ),
-        ),
+        # Les MÊMES deux faits que `S4` du runner de provenance et que
+        # `sens-puissance` du parcours, importés et non recopiés : c'est la
+        # même colonne, le même dictionnaire et la même question posée de trois
+        # façons. Trois copies d'une disjonction, ce seraient trois oracles qui
+        # divergent en silence, et qui sont pourtant censés juger la même chose.
+        faits=FAITS_DE_LA_SENTINELLE,
         attendu="-1 n'est pas une puissance, et sort des moyennes",
     ),
     Question(
