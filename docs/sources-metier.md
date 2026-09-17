@@ -643,7 +643,7 @@ comptent sont donc celles du tableau, lancées **à la suite** et non de front :
 sous charge concurrente, ce moteur ne rend pas la même chose, et un banc qui
 partage son GPU mesure aussi le voisin.
 
-### Ce qui reste, et pourquoi on s'arrête là
+### Ce qui restait après le premier tour, et qui a été repris
 
 **Trois tours sur vingt et un**, tous sur « titanic et iris, c'est quoi au
 juste ? » : l'agent système n'appelle **aucun** outil, répond `AUTRE`, et le
@@ -662,6 +662,196 @@ C'est un autre mécanisme, et là encore les trente-six en dépendent. L'en-têt
 `fiches_des_sources` obtient aujourd'hui le même effet en le demandant plutôt
 qu'en l'exigeant — c'est moins sûr, et c'est mesuré.
 
+Ces deux paragraphes sont ce que le § suivant a repris. Ils sont laissés tels
+quels : ils disent ce qu'on croyait coûteux, et la suite dit ce que ça a
+réellement coûté.
+
+## Les deux faces du même défaut, reprises le 2026-09-17
+
+Relevées par le pilote sur ce catalogue, deux tirages identiques :
+
+> (a) je bosse sur quoi si je prends stocks et production ?
+> (b) resume moi vite fait ventes, stocks, iris
+
+### Le fil brut : deux portes, et une seule qui perd le tour
+
+```
+(a) → APPEL  chercher_une_source({"sujet": "stocks et production"})
+    ← RETOUR 986 car. — les DEUX fiches, en-tête compris
+    ▸ TEXTE  108 car. : « Tu travailles sur les sources `production` et
+      `stocks`. Dis-moi ce que tu souhaites savoir sur ces sources. »
+    ⇒ SERVI TEL QUEL — deux noms, zéro fait, et la ceinture n'a rien vu
+
+(b) → APPEL  sources_de_donnees({})
+    ← RETOUR 1 235 car. — les TROIS fiches (le plancher de `decrire_les_sources`)
+    ▸ TEXTE  5 car. : « AUTRE »
+    ⇒ REPLI  — la ceinture écarte le hors-sujet, l'utilisateur reçoit les 1 235 car.
+```
+
+**(b) n'était pas le défaut qu'on croyait, et c'est le runner qui le disait.**
+Le relevé d'ouverture annonçait « le tour repart au planificateur ». Il ne
+repart pas : l'outil est bel et bien appelé, `outils_appeles` n'est pas vide,
+la ceinture voit un `AUTRE` et sert les faits. Mesuré quatre tirages sur quatre
+dans le graphe complet, avant tout correctif. Ce que le relevé lisait était la
+sortie BRUTE de l'agent système — un texte que personne ne reçoit. Un banc qui
+n'applique pas la ceinture mesure un tour qui n'existe pas, et c'est la
+première correction de ce tour-ci : `mesure_sources_nommees.py` passe désormais
+par `run_systeme` puis par `defaut_de_fondation`, et sa colonne **voie** dit
+lequel des deux chemins a servi.
+
+**Le vrai (b) est ailleurs, et il est dans la même famille.** « titanic et
+iris, c'est quoi au juste ? » : **aucun** `ToolCallPart`, `AUTRE`, et là le tour
+repart pour de bon. C'est la ligne laissée à 0/3 en C41.
+
+### Ce qui a été réparé, et par quelle propriété
+
+**(a) — une fiche citée doit porter un fait.** La ceinture savait déjà quels
+faits elle avait servis ; elle ne comparait que des NOMS. `retenir` note
+désormais de quelles sources la FICHE est partie, `marques_des_fiches` calcule
+pour chacune les jetons qu'elle est **seule** à porter dans tout le catalogue —
+son type quand il la distingue, un de ses volumes, un de ses noms de table, un
+mot de sa description — et `defaut_de_fondation` exige qu'**un** d'entre eux
+survive à la reformulation. Un, jamais la fiche entière : le modèle garde le
+droit de résumer, il perd celui de ne rien retenir. Quand il ne retient rien,
+c'est le texte de l'outil qui part — et ce texte est LISIBLE, il a été écrit
+pour un lecteur.
+
+Le nom de la source est retiré des marques, et c'est tout l'objet de la mesure.
+Un mot de liaison aussi, et **c'est un test qui l'a trouvé** : `les`
+n'apparaissait que dans la description de `stocks`, donc comptait pour marque,
+donc « sur les sources » suffisait à prouver une lecture. Quatre caractères pour
+un mot, deux chiffres pour un nombre : `duckdb`, `entrepots` et `891` sont des
+faits ; `les` et `9` n'en sont pas.
+
+**(b) — un message qui nomme PLUSIEURS sources déclarées est pour cet agent.**
+Un second plancher, pendant exact du premier : celui de `decrire_les_sources`
+répare ce qu'un outil SERT quand le modèle l'appelle, celui-ci répare les tours
+où il n'appelle rien. Aucun outil appelé + deux sources déclarées nommées ⇒ les
+fiches sont servies, `outils_appeles` porte le nom du plancher, et la ceinture
+écarte le `AUTRE`.
+
+**Deux, et pas un.** C'est une propriété de l'installation et non un réglage :
+elle répond à une question sur les données en LIANT **une** source et en
+interrogeant celle-là. Un message qui en nomme deux ne désigne donc aucun calcul
+qu'elle sache faire. À une seule, la propriété tombe — « combien de commandes
+dans ventes ? » nomme `ventes` et se compte, le modèle n'appelle rien, et il a
+raison.
+
+**Et un plancher a deux bords.** Le second a été trouvé par un test existant,
+pas par une relecture : `test_deux_sources_nommees_dans_le_meme_message_ne_valident_rien`
+est passé au rouge sur « ventes ou clients ? ». Ce message nomme deux sources et
+ne demande rien SUR elles — il hésite ENTRE elles, et la bonne réponse est la
+question du premier tour, celle qui finit par « sur laquelle veux-tu
+travailler ? » et lie la source au fil. Servir deux fiches à cette place-là
+répond à côté et laisse la conversation déliée. Le décompte qui les sépare
+existait déjà et était déjà mesuré : `MOTS_EN_PLUS_D_UN_CHOIX`, trois mots en
+plus des noms. « titanic et iris, c'est quoi au juste ? » en dit six, « ventes
+ou clients ? » en dit un.
+
+### Le défaut, avant et après
+
+Quinze messages, trois tirages chacun, le même oracle des deux côtés. Le banc a
+changé sur trois points, et les trois comptent :
+
+1. **les ensembles attendus sont écrits à la main**, pour TOUS les messages.
+   Ils étaient calculés par `introspection.sources_nommees` — la fonction même
+   qu'on mesure. Une source qu'elle ratait sortait de l'attendu, la barre
+   baissait d'autant, et le tour était déclaré conforme pour avoir omis ce
+   qu'on ne lui demandait plus ;
+2. **le verdict porte sur le texte SERVI**, ceinture appliquée (ci-dessus) ;
+3. **deux témoins**, qui doivent échouer si la restriction déborde : un message
+   qui ne nomme aucune source et un nom inconnu doivent continuer de RECEVOIR
+   tout le catalogue.
+
+| message | avant | après | voie, après |
+|---|---|---|---|
+| `defaut-usage-reel` — Qu'est-ce que t'appelles source vente, production, stock ? | 3/3 | **3/3** | modèle |
+| `apercu-quatre` — Donne-moi un aperçu de ventes, production, stocks et titanic. | 3/3 | **3/3** | modèle |
+| `reference-deux` — titanic et iris, c'est quoi au juste ? | **0/3** | **3/3** | repli (plancher) |
+| `servent-trois` — Explique-moi à quoi servent production, stocks et iris. | 3/3 | **3/3** | modèle |
+| `contient-deux` — Ça contient quoi, ventes et stocks ? | 3/3 | **3/3** | modèle |
+| `presente-trois` — Je voudrais comprendre ventes, production et stocks : présente-les-moi. | 3/3 | **3/3** | modèle |
+| `entre-deux` — Entre ventes et production, qu'y a-t-il dans chacune ? | 3/3 | **3/3** | modèle |
+| `fondation-deux-noms` — (a) je bosse sur quoi si je prends stocks et production ? | **0/3** | **3/3** | repli |
+| `autre-trois-noms` — (b) resume moi vite fait ventes, stocks, iris | 3/3 | **3/3** | repli |
+| `contenu-deux-metier` — c'est quoi le contenu de production et de stocks ? | 3/3 | **3/3** | modèle |
+| `dedans-trois` — dis-moi ce qu'il y a dans ventes, production et iris | **0/3** | **0/3** | modèle |
+| `ressemble-deux` — iris et ventes, ça ressemble à quoi ? | 3/3 | **3/3** | modèle |
+| `tour-de-quatre` — fais-moi le tour de ventes, production, stocks et iris | 3/3 | **3/3** | modèle |
+| `temoin-par-sujet` — as-tu quelque chose sur la maintenance des machines ? | 3/3 | **3/3** | modèle |
+| `temoin-nom-inconnu` — c'est quoi la source comptabilite ? | 3/3 | **3/3** | modèle |
+| **total** | **36/45** | **42/45** | |
+
+Les quatre formulations neuves — `contenu-deux-metier`, `dedans-trois`,
+`ressemble-deux`, `tour-de-quatre` — ont été écrites AVANT de savoir ce qu'elles
+rendraient. Trois passaient déjà ; la quatrième ne passe toujours pas, et c'est
+elle qui apprend quelque chose (§ suivant).
+
+### Le coût : rien
+
+| | avant | après |
+|---|---|---|
+| appels LLM, 45 tours | 90 | **90** |
+| appels d'outil émis, 45 tours | 60 | **60** |
+| caractères servis, moyenne par tour | 1 740 | **1 790** |
+
+Les 50 caractères de plus sont ceux du plancher sur `reference-deux` : 747 là
+où le tour ne servait rien du tout. Le tour coûte toujours **un** appel LLM — le
+plancher ne rappelle pas le modèle, il constate et il sert.
+
+### Les campagnes : aucune ne recule
+
+Séquentielles, jamais de front — sous charge concurrente ce moteur ne rend pas
+la même chose, et on l'a payé en C41.
+
+| Campagne | Catalogue | Avant | Après |
+|---|---|---|---|
+| `mesure_surface_conversationnelle.py`, 1ʳᵉ | **par défaut** | 36/36 méta, 4/4 témoins, 81+17 appels | **36/36, 4/4, 81+17** |
+| `mesure_surface_conversationnelle.py`, 2ᵈᵉ | **par défaut** | 36/36 méta, 4/4 témoins, 81+17 appels | **36/36, 4/4, 81+17** |
+| `mesure_parcours_de_demonstration.py` | `demonstration` | 48/48, 178 appels | **48/48, 178 appels** |
+| `mesure_questions_metier.py` | `metier` | 12/12, 58 appels | **12/12, 58 appels** |
+| `mesure_sources_nommees.py --tirages 3` | `metier` | 36/45 | **42/45** |
+| `uv run pytest -p no:randomly` | — | 1 277 passés, 99,59 % | **1 294 passés, 99,59 %** |
+
+`ca-par-canal` est intermittent avant comme après ; il est passé des deux côtés
+ici, et ce n'est pas un verdict.
+
+### Ce que le prompt et les fiches n'ont toujours pas eu le droit de dire
+
+Rien n'a été ajouté nulle part, et cette fois c'est figé à l'octet près.
+`test_aucun_paragraphe_de_prompt_n_a_bouge` et
+`test_aucune_fiche_d_outil_n_a_bouge_au_caractere_pres` portent l'empreinte
+SHA-256 du prompt système et des sept fiches d'outils. La version d'avant
+interdisait deux phrases nommément ; celle-ci interdit tout ajout — parce que ce
+qui avait coûté `periode-directe` n'était pas une phrase en particulier, c'était
+le fait d'avoir rendu une fiche plus attirante.
+
+### Ce qui reste : une TROISIÈME porte, et elle n'est pas de la même famille
+
+**`dedans-trois`, 0/3 avant comme après.** « dis-moi ce qu'il y a dans ventes,
+production et iris » est routée sur `schema_d_une_source`, appelé trois fois,
+une fois par nom :
+
+```
+→ APPEL  schema_d_une_source({"cible": "ventes"})
+→ APPEL  schema_d_une_source({"cible": "production"})
+→ APPEL  schema_d_une_source({"cible": "iris"})
+← 2 074 car. servis, où ni `ventes` ni `production` n'apparaissent
+⇒ la ceinture crie « nom(s) qu'aucun fait ne porte : production, ventes »
+```
+
+Le modèle fait exactement ce qu'il faut ; c'est l'outil qui ne suit pas.
+`decrire_le_schema` désigne UNE cible (`_cible`), et une précision qui nomme
+trois sources ne lui en désigne aucune : `source_visee` rend `None` dès que
+plusieurs noms sont cités, et le tour retombe sur une seule source.
+
+Ce n'est pas le défaut de ce chantier-ci et ce n'est pas la même réparation :
+`sources_de_donnees` et `chercher_une_source` rendent une FICHE par source, une
+structure plate qu'on met bout à bout ; `decrire_le_schema` rend un schéma, un
+dictionnaire et le sens d'une colonne, et c'est lui qui porte `sens-colonne`,
+`colonnes-table`, `tables-directe` et les questions de sens des deux catalogues
+de démonstration. Le pluriel s'y écrit, mais il s'y mesure d'abord.
+
 ## Où ça vit
 
 | Quoi | Où |
@@ -672,5 +862,7 @@ qu'en l'exigeant — c'est moins sûr, et c'est mesuré.
 | Les douze questions, et le témoin | [`scripts/mesure_questions_metier.py`](../scripts/mesure_questions_metier.py) |
 | Une question qui nomme ses sources | [`scripts/mesure_sources_nommees.py`](../scripts/mesure_sources_nommees.py) |
 | Ce que la suite unitaire en tient | [`tests/catalogues/test_catalogue_metier.py`](../tests/catalogues/test_catalogue_metier.py) |
+| La propriété « une fiche citée porte un fait » | [`tests/unit/orchestrator/test_introspection.py`](../tests/unit/orchestrator/test_introspection.py) |
+| Les deux planchers, leurs bords, et les empreintes | [`tests/unit/orchestrator/test_graph_questions_meta.py`](../tests/unit/orchestrator/test_graph_questions_meta.py) |
 | Comment écrire un dictionnaire | [`rediger-un-dictionnaire-de-source.md`](rediger-un-dictionnaire-de-source.md) |
 | L'autre catalogue, qui reste | [`sources-de-demonstration.md`](sources-de-demonstration.md) |
