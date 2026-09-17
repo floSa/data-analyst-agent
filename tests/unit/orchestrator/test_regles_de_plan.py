@@ -297,6 +297,48 @@ def test_une_source_vraiment_inconnue_provoque_une_question(
     assert "titanic" in question
 
 
+def test_une_designation_qui_empaquette_deux_sources_declarees_ne_dit_pas_introuvable(
+    orchestrateur: Orchestrator, tmp_path: Path
+):
+    """« ventes ou production ? » : la question est juste, la phrase était fausse.
+
+    Mesuré à travers le graphe le 2026-09-17, catalogue métier : aucun outil
+    appelé côté agent système, le planificateur classe `query` et rend
+    ``source="ventes, production"`` — la concaténation des deux noms qu'il a lus.
+    L'utilisateur lisait « La source « ventes, production » est introuvable. Sur
+    quelle source veux-tu travailler : ventes, production, stocks, iris,
+    titanic ? », donc une source déclarée introuvable ET proposée dans la même
+    phrase. La question reste ; la phrase part.
+    """
+    plan = Plan(capability="query", source="ventes, production")
+
+    question = orchestrateur._regle_normaliser_le_nom_de_source(
+        plan,
+        contexte(declare=[source("ventes", tmp_path), source("production", tmp_path)]),
+    )
+
+    assert question == "Sur quelle source veux-tu travailler : ventes, production ?"
+    assert "introuvable" not in question
+
+
+def test_un_seul_nom_inconnu_garde_sa_phrase(orchestrateur: Orchestrator, tmp_path: Path):
+    """L'autre bord : une faute de frappe ne nomme aucune source déclarée.
+
+    C'est là que « introuvable » est l'information utile — celui qui écrit
+    « comptabilite » a besoin de savoir que ce n'est pas un nom d'ici, et pas
+    seulement qu'on lui repose la question.
+    """
+    plan = Plan(capability="query", source="comptabilite")
+
+    question = orchestrateur._regle_normaliser_le_nom_de_source(
+        plan, contexte(declare=[source("ventes", tmp_path), source("production", tmp_path)])
+    )
+
+    assert question is not None
+    assert "« comptabilite » est introuvable" in question
+    assert "Sur quelle source veux-tu travailler : ventes, production ?" in question
+
+
 def test_source_inconnue_et_catalogue_vide_le_dit_sans_liste_vide(orchestrateur: Orchestrator):
     question = orchestrateur._regle_normaliser_le_nom_de_source(
         Plan(capability="query", source="ventes"), contexte()

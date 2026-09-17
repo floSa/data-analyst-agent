@@ -973,16 +973,37 @@ class Orchestrator:
 
         Sur le catalogue EFFECTIF : un tableau intermédiaire du fil est une
         source désignable comme une autre.
+
+        **Une désignation qui nomme PLUSIEURS sources déclarées n'est pas une
+        source introuvable**, et c'est un défaut mesuré. « ventes ou
+        production ? » faisait rendre au planificateur ``source="ventes,
+        production"`` — la concaténation des deux noms qu'il a lus —, et
+        l'utilisateur lisait « La source « ventes, production » est introuvable.
+        Sur quelle source veux-tu travailler : ventes, production, stocks,
+        iris, titanic ? » La question est juste : il hésitait, on lui fait
+        choisir. La phrase qui la précède est fausse, et elle se voit — les deux
+        sources qu'il vient de nommer sont dans la liste qu'on lui propose au
+        même instant. On garde donc la question et on laisse tomber la phrase :
+        rien n'est introuvable ici, et le dire décrédibilise le reste du tour.
+
+        Le décompte se fait sur la DÉSIGNATION et non sur le message :
+        c'est le planificateur qui a empaqueté deux noms, et c'est cet
+        empaquetage-là qu'on reconnaît. Un vrai nom inconnu — « comptabilite »,
+        une faute de frappe — n'en nomme aucun et garde sa phrase, qui est alors
+        l'information utile.
         """
         if not plan.source:
             return None
         resolved = self._match_source_name(plan.source, ctx.catalogue_effectif)
         if resolved is None:
             names = ", ".join(s.name for s in ctx.catalogue_effectif.sources) or "(aucune)"
-            return (
-                f"La source « {plan.source} » est introuvable. Sur quelle source "
-                f"veux-tu travailler : {names} ?"
-            )
+            empaquetees = introspection.sources_nommees(plan.source, ctx.catalogue_effectif)
+            choix = f"Sur quelle source veux-tu travailler : {names} ?"
+            # Pas de seuil à régler : « plusieurs » veut dire au moins deux, et
+            # c'est une définition, pas un réglage.
+            if len(empaquetees) > 1:
+                return choix
+            return f"La source « {plan.source} » est introuvable. {choix}"
         plan.source = resolved
         return None
 
