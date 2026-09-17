@@ -149,7 +149,9 @@ class SystemeDeps:
             self.faits_a_enumerer.append(texte)
         return texte
 
-    def decrire_les_sources(self, cible: str = "", *, a_enumerer: bool = True) -> str:
+    def decrire_les_sources(
+        self, cible: str = "", *, a_enumerer: bool = True, outil: str = "sources_de_donnees"
+    ) -> str:
         """Le catalogue, ou UNE source quand la question ne porte que sur elle.
 
         **Un outil qui ne sait pas se restreindre fait déballer tout le reste.**
@@ -167,23 +169,81 @@ class SystemeDeps:
         question-là, c'est répondre à quelqu'un d'autre. Même règle que
         `schema_d_une_source`, qui la tient déjà.
 
+        **Le catalogue ENTIER n'est jamais la réponse à un message qui nomme ses
+        sources.** C'est le plancher, et c'est une mesure qui l'a imposé. Le
+        modèle SAIT boucler — mesuré le 2026-09-17 sur vLLM, « donne-moi un
+        aperçu de ventes, production, stocks et titanic » émet quatre
+        ``ToolCallPart`` dans la MÊME réponse, un par source, sans un
+        aller-retour de plus. Il ne le fait pas toujours : sur sept
+        formulations, cinq passaient encore par un appel qui rend TOUT — les
+        unes par `chercher_une_source`, dont l'argument n'est pas lu, les
+        autres par cet outil-ci avec `cible` vide. Même effet des deux côtés :
+        cinq fiches pour qui en a nommé trois.
+
+        La règle ne porte donc pas sur l'ARGUMENT que le modèle a passé — l'y
+        mettre serait traiter cette phrase-ci et pas la suivante — mais sur ce
+        que le MESSAGE nomme (``introspection.sources_nommees``). Quand il nomme
+        des sources déclarées et que l'appel allait rendre le catalogue, ce sont
+        leurs fiches qui partent, et elles sont à énumérer : un ensemble nommé
+        n'est pas une matière à choisir, c'est la réponse. 3/21 avant, 18/21
+        après, à nombre d'appels d'outil et d'appels LLM INCHANGÉ.
+
+        **Elle est mécanique, et c'est le résultat de la mesure et non un goût.**
+        Cinq formulations ont été écrites pour dire la même chose au modèle —
+        trois dans la démarche du prompt, deux dans les fiches de ces deux
+        outils. Chacune coûtait une question de la surface conversationnelle,
+        trois tirages sur trois : `features-familier`, `volumetrie-globale`,
+        `periode-directe`. Une phrase de prompt parle à tous les tours, une
+        fiche d'outil à tous ceux qui pourraient l'appeler ; ce plancher-ci ne
+        parle qu'aux tours où un outil allait rendre le catalogue entier alors
+        que le message nommait ses sources. Le relevé complet est dans
+        `docs/sources-metier.md`, et `test_aucune_fiche_d_outil_n_a_bouge` fige
+        le résultat.
+
+        Elle ne touche à rien de ce qui était déjà mesuré. Un message qui ne
+        nomme AUCUNE source déclarée — la recherche par sujet, « as-tu quelque
+        chose sur la maintenance ? », ou un nom inconnu — continue de recevoir
+        tout le catalogue, à choisir ou à corriger. Et la source de travail
+        garde son rang : elle ne parle que là où personne n'est nommé.
+
         Un nom INCONNU rend le catalogue entier plutôt qu'une erreur, comme
         partout ici : celui qui se trompe de nom a besoin de voir les vrais.
+
+        ``outil`` : le nom de l'outil qui APPELLE, et il n'est pas décoratif.
+        Cette méthode sert `sources_de_donnees` et `chercher_une_source`, et
+        elle inscrivait le premier dans la trace quel que soit l'appelant. La
+        trace disait donc `sources_de_donnees` sur des tours où le modèle avait
+        appelé `chercher_une_source` — et c'est ce qui a caché la cause du
+        défaut mesuré le 2026-09-17 : « qu'est-ce que t'appelles source vente,
+        production, stock ? » était routée sur la RECHERCHE, dont l'argument
+        n'est pas lu, qui rend les cinq sources et qui désarme la ceinture. La
+        trace montrait l'outil qui restreint ; le fil brut montrait celui qui
+        ne restreint pas. Une trace qui nomme un autre outil que celui qu'on a
+        appelé fait chercher le défaut là où il n'est pas.
         """
-        vise = cible.strip().strip("\"`'") or (self.source_de_travail if a_enumerer else "")
+        vise = cible.strip().strip("\"`'")
         faits = self.releves.tous() if self.releves is not None else None
-        if vise.strip():
+        if vise:
             trouvee = _trouver_la_source(self.catalogue_declare, vise)
             if trouvee is not None:
-                releve = self.releves.de(trouvee.name) if self.releves is not None else None
-                return self.retenir(
-                    "sources_de_donnees", introspection.fiche_de_source(trouvee, releve)
-                )
+                return self.retenir(outil, self._fiche(trouvee))
+        nommees = introspection.sources_nommees(self.question, self.catalogue_declare)
+        if nommees:
+            return self.retenir(outil, introspection.fiches_des_sources(nommees, faits))
+        if a_enumerer and self.source_de_travail:
+            liee = _trouver_la_source(self.catalogue_declare, self.source_de_travail)
+            if liee is not None:
+                return self.retenir(outil, self._fiche(liee))
         return self.retenir(
-            "sources_de_donnees",
+            outil,
             introspection.decrire_les_sources(self.catalogue_declare, faits),
             a_enumerer=a_enumerer,
         )
+
+    def _fiche(self, source: Source) -> str:
+        """La fiche d'une source, avec ce qu'on a LU dedans quand on l'a lu."""
+        releve = self.releves.de(source.name) if self.releves is not None else None
+        return introspection.fiche_de_source(source, releve)
 
     def retenir_la_liaison(self, demandee: str) -> str:
         """Enregistre la source que le modèle veut lier, et rend son accueil.
@@ -324,7 +384,7 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         # c'est lui qui la fait — il a les descriptions sous les yeux, et il
         # reconnaît « ce que les clients ont payé » dans « factures clients »
         # là où une correspondance de mots ne le ferait pas.
-        return ctx.deps.decrire_les_sources(a_enumerer=False)
+        return ctx.deps.decrire_les_sources(a_enumerer=False, outil="chercher_une_source")
 
     @agent.tool
     def schema_d_une_source(ctx: RunContext[SystemeDeps], cible: str = "") -> str:
