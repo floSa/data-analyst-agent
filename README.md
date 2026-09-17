@@ -96,6 +96,7 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 | [docs/AUDIT-2026-09.md](docs/AUDIT-2026-09.md) | état des lieux mesuré et backlog priorisé (multi-utilisateurs, mémoire, moteur LLM, sécurité, qualité) |
 | [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
 | [docs/VLLM.md](docs/VLLM.md) | banc d'essai vLLM : le tool calling mesuré, ce qui casse sans les bonnes options, ce qui reste à vérifier |
+| [docs/parcours-de-l-agent.md](docs/parcours-de-l-agent.md) | **comprendre comment il répond** : huit conversations, huit diagrammes de séquence, chacun établi sur une trace relevée — nœuds traversés, outils appelés, coût en appels LLM, et les défauts connus |
 | [docs/surface-conversationnelle.md](docs/surface-conversationnelle.md) | ce que l'agent sait répondre **sur lui-même** : la batterie de mesure, les comptes avant/après, le coût en appels LLM, et les décisions déjà mesurées et retirées |
 | [docs/sources-metier.md](docs/sources-metier.md) | **le catalogue qu'on montre** : un fabricant de vélos, cinq sources, des volumes qui tiennent dans la tête, trois pièges de modélisation de trois familles, et les douze questions de démonstration mesurées |
 | [docs/sources-de-demonstration.md](docs/sources-de-demonstration.md) | le catalogue qui a **durci** le socle, et qui porte les campagnes de mesure : cinq sources, quatre pièges de modélisation, les questions métier et leurs oracles, et ce que ce catalogue a fait apparaître dans le socle |

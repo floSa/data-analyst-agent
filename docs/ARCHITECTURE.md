@@ -4,6 +4,9 @@ Document de référence technique. Le *pourquoi* (contraintes, décisions, roadm
 dans [CADRAGE.md](CADRAGE.md) ; ici on décrit le *comment* : les schémas d'ensemble,
 puis chaque service du package.
 
+Pour voir le graphe à l'œuvre plutôt que décrit — huit conversations, huit
+diagrammes de séquence établis sur une trace relevée : [parcours-de-l-agent.md](parcours-de-l-agent.md).
+
 ## 1. Principes directeurs
 
 - **Orchestration explicite** : un graphe LangGraph typé, inspectable, tracé. La règle
