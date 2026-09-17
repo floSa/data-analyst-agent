@@ -155,6 +155,27 @@ def sources_nommees(question: str, catalogue: Catalog) -> list[Source]:
     return nommees
 
 
+def mots_hors_des_noms(question: str, sources: list[Source]) -> list[str]:
+    """Ce que le message dit EN PLUS des noms de sources qu'il porte.
+
+    Le pendant, au pluriel, du décompte de ``choix_de_source`` : un message
+    réduit à des noms de sources et à ce qui les relie ne DEMANDE rien sur elles,
+    il hésite entre elles. « ventes ou clients ? » n'appelle pas deux fiches,
+    il appelle la question qui fait choisir — et c'est le contrat du premier tour
+    (``proposer_les_sources``), qui finit par « sur laquelle veux-tu
+    travailler ? » et lie la réponse à la conversation.
+
+    Le singulier compte comme le pluriel, comme partout ici : « source vente »
+    écrit `ventes`, et le laisser dans le reste ferait passer un message pour
+    plus bavard qu'il n'est.
+    """
+    noms = set()
+    for source in sources:
+        nom = replie(source.name).strip()
+        noms |= {nom, _singulier(nom)}
+    return [mot for mot in replie(question).split() if mot not in noms]
+
+
 def source_nommee(question: str, catalogue: Catalog) -> str | None:
     """Le nom de source que le TEXTE cite, sans repli sur l'unique source.
 

@@ -563,6 +563,77 @@ def _ontologies(precision: str, deps: SystemeDeps) -> list[introspection.Ontolog
     return ontologies
 
 
+# À partir de combien de sources déclarées nommées un message cesse de pouvoir
+# être un calcul. DEUX, et ce n'est pas un réglage : cette installation répond à
+# une question sur les données en LIANT une source et en interrogeant celle-là
+# (``PlanContext.source``, ``_regle_source_de_la_conversation``). Un message qui
+# nomme deux sources déclarées ne désigne donc aucun calcul qu'elle sache faire ;
+# ce qu'il demande sur plusieurs sources à la fois ne se lit que dans le
+# catalogue. À UNE seule, la propriété tombe — « combien de commandes dans
+# ventes ? » nomme `ventes` et se compte, et c'est mesuré : le modèle n'appelle
+# aucun outil, et il a raison.
+SOURCES_NOMMEES_HORS_DE_PORTEE_D_UN_CALCUL = 2
+
+
+def _plancher_des_sources_nommees(deps: SystemeDeps) -> None:
+    """Le message nomme PLUSIEURS sources déclarées et aucun outil n'a été appelé.
+
+    Le second plancher, et le pendant exact du premier. Celui de
+    ``decrire_les_sources`` répare ce qu'un outil SERT quand le modèle l'appelle
+    ; celui-ci répare les tours où le modèle ne l'appelle pas du tout.
+
+    **Mesuré le 2026-09-17, catalogue métier.** « titanic et iris, c'est quoi au
+    juste ? » : aucun ``ToolCallPart``, réponse ``AUTRE``, et le tour repart au
+    planificateur — qui n'a pas de capacité pour « décris-moi ces deux
+    sources-là » et rend son repli. C'est la famille laissée à 0/3 en C41.
+    « resume moi vite fait ventes, stocks, iris » tombe du même côté pour l'œil,
+    par un autre chemin : le modèle appelle bien ``sources_de_donnees`` ET
+    répond ``AUTRE``, et c'est la ceinture qui rattrape ce tour-là.
+
+    **Pourquoi mécanique plutôt qu'écrit au modèle.** Cinq formulations ont déjà
+    été ajoutées au prompt et aux fiches d'outils pour dire exactement cela ; les
+    cinq ont été retirées, chacune coûtant une question de la surface
+    conversationnelle, trois tirages sur trois. Un témoin de quatre lignes vides
+    au même endroit ne coûtait rien : ce n'est pas la longueur, c'est le contenu.
+    Ce plancher-ci ne parle à personne — il ne s'applique qu'aux tours où aucun
+    outil n'a été appelé et où le message nomme deux sources du catalogue.
+
+    **Et pourquoi DEUX.** Parce qu'à une seule, la propriété n'est plus vraie :
+    « combien de commandes dans ventes ? » nomme une source déclarée et se
+    compte sur ses lignes. Le modèle ne l'envoie à aucun outil, et il a raison —
+    ce plancher ne doit pas le contredire.
+
+    **Et l'autre bord, trouvé par un test et non par une relecture.** Un message
+    réduit aux noms et à ce qui les relie — « ventes ou clients ? » — ne demande
+    rien SUR ces sources : il hésite ENTRE elles, et la bonne réponse est la
+    question qui fait choisir, celle du premier tour, qui lie la source à la
+    conversation. Servir deux fiches à cette place-là répondrait à côté et
+    laisserait le fil délié. Le décompte est celui que ``choix_de_source``
+    mesure déjà (``MOTS_EN_PLUS_D_UN_CHOIX``), et la frontière est posée sur les
+    formulations réellement mesurées : « titanic et iris, c'est quoi au juste ? »
+    en dit six de plus, « ventes ou clients ? » un seul.
+
+    Il n'invente pas de réponse : il sert les fiches, celles-là mêmes que l'outil
+    aurait servies, et la ceinture fait le reste. ``outils_appeles`` porte alors
+    le nom du plancher et non celui d'un outil — il n'y en a pas eu, et une trace
+    qui nommerait un outil ferait chercher le défaut là où il n'est pas.
+    """
+    if deps.outils_appeles:
+        return
+    nommees = introspection.sources_nommees(deps.question, deps.catalogue_declare)
+    if len(nommees) < SOURCES_NOMMEES_HORS_DE_PORTEE_D_UN_CALCUL:
+        return
+    reste = introspection.mots_hors_des_noms(deps.question, nommees)
+    if len(reste) <= introspection.MOTS_EN_PLUS_D_UN_CHOIX:
+        return
+    faits = deps.releves.tous() if deps.releves is not None else None
+    deps.retenir(
+        "plancher_des_sources_nommees",
+        introspection.fiches_des_sources(nommees, faits),
+        fiches=tuple(s.name for s in nommees),
+    )
+
+
 def run_systeme(
     question: str,
     *,
@@ -606,6 +677,7 @@ def run_systeme(
         message_history=_le_tour_precedent_en_messages(echange_precedent),
         usage_limits=UsageLimits(request_limit=request_limit),
     )
+    _plancher_des_sources_nommees(deps)
     return ResultatSysteme(
         reponse=run.output,
         faits="\n\n".join(deps.faits),
