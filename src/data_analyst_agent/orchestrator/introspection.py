@@ -98,6 +98,62 @@ def source_visee(question: str, catalogue: Catalog) -> Source | None:
     return catalogue.get(nom) if nom else None
 
 
+def _singulier(nom: str) -> str:
+    """Le nom sans son `s` final, quand il en a un et qu'il reste un mot.
+
+    Le pendant, pour le nombre, de ce que ``replie`` fait pour les accents et
+    les majuscules. L'argument est le même, et il est déjà écrit dans
+    ``systeme._trouver_la_source`` : l'utilisateur écrit le nom d'une source
+    comme un mot FRANÇAIS, le catalogue l'écrit comme un identifiant, et exiger
+    que les deux coïncident au caractère près, c'est exiger qu'on tape comme un
+    fichier de configuration. « La source vente » désigne `ventes` aussi
+    sûrement que « Télémétrie » désigne `telemetrie`.
+
+    Trois lettres au minimum une fois le `s` ôté : en deçà, replier ferait se
+    rencontrer des noms qui n'ont rien à voir, et le gain — reconnaître un
+    pluriel sur un nom de deux lettres — n'existe pas.
+
+    Vit ici et PAS dans ``replie``, et c'est délibéré : ``replie`` sert aussi à
+    vérifier qu'une réponse porte les faits qu'on lui a servis
+    (``defaut_de_fondation``), et une comparaison plus lâche y laisserait passer
+    une réponse qui écrit un autre nom que celui qu'elle a reçu.
+    """
+    nu = nom.strip()
+    return nu[:-1] if len(nu) > 3 and nu.endswith("s") else nu
+
+
+def sources_nommees(question: str, catalogue: Catalog) -> list[Source]:
+    """TOUTES les sources déclarées que le message nomme, dans l'ordre du catalogue.
+
+    Le pluriel de ``source_nommee``, et il manquait. La version au singulier
+    rend ``None`` dès que deux noms sont cités — « deux noms cités ne désignent
+    pas une cible, et en choisir un serait deviner » — ce qui est juste quand on
+    cherche UNE cible, et faux quand la question en vise plusieurs. Rien ne
+    savait donc répondre à « qu'est-ce que t'appelles source vente, production,
+    stock ? » autrement qu'en rendant le catalogue entier.
+
+    Mesuré le 2026-09-17 : cette question-là ne recevait pas trois fiches mais
+    les cinq sources du catalogue, `iris` et `titanic` compris — et une réponse
+    de deux cents caractères qui se contentait de nommer les trois sans en
+    décrire aucune. Le détail du fil brut est dans `docs/sources-metier.md`.
+
+    Le pluriel de l'utilisateur comme son singulier (``_singulier``) : « la
+    source vente » désigne `ventes`, et c'est le service que ``replie`` rend
+    déjà pour les accents et les majuscules.
+
+    Vide quand le message ne nomme rien : c'est le cas de la recherche par sujet
+    (« as-tu quelque chose sur la maintenance ? »), qui doit continuer de
+    recevoir tout le catalogue pour y choisir.
+    """
+    plat = replie(question)
+    nommees = []
+    for source in catalogue.sources:
+        nom = replie(source.name).strip()
+        if f" {nom} " in plat or f" {_singulier(nom)} " in plat:
+            nommees.append(source)
+    return nommees
+
+
 def source_nommee(question: str, catalogue: Catalog) -> str | None:
     """Le nom de source que le TEXTE cite, sans repli sur l'unique source.
 
@@ -259,6 +315,36 @@ def fiche_de_source(source: Source, releve: FaitsDeSource | None) -> str:
     description = source.description.strip() or "sans description"
     faits = f"\n\n{releve.en_clair()}" if releve is not None and releve.en_clair() else ""
     return f"La source **{source.name}** ({source.type}) — {description}{faits}"
+
+
+def fiches_des_sources(sources: list[Source], faits: Faits | None = None) -> str:
+    """Les fiches des sources qu'un message NOMME, annoncées comme telles.
+
+    Une ligne d'en-tête, puis une fiche par source. L'en-tête n'est pas un
+    ornement : c'est lui qui dit que cet ensemble-ci est CLOS — ce sont les
+    sources demandées, il n'y en a pas d'autres à aller chercher, et il n'y a
+    donc rien à y choisir.
+
+    Mesuré le 2026-09-17, et c'est ce qui l'a imposé. Sans lui, un tour routé
+    sur `chercher_une_source` recevait bien les trois fiches et répondait
+    « j'ai trouvé les sources `ventes`, `production` et `stocks` » : cent
+    soixante-treize caractères, trois noms, pas un fait. Le modèle avait lu
+    dans la fiche de cet outil qu'il n'a « pas à réciter les autres », et
+    traitait donc trois fiches choisies comme une liste où choisir. Douze tours
+    sur vingt et un se jouaient là. L'en-tête posé, vingt et un sur vingt et un.
+
+    Il est écrit pour un LECTEUR et non pour le modèle, parce qu'il peut lui
+    être servi tel quel : quand la formulation du modèle ne porte pas les faits,
+    c'est ce texte qui part à l'utilisateur (``defaut_de_fondation``).
+    """
+    tete = (
+        f"Les {len(sources)} sources que ta question nomme, et ce qu'on sait "
+        f"de chacune — toutes les {len(sources)}, il n'y en a pas d'autres à chercher :"
+        if len(sources) > 1
+        else ""
+    )
+    corps = [fiche_de_source(s, (faits or {}).get(s.name)) for s in sources]
+    return "\n\n".join(([tete] if tete else []) + corps)
 
 
 def accueil_de_source(source: Source, releve: FaitsDeSource | None, precedente: str = "") -> str:
