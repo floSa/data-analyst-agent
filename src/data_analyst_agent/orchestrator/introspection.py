@@ -668,7 +668,10 @@ def _dedoublonne(noms) -> list[str]:
 
 
 def decrire_le_schema(
-    question: str, ontologies: list[Ontologie], source_de_travail: str = ""
+    question: str,
+    ontologies: list[Ontologie],
+    source_de_travail: str = "",
+    designation: str = "",
 ) -> str:
     """Les tables, les colonnes ou le sens d'une colonne — au bon niveau de détail.
 
@@ -684,10 +687,46 @@ def decrire_le_schema(
     dans quatre sources sur cinq, et la seule qui puisse trancher est celle sur
     laquelle on travaille. Vide hors conversation, et le comportement est alors
     celui d'avant, au caractère près.
+
+    ``designation`` est ce que l'APPELANT a explicitement visé — l'argument que
+    le modèle a passé à l'outil, quand il en a passé un. Elle choisit la source
+    AVANT le texte du message, et ce n'est pas un raffinement : c'est un défaut
+    mesuré, et il ne se lisait pas dans la trace.
+
+    **« dis-moi ce qu'il y a dans ventes, production et iris »**, mesuré le
+    2026-09-17 sur le catalogue métier. Le modèle fait exactement ce qu'il faut
+    — trois appels, un par nom :
+
+    - ``schema_d_une_source({"cible": "ventes"})``
+    - ``schema_d_une_source({"cible": "production"})``
+    - ``schema_d_une_source({"cible": "iris"})``
+
+    Les trois rendaient le schéma d'``iris``. La désignation était collée au
+    message avant d'être examinée, le message nomme trois sources, et
+    ``_nomme_dans`` rend ``None`` dès que plusieurs noms sont cités — la voie de
+    la source tombait donc, et c'était la voie de la TABLE qui tranchait :
+    `iris` est aussi le nom d'une table, il est dans la phrase de l'utilisateur,
+    et il y reste quel que soit l'argument de l'appel. Trois appels distincts
+    décidés par un mot qui n'en distinguait aucun.
+
+    Ce que la désignation décide, elle le décide **seule** : ni la source de
+    travail ni le reste de la phrase ne servent à ce premier passage. Sinon un
+    argument que le modèle n'aurait pas rempli ferait gagner la source liée
+    contre une source nommée dans la question, et la source de travail n'a
+    jamais eu ce rang (cf. ``_cible``). Quand la désignation ne décide rien —
+    vide, ou un mot qui ne nomme rien — le message décide comme avant, au
+    caractère près.
+
+    Le NIVEAU de détail, lui, continue de se lire dans tout le texte : c'est
+    « que signifie la colonne class_id ? » avec ``cible="passengers"`` qui l'a
+    imposé — la table vient de l'argument, la colonne de la phrase, et il faut
+    les deux pour rendre la fiche d'une colonne plutôt que la table entière.
     """
     if not ontologies:
         return "Je n'ai aucune source de données déclarée dans mon catalogue."
-    cible = _cible(question, ontologies, source_de_travail)
+    cible = _cible(designation, ontologies) if designation.strip() else None
+    if cible is None:
+        cible = _cible(question, ontologies, source_de_travail)
     if cible is None:
         lignes = ["Voici les tables de chacune de mes sources :", ""]
         for ontologie in ontologies:

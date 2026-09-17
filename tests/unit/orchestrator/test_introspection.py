@@ -695,6 +695,76 @@ def test_une_colonne_portee_par_deux_sources_est_tranchee_par_celle_du_travail(
     assert "Voici les tables de chacune de mes sources" not in tranchee
 
 
+def test_la_designation_de_l_appelant_choisit_la_source_avant_le_message(ontologie_titanic):
+    """Le défaut mesuré le 2026-09-17, réduit à son os.
+
+    « dis-moi ce qu'il y a dans ventes, production et iris » fait émettre au
+    modèle TROIS appels, un par nom, et les trois rendaient le schéma d'`iris`.
+    La désignation était collée au message avant examen ; le message nomme
+    plusieurs sources, donc la voie de la source tombait, et c'était la TABLE
+    qui tranchait — `fleurs` ici, `iris` là-bas — un nom qui est dans la phrase
+    de l'utilisateur et qui y reste quel que soit l'argument de l'appel.
+
+    Ici la phrase nomme les deux sources, donc elle ne tranche rien. La
+    désignation, elle, tranche : c'est ce que l'appelant a explicitement visé.
+    """
+    ontologies = _deux_sources(ontologie_titanic)
+    message = "dis-moi ce qu'il y a dans iris et titanic"
+
+    sans = introspection.decrire_le_schema(f"iris {message}", ontologies)
+    avec = introspection.decrire_le_schema(f"titanic {message}", ontologies, designation="titanic")
+
+    # sans désignation, la table `fleurs` nommée nulle part ne tranche rien et
+    # c'est le tour d'horizon qui part — les deux appels rendaient le même texte
+    assert "Voici les tables de chacune de mes sources" in sans
+    assert "La source `titanic` contient 2 table(s)" in avec
+    assert "petal_length" not in avec
+
+
+def test_une_designation_qui_ne_nomme_rien_laisse_decider_le_message(ontologie_titanic):
+    """L'autre bord : la désignation ne prime que quand elle DÉCIDE.
+
+    Le modèle laisse souvent l'argument vide, ou y met un mot qui n'est le nom
+    de rien. Le message décide alors comme avant, au caractère près — sinon ce
+    correctif aurait coûté toute la famille des questions de sens, qui ne nomme
+    presque jamais sa source dans l'argument.
+    """
+    ontologies = _deux_sources(ontologie_titanic)
+
+    vide = introspection.decrire_le_schema("c'est quoi petal_length ?", ontologies, designation="")
+    bruit = introspection.decrire_le_schema(
+        "quoi que ce soit c'est quoi petal_length ?",
+        ontologies,
+        designation="quoi que ce soit",
+    )
+
+    assert "petal_length" in vide
+    assert "REAL" in vide
+    assert bruit == vide
+
+
+def test_la_designation_ne_fait_pas_gagner_la_source_de_travail(ontologie_titanic):
+    """Et elle décide SEULE, sans la source liée derrière elle.
+
+    ``_cible`` finit par la source de travail quand rien n'est nommé. Si le
+    premier passage la lui passait, un argument vide de sens ferait gagner la
+    source liée contre une source que la QUESTION nomme — et la source de
+    travail n'a jamais eu ce rang : elle départage, elle ne décide pas à la
+    place de l'utilisateur (test suivant).
+    """
+    ontologies = _deux_sources(ontologie_titanic)
+
+    reponse = introspection.decrire_le_schema(
+        "bidule c'est quoi petal_length ?",
+        ontologies,
+        source_de_travail="titanic",
+        designation="bidule",
+    )
+
+    assert "petal_length" in reponse
+    assert "passengers" not in reponse
+
+
 def test_la_source_de_travail_n_ecrase_jamais_un_nom_cite(ontologie_titanic):
     """Elle départage, elle ne décide pas à la place de l'utilisateur.
 

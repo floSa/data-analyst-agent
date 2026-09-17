@@ -441,13 +441,21 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         (« titanic »), de table (« passengers ») ou de colonne (« class_id »).
         Laisse vide pour le tour d'horizon de toutes les sources.
         """
-        # `cible` d'abord : ce que le modèle a explicitement désigné prime sur
-        # ce que la phrase de l'utilisateur laisse deviner.
+        # `cible` d'abord, et elle l'est VRAIMENT depuis le 2026-09-17 : elle
+        # est passée à part, et non plus seulement collée devant la phrase de
+        # l'utilisateur. Collée, elle ne primait pas — « dis-moi ce qu'il y a
+        # dans ventes, production et iris » faisait rendre `iris` aux TROIS
+        # appels, le nom de la table restant dans la phrase quel que soit
+        # l'argument (cf. ``introspection.decrire_le_schema``).
+        #
+        # La phrase reste donnée en entier : c'est elle qui porte le NIVEAU de
+        # détail — « que signifie la colonne class_id ? » nomme sa colonne dans
+        # la phrase et sa table dans l'argument.
         precision = f"{cible} {ctx.deps.question}".strip()
         return ctx.deps.retenir(
             "schema_d_une_source",
             introspection.decrire_le_schema(
-                precision, _ontologies(precision, ctx.deps), ctx.deps.source_de_travail
+                precision, _ontologies(precision, ctx.deps), ctx.deps.source_de_travail, cible
             ),
         )
 
