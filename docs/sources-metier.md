@@ -403,6 +403,265 @@ intermittent, sur une question dont la réponse de référence est elle-même un
 relance — et il est signalé ici plutôt que tu, parce qu'un 35/36 non expliqué
 dans une page vaut moins qu'un 35/36 expliqué.
 
+## Une question qui NOMME ses sources
+
+Trouvé en usage réel le 2026-09-17, sur ce catalogue :
+
+> Qu'est-ce que t'appelles source vente, production, stock ?
+
+L'agent rendait les **cinq** fiches — `iris` et `titanic` compris, qui n'ont
+aucun rapport — pour une question qui en visait trois.
+
+### La cause, nommée par le fil brut et non par la trace
+
+Le premier relevé donne ceci, trois tirages sur trois, identiques :
+
+```
+→ APPEL chercher_une_source({"sujet": "vente, production, stock"})
+← RETOUR chercher_une_source (2135 car.) : J'ai accès à 5 source(s) de données : …
+▸ TEXTE (220 car.) : J'ai trouvé les sources `ventes`, `production`, et `stocks`
+  dans mon catalogue. Pour en savoir plus […] Quelle source souhaites-tu explorer ?
+OUTILS : ['sources_de_donnees']      ← la trace, qui ment
+```
+
+Trois choses se lisent là, et aucune n'était dans les pistes qu'on avait
+listées avant de mesurer.
+
+**Un, la trace nommait le mauvais outil.** `SystemeDeps.decrire_les_sources`
+sert `sources_de_donnees` ET `chercher_une_source`, et inscrivait toujours le
+premier. Qui lisait la trace voyait l'outil qui sait se restreindre, alors que
+le modèle avait appelé celui qui ne le sait pas. C'est ce qui a fait chercher le
+défaut du côté du prompt pendant toute une relecture. La trace dit désormais
+l'outil qu'on a appelé (`outil` passé à `retenir`).
+
+**Deux, le modèle routait la question sur la RECHERCHE.** `chercher_une_source`
+ne LIT pas son argument : il rend le catalogue entier pour que le modèle y
+choisisse, et c'est délibéré (§ « chercher par sujet et réciter l'inventaire
+sont deux métiers »). Il rend donc 2 135 caractères et cinq sources à une
+question qui en nommait trois. Sa fiche y invitait — « recopie dans `sujet` les
+mots de l'utilisateur » convient à n'importe quelle phrase.
+
+**Trois, le même appel DÉSARME la ceinture.** `chercher_une_source` passe
+`a_enumerer=False`, parce qu'on ne veut pas qu'« as-tu une source qui parle de
+maintenance ? » doive réciter les quatre autres. Conséquence : la réponse de
+220 caractères qui nomme trois sources et n'en décrit aucune passe `defaut_de_fondation`
+sans encombre. Le défaut a donc deux faces, selon la porte par laquelle le tour
+entre — le pavé de 2 135 caractères servi tel quel quand la ceinture tient, ou
+le reçu de 220 caractères quand elle est désarmée — et c'est la même cause.
+
+**La boucle, elle, marchait déjà.** C'est le contre-exemple qui a fermé la
+question : « Parle-moi de ventes, production, stocks et iris » émettait, avant
+tout correctif, QUATRE `ToolCallPart` dans la même réponse, un par nom. Le
+modèle sait appeler un outil plusieurs fois dans un tour ; il ne savait pas
+qu'il le devait ici, et il l'a fait sur l'outil qui rend tout.
+
+Les quatre pistes ouvertes avant la mesure, jugées par elle : la démarche du
+prompt comptait **un peu** (rien ne disait qu'un outil s'appelle plusieurs
+fois) ; la fiche de l'outil comptait **beaucoup** ; « CITE-LES TOUS » ne
+comptait **pas** — cette branche était déjà désarmée ; la borne
+d'allers-retours ne comptait **pas** non plus, et le § sur le coût dit pourquoi.
+
+### Le correctif : un plancher, et pas un mot de plus
+
+**Ce que le message NOMME prime, et la règle ne porte pas sur l'argument.**
+`introspection.sources_nommees` lit dans le message toutes les sources
+déclarées qu'il écrit — au pluriel de l'utilisateur comme au singulier
+(`vente` désigne `ventes`, du même service que `Télémétrie` pour `telemetrie`).
+Quand un appel allait rendre le catalogue ENTIER et que le message nomme ses
+sources, ce sont leurs fiches qui partent, et elles sont à énumérer. La règle
+vaut pour les DEUX outils, parce qu'elle porte sur la question et non sur
+l'argument passé : élargir `cible` pour qu'il avale une liste de noms aurait
+traité cette phrase-ci et pas la suivante.
+
+**L'ensemble est annoncé comme CLOS**, et c'est l'autre moitié du correctif.
+`fiches_des_sources` met en tête « Les N sources que ta question nomme, et ce
+qu'on sait de chacune — toutes les N, il n'y en a pas d'autres à chercher ».
+Sans cette ligne, le modèle recevait bien les trois fiches et répondait quand
+même « j'ai trouvé les sources `ventes`, `production` et `stocks` » : il avait
+lu dans la fiche de `chercher_une_source` qu'il n'a « pas à réciter les
+autres », et traitait un ensemble déjà choisi comme une liste où choisir.
+Restreindre ce qu'on sert ne suffisait donc pas — il fallait dire que c'était
+restreint. Mesuré : **12/21 sans la ligne, 18/21 avec**.
+
+**La trace dit l'outil qu'on a appelé.** `retenir` reçoit désormais son nom.
+
+**Et c'est tout.** Ni le prompt ni aucune fiche d'outil ne bouge, et ce n'est
+pas de la retenue : trois formulations ont été écrites, mesurées, et rendues.
+Le § « ce que le prompt et les fiches n'ont pas eu le droit de dire » porte le
+relevé, et un test le fige (`test_aucune_fiche_d_outil_n_a_bouge`).
+
+### Le défaut, avant et après
+
+Sept messages, trois tirages chacun, le même oracle des deux côtés
+(`scripts/mesure_sources_nommees.py`). L'oracle exige trois choses : que chaque
+source nommée soit citée, qu'aucune autre ne le soit, et que chacune soit
+**décrite** — qu'un fait de sa fiche traverse la réponse, et pas seulement son
+nom.
+
+| | avant | après |
+|---|---|---|
+| tours conformes | **3/21** | **18/21** |
+| caractères servis par tour | 2 135 | 1 249 |
+| appels d'outil | 21 | 21 |
+| appels LLM | 39 | 39 |
+
+| message | sources nommées | avant | après |
+|---|---|---|---|
+| Qu'est-ce que t'appelles source vente, production, stock ? | 3 | 0/3 | **3/3** |
+| Donne-moi un aperçu de ventes, production, stocks et titanic. | 4 | 0/3 | **3/3** |
+| titanic et iris, c'est quoi au juste ? | 2 | 0/3 | **0/3** |
+| Explique-moi à quoi servent production, stocks et iris. | 3 | 3/3 | **3/3** |
+| Ça contient quoi, ventes et stocks ? | 2 | 0/3 | **3/3** |
+| Je voudrais comprendre ventes, production et stocks : présente-les-moi. | 3 | 0/3 | **3/3** |
+| Entre ventes et production, qu'y a-t-il dans chacune ? | 2 | 0/3 | **3/3** |
+
+Six de ces sept messages ont été écrits **après** le correctif : ils n'ont rien
+réglé, et le chiffre ne mesure donc pas la mémoire de son auteur. Le septième
+est celui de l'usage réel, et il passe de 220 caractères qui nomment trois
+sources sans en décrire aucune, à une réponse qui décrit les trois.
+
+Le tour qui reste, « titanic et iris, c'est quoi au juste ? », **n'appelle
+aucun outil** — l'agent système répond `AUTRE` et le tour repart au
+planificateur. Ce n'est pas la famille mesurée ici : c'est la reconnaissance en
+amont, et elle se jugeait déjà comme ça avant. On ne l'a pas touchée, § « ce
+qui reste ».
+
+### Le coût : multiplier les appels d'outil ne coûte rien
+
+La question était : multiplier les appels d'outil, qu'est-ce que ça coûte ? La
+réponse tenait déjà dans le relevé d'avant, et elle est **rien**.
+
+**Vingt et un appels d'outil et trente-neuf appels LLM, avant comme après.**
+Les caractères servis, eux, tombent de moitié. Le correctif ne multiplie donc
+pas les appels : il fait rendre autre chose aux mêmes.
+
+Et quand le modèle boucle vraiment, ça ne coûte rien non plus. « Donne-moi un
+aperçu de ventes, production, stocks et titanic » a émis, dans une version
+intermédiaire, **quatre `ToolCallPart` dans un seul `ModelResponse`** — quatre
+appels, un par nom, résolus en **un** aller-retour. Deux appels LLM par tour :
+un pour décider et émettre, un pour formuler. Un appel d'outil ou quatre, c'est
+le même prix.
+
+`systeme_request_limit` vaut 6, n'a pas été touché, et le tour le plus chargé en
+consomme 2. La borne n'était pas le sujet.
+
+### L'inventaire long ou court : il reste LONG, et voici pourquoi
+
+L'inventaire complet du catalogue métier pèse **2 135 caractères** — 1 397 sans
+les relevés, soit 738 caractères de volumes, de périodes et de colonnes de date.
+La question posée était : la réponse par défaut à « quelles sources as-tu ? » ne
+devrait-elle pas être la liste courte, le détail venant à la demande ? **Non**,
+et pour trois raisons mesurées.
+
+**Un, ce n'était pas le défaut.** Les 2 135 caractères n'ont jamais été de trop
+pour qui demande l'inventaire ; ils étaient de trop pour qui nommait trois
+sources. Le correctif les retire de là et les laisse là où ils répondent —
+1 249 caractères servis par tour sur la famille nommée contre 2 135 avant — sans
+qu'une question d'inventaire ait changé d'un caractère.
+
+**Deux, les relevés portent deux autres familles.** « De quand datent les
+données que tu as ? » et « Quelle est la taille de tes données ? » répondent
+aujourd'hui depuis l'inventaire, et c'est vérifiable : une version intermédiaire
+du prompt a fait tomber la seconde de 569 caractères — l'inventaire avec ses
+volumes — à 302 qui nomment les deux sources sans un chiffre. Les deux
+questions ont, dans l'oracle de surface, un `clarification_admise` :
+raccourcir l'inventaire les laisserait donc **vertes** tout en appauvrissant le
+produit. C'est exactement l'oracle qui mesure la phrase et non la réponse.
+
+**Trois, le prix est payé une fois et il est demandé.** 2 135 caractères ≈ 600
+jetons, sur une question dont c'est la réponse. Une liste courte les
+remplacerait par un tour de plus dès que l'utilisateur veut un volume.
+
+### Ce que le prompt et les fiches n'ont pas eu le droit de dire
+
+La démarche du prompt était la première piste, et la bonne question : rien n'y
+disait qu'un outil s'appelle plusieurs fois. Rien ne le disait non plus dans la
+fiche de l'outil. Cinq formulations ont été écrites pour le dire. **Les cinq ont
+été retirées**, et le relevé vaut plus que les règles qu'il a coûtées.
+
+| ce qu'on ajoute | où | famille nommée | surface |
+|---|---|---|---|
+| rien | — | 18/21 | **36/36** |
+| « un outil qui prend une **CIBLE** s'appelle une fois par cible » | démarche | 18/21 | 35/36 — `features-familier` |
+| la même règle **sans le mot `cible`** | démarche | 18/21 | 35/36 — `volumetrie-globale` |
+| « **citer un nom n'est pas le dire** » | étape 2, puis hors démarche | 21/21 | 35/36 — `features-familier` |
+| « appelle cet outil **une fois par nom** » | fiche `sources_de_donnees` | 18/21 | 35/36 — `periode-directe` |
+| « quand le nom est écrit, **la recherche est déjà faite** » | fiche `chercher_une_source` | 18/21 | 35/36 — `periode-directe` |
+
+Chacune est reproductible trois tirages sur trois, et les deux dernières ont
+coûté **deux campagnes complètes sur deux**.
+
+**Le mot `cible` désigne les outils qui le portent.** « Il te faut quoi pour
+deviner l'espèce d'un iris ? » partait de `attributs_d_un_modele` vers
+`modeles_de_prediction`. `cible` est l'argument de `sources_de_donnees` et de
+`schema_d_une_source` ; `attributs_d_un_modele` prend `modele`. Nommer un
+argument dans une consigne générale, c'est faire un sort aux outils qui ne
+l'ont pas.
+
+**Une fiche plus attirante attire aussi ce qui ne la regarde pas.** « Sur
+quelle période portent les données de la source titanic ? » est un CALCUL : elle
+doit quitter l'agent système pour le planificateur, et elle le faisait, trois
+tirages sur trois. Les deux phrases ajoutées aux fiches parlent toutes deux de
+« la source que la question nomme » — et cette question-là en nomme une. Elle
+restait donc à l'agent système, qui n'a que la fiche de `titanic` à rendre et
+répondait « une période non spécifiée ».
+
+**Le témoin qui rend le verdict lisible** : quatre lignes qui ne disent
+strictement RIEN, à la même place et de la même longueur que ce qu'on voulait
+écrire, laissent les trente-six vertes. Ce n'est donc pas la longueur du prompt
+qui déplace ces tours-là, c'est ce qu'on y écrit — et ce prompt est le plus
+chargé du socle.
+
+**D'où le correctif entièrement mécanique.** Une phrase de prompt parle à tous
+les tours ; une fiche d'outil parle à tous ceux qui pourraient l'appeler ; le
+plancher de `decrire_les_sources`, lui, ne parle qu'aux tours où un outil allait
+rendre le catalogue entier alors que le message nommait ses sources. C'est la
+règle de C33 sur les tournures, prise par un autre bout : ce qu'on peut décider
+en regardant la question, on ne le demande pas au modèle.
+
+La ligne qui manque au tableau est celle qu'on aurait voulue : **21/21 et
+36/36**. Elle n'existe pas. On a gardé 18/21 et 36/36.
+
+### Les campagnes, après
+
+| Campagne | Catalogue | Résultat |
+|---|---|---|
+| `mesure_sources_nommees.py --tirages 3` | `metier` | **18/21** (3/21 avant) |
+| `mesure_surface_conversationnelle.py`, 1ʳᵉ campagne | **par défaut** | **36/36** méta, **4/4** témoins |
+| `mesure_surface_conversationnelle.py`, 2ᵈᵉ campagne | **par défaut** | **36/36** méta, **4/4** témoins |
+| `mesure_questions_metier.py` | `metier` | **12/12** |
+| `mesure_parcours_de_demonstration.py` | `demonstration` | **48/48** |
+| `uv run pytest -q` | — | **1 277 passés, 99,59 %** (1 264 avant, + 13) |
+
+**Un relevé qu'il faut lire en entier.** Deux campagnes de surface lancées
+**en même temps** que le parcours et les douze questions ont rendu 35/36, sur
+`volumetrie-globale` puis sur `periode-directe`. Ce ne sont pas des
+régressions, et la mesure le dit : la même question, posée seule, rend le même
+texte au caractère près avec le correctif et sans lui — 688 caractères, les
+volumes compris, trois tirages sur trois de chaque côté. Les campagnes qui
+comptent sont donc celles du tableau, lancées **à la suite** et non de front :
+sous charge concurrente, ce moteur ne rend pas la même chose, et un banc qui
+partage son GPU mesure aussi le voisin.
+
+### Ce qui reste, et pourquoi on s'arrête là
+
+**Trois tours sur vingt et un**, tous sur « titanic et iris, c'est quoi au
+juste ? » : l'agent système n'appelle **aucun** outil, répond `AUTRE`, et le
+tour repart au planificateur. Ce n'est pas la restriction qui manque, c'est la
+reconnaissance en amont — la question ressemble à une demande de contenu. Elle
+échouait déjà ainsi avant le chantier, sur ce même message, et la corriger
+demande de toucher à ce qui décide si un tour est pour l'agent système : les
+trente-six questions de la surface en dépendent toutes.
+
+**La ceinture vérifie les noms, pas les faits.** Quand une réponse nomme les
+trois sources servies sans en décrire une, `defaut_de_fondation` la laisse
+passer — elle demande que les noms servis se retrouvent dans la réponse, et ils
+s'y retrouvent. Lui faire vérifier que les FAITS s'y retrouvent la ferait passer
+de « la liste est-elle complète ? » à « la reformulation est-elle fidèle ? ».
+C'est un autre mécanisme, et là encore les trente-six en dépendent. L'en-tête de
+`fiches_des_sources` obtient aujourd'hui le même effet en le demandant plutôt
+qu'en l'exigeant — c'est moins sûr, et c'est mesuré.
+
 ## Où ça vit
 
 | Quoi | Où |
@@ -411,6 +670,7 @@ dans une page vaut moins qu'un 35/36 expliqué.
 | Les cinq dictionnaires | [`sources/metier/dictionnaires/`](../sources/metier/dictionnaires/) |
 | Le semis, à graine fixe, et les oracles | [`scripts/seed_catalogue_metier.py`](../scripts/seed_catalogue_metier.py) |
 | Les douze questions, et le témoin | [`scripts/mesure_questions_metier.py`](../scripts/mesure_questions_metier.py) |
+| Une question qui nomme ses sources | [`scripts/mesure_sources_nommees.py`](../scripts/mesure_sources_nommees.py) |
 | Ce que la suite unitaire en tient | [`tests/catalogues/test_catalogue_metier.py`](../tests/catalogues/test_catalogue_metier.py) |
 | Comment écrire un dictionnaire | [`rediger-un-dictionnaire-de-source.md`](rediger-un-dictionnaire-de-source.md) |
 | L'autre catalogue, qui reste | [`sources-de-demonstration.md`](sources-de-demonstration.md) |
