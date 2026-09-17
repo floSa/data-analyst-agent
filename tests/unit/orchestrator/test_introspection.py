@@ -944,3 +944,61 @@ def test_la_consigne_ne_se_cherche_que_dans_le_dictionnaire_cite():
     assert (
         introspection.defaut_de_fondation("Ma source est **titanic** : `passengers`.", faits) == ""
     )
+
+
+def test_sources_nommees_rend_toutes_celles_que_le_message_ecrit():
+    """Le pluriel de `source_nommee`, qui rendait `None` dès qu'il y en avait deux.
+
+    « deux noms cités ne désignent pas une cible, et en choisir un serait
+    deviner » est juste quand on cherche UNE cible. Une question qui en vise
+    plusieurs n'avait alors rien pour la lire, et recevait le catalogue entier.
+    """
+    catalogue = Catalog(
+        sources=[
+            FileSource(name="ventes", path=Path("v.csv"), description="Les ventes."),
+            FileSource(name="production", path=Path("p.csv"), description="L'atelier."),
+            FileSource(name="stocks", path=Path("s.csv"), description="Les entrepôts."),
+            FileSource(name="iris", path=Path("i.csv"), description="Le jeu de référence."),
+        ]
+    )
+
+    nommees = introspection.sources_nommees(
+        "Qu'est-ce que t'appelles source vente, production, stock ?", catalogue
+    )
+
+    # au singulier dans la question, au pluriel dans le catalogue : c'est le
+    # même service que reconnaître « Télémétrie » pour `telemetrie`
+    assert [s.name for s in nommees] == ["ventes", "production", "stocks"]
+
+
+def test_sources_nommees_est_vide_quand_le_message_ne_nomme_rien():
+    """La recherche par sujet ne nomme personne, et doit tout recevoir."""
+    catalogue = Catalog(
+        sources=[
+            FileSource(name="ventes", path=Path("v.csv"), description="Les ventes."),
+            FileSource(name="production", path=Path("p.csv"), description="L'atelier."),
+        ]
+    )
+
+    assert introspection.sources_nommees("as-tu des données sur la maintenance ?", catalogue) == []
+
+
+def test_sources_nommees_reconnait_accents_et_majuscules():
+    """`introspection.replie` tient toujours : un nom écrit en français est un nom."""
+    catalogue = Catalog(
+        sources=[
+            FileSource(name="telemetrie", path=Path("t.csv"), description="Les relevés."),
+            FileSource(name="facturation", path=Path("f.csv"), description="Les factures."),
+        ]
+    )
+
+    nommees = introspection.sources_nommees("Télémétrie et Facturation, c'est quoi ?", catalogue)
+
+    assert [s.name for s in nommees] == ["telemetrie", "facturation"]
+
+
+def test_sources_nommees_ne_replie_pas_les_noms_trop_courts():
+    """En deçà de trois lettres, replier le pluriel ferait se rencontrer n'importe quoi."""
+    catalogue = Catalog(sources=[FileSource(name="abs", path=Path("a.csv"), description="X.")])
+
+    assert introspection.sources_nommees("parle-moi de ab", catalogue) == []

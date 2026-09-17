@@ -735,3 +735,175 @@ def test_le_tour_d_avant_arrive_au_modele_comme_un_dialogue(mini_csv: Path, regi
         ("TextPart", "`ventes`. Veux-tu son schéma ?"),
         ("UserPromptPart", "oui"),
     ]
+
+
+def _catalogue_de_trois() -> Catalog:
+    """Trois sources déclarées, pour mesurer ce qu'une question en nomme."""
+    return Catalog(
+        sources=[
+            FileSource(name="ventes", path=Path("v.csv"), description="Le carnet de commandes."),
+            FileSource(
+                name="production", path=Path("p.csv"), description="L'atelier et ses arrêts."
+            ),
+            FileSource(
+                name="stocks", path=Path("s.csv"), description="Les entrepôts et leurs mouvements."
+            ),
+        ]
+    )
+
+
+def _deps_sur(question: str, registre: Registry, catalogue: Catalog | None = None) -> SystemeDeps:
+    cat = catalogue if catalogue is not None else _catalogue_de_trois()
+    return SystemeDeps(
+        catalogue_declare=cat, catalogue_effectif=cat, registre=registre, question=question
+    )
+
+
+def test_trois_sources_nommees_rendent_trois_fiches_et_pas_le_catalogue(registre: Registry):
+    """Le défaut d'usage réel du 2026-09-17, réduit à ce qu'il était.
+
+    « Qu'est-ce que t'appelles source vente, production, stock ? » recevait les
+    CINQ fiches du catalogue de démonstration, `iris` et `titanic` compris, pour
+    une question qui en visait trois. Le fil brut a nommé la cause : le modèle
+    routait sur `chercher_une_source`, dont l'argument n'est pas lu et qui rend
+    tout le catalogue. La règle ne porte donc pas sur l'argument mais sur ce que
+    le MESSAGE nomme — et elle vaut pour les deux outils.
+
+    Les noms sont écrits au SINGULIER dans la question et au pluriel dans le
+    catalogue : c'est le cas réel, et le reconnaître est le même service que
+    reconnaître « Télémétrie » pour `telemetrie`.
+    """
+    deps = _deps_sur("Qu'est-ce que t'appelles source vente, production, stock ?", registre)
+
+    rendu = deps.decrire_les_sources(a_enumerer=False, outil="chercher_une_source")
+
+    assert "ventes" in rendu
+    assert "production" in rendu
+    assert "stocks" in rendu
+    assert "J'ai accès à" not in rendu  # pas l'inventaire, trois fiches
+    # nommées, donc à énumérer : une liste nommée n'est pas une matière à choisir
+    assert deps.faits_a_enumerer == [rendu]
+    assert deps.outils_appeles == ["chercher_une_source"]
+
+
+def test_la_recherche_par_sujet_recoit_toujours_tout_le_catalogue(registre: Registry):
+    """Ce qui ne bouge pas : chercher sans connaître le nom.
+
+    « As-tu quelque chose sur la maintenance ? » ne nomme aucune source, donc le
+    plancher ne s'applique pas — le modèle reçoit tout le catalogue pour y
+    choisir, et les faits ne sont PAS à énumérer. C'est la règle mesurée le
+    2026-09-16, et le correctif du 2026-09-17 ne doit pas la reprendre.
+    """
+    deps = _deps_sur("As-tu quelque chose sur la maintenance ?", registre)
+
+    rendu = deps.decrire_les_sources(a_enumerer=False, outil="chercher_une_source")
+
+    assert "J'ai accès à" in rendu
+    assert deps.faits_a_enumerer == []
+
+
+def test_un_nom_inconnu_rend_toujours_le_catalogue(registre: Registry):
+    """Celui qui se trompe de nom a besoin de voir les vrais — inchangé."""
+    deps = _deps_sur("C'est quoi la source facturation ?", registre)
+
+    rendu = deps.decrire_les_sources(cible="facturation")
+
+    assert "J'ai accès à" in rendu
+
+
+def test_sans_source_nommee_c_est_de_la_source_liee_qu_on_parle(registre: Registry):
+    """« Et elle contient quoi ? » ne nomme personne : le sujet est la source liée."""
+    catalogue = _catalogue_de_trois()
+    deps = SystemeDeps(
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        question="et elle contient quoi ?",
+        source_de_travail="production",
+    )
+
+    rendu = deps.decrire_les_sources()
+
+    assert "production" in rendu
+    assert "J'ai accès à" not in rendu
+
+
+def test_une_source_nommee_prime_sur_la_source_liee(registre: Registry):
+    """Le message nomme, donc c'est de CELLE-LÀ qu'on parle, pas de la liée."""
+    catalogue = _catalogue_de_trois()
+    deps = SystemeDeps(
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        question="et stocks, c'est quoi ?",
+        source_de_travail="production",
+    )
+
+    rendu = deps.decrire_les_sources()
+
+    assert "stocks" in rendu
+    assert "atelier" not in rendu
+
+
+def test_la_trace_nomme_l_outil_reellement_appele(registre: Registry):
+    """Une trace qui nomme un autre outil fait chercher le défaut là où il n'est pas.
+
+    `decrire_les_sources` sert deux outils et inscrivait toujours le premier.
+    La trace disait donc `sources_de_donnees` là où le modèle avait appelé
+    `chercher_une_source` — et c'est ce qui a caché la cause du défaut du
+    2026-09-17 pendant toute une relecture de trace.
+    """
+    deps = _deps_sur("as-tu des données sur les pannes ?", registre)
+
+    deps.decrire_les_sources(a_enumerer=False, outil="chercher_une_source")
+
+    assert deps.outils_appeles == ["chercher_une_source"]
+
+
+def test_aucune_fiche_d_outil_n_a_bouge(registre: Registry):
+    """Le correctif du 2026-09-17 ne touche à AUCUNE description d'outil, et c'est mesuré.
+
+    Deux phrases y avaient été ajoutées — « appelle cet outil une fois par nom »
+    sur `sources_de_donnees`, « quand le nom est écrit, la recherche est déjà
+    faite » sur `chercher_une_source`. Elles coûtaient `periode-directe` de la
+    surface, DEUX campagnes complètes sur deux : « sur quelle période portent
+    les données de la source titanic ? » quittait le planificateur, où elle se
+    calcule, pour l'agent système, qui n'a que la fiche de la source à rendre.
+    Une fiche plus attirante attire aussi ce qui ne la regarde pas.
+
+    Le test le fige : la restriction est mécanique (`sources_nommees` et le
+    plancher de `decrire_les_sources`), et rien n'est demandé au modèle.
+    """
+    (toolset,) = build_systeme_agent().toolsets
+    sources = toolset.tools["sources_de_donnees"].description or ""
+    recherche = toolset.tools["chercher_une_source"].description or ""
+
+    assert "une fois par nom" not in sources.lower()
+    assert "la recherche est" not in recherche.lower()
+
+
+def test_les_fiches_nommees_sont_annoncees_comme_un_ensemble_clos(registre: Registry):
+    """L'en-tête dit que l'ensemble est CLOS, et ce n'est pas un ornement.
+
+    Sans lui, un tour routé sur `chercher_une_source` recevait les trois fiches
+    et répondait « j'ai trouvé les sources `ventes`, `production` et `stocks` » :
+    trois noms, pas un fait. Le modèle avait lu dans la fiche de cet outil qu'il
+    n'a « pas à réciter les autres » et traitait trois fiches choisies comme une
+    liste où choisir. Mesuré le 2026-09-17 : 12/21 sans l'en-tête, 18/21 avec.
+    """
+    deps = _deps_sur("ventes, production et stocks : présente-les-moi", registre)
+
+    rendu = deps.decrire_les_sources(a_enumerer=False, outil="chercher_une_source")
+
+    assert "que ta question nomme" in rendu
+    assert "il n'y en a pas d'autres à chercher" in rendu
+
+
+def test_une_seule_source_nommee_n_a_pas_d_en_tete(registre: Registry):
+    """Une source, une fiche : annoncer « toutes les 1 » n'apprendrait rien."""
+    deps = _deps_sur("c'est quoi stocks ?", registre)
+
+    rendu = deps.decrire_les_sources()
+
+    assert "que ta question nomme" not in rendu
+    assert "stocks" in rendu
