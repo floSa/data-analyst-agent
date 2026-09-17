@@ -1002,3 +1002,155 @@ def test_sources_nommees_ne_replie_pas_les_noms_trop_courts():
     catalogue = Catalog(sources=[FileSource(name="abs", path=Path("a.csv"), description="X.")])
 
     assert introspection.sources_nommees("parle-moi de ab", catalogue) == []
+
+
+# --- une fiche citée doit être PORTÉE, pas seulement nommée -------------------
+
+
+def _fiches_de_trois() -> dict[str, str]:
+    """Trois fiches comme les outils les servent, avec ce qu'on a lu dedans."""
+    return {
+        "ventes": "La source **ventes** (postgres) — Le carnet de commandes.\n\n"
+        "4 table(s), 673 ligne(s) (clients : 18, commandes : 180)",
+        "production": "La source **production** (duckdb) — L'atelier et ses arrêts.\n\n"
+        "4 table(s), 222 ligne(s) (machines : 9, arrets_machine : 70)",
+        "stocks": "La source **stocks** (file) — Les entrepôts et leurs mouvements.\n\n"
+        "3 table(s), 519 ligne(s) (mouvements : 480, inventaire : 36)",
+    }
+
+
+def test_les_marques_d_une_fiche_excluent_le_nom_de_la_source():
+    """Le nom ne prouve rien : c'est justement ce qu'on vient de donner au modèle.
+
+    Une réponse qui répète les trois noms qu'elle a reçus porte trois noms et
+    zéro fait. Si le nom comptait pour marque, le défaut mesuré le 2026-09-17
+    serait déclaré conforme par la mesure censée l'attraper.
+    """
+    marques = introspection.marques_des_fiches(_fiches_de_trois())
+
+    assert "ventes" not in marques["ventes"]
+    assert "commandes" in marques["ventes"]
+    assert "entrepots" in marques["stocks"]
+
+
+def test_les_marques_ecartent_ce_que_toutes_les_fiches_portent():
+    """`source`, `table`, `ligne` traversent le catalogue : elles ne distinguent rien."""
+    marques = introspection.marques_des_fiches(_fiches_de_trois())
+
+    for propres in marques.values():
+        assert "source" not in propres
+        assert "table" not in propres
+        assert "ligne" not in propres
+
+
+def test_un_mot_de_liaison_n_est_pas_une_marque():
+    """`les` ne distinguait `stocks` que par accident de rédaction.
+
+    Une seule fiche l'écrivait, il devenait donc « propre » à elle — et il
+    suffisait alors d'écrire « sur les sources » pour être réputé avoir lu la
+    fiche. Le défaut du 2026-09-17 passait ainsi la mesure censée l'attraper.
+    Quatre caractères pour un mot, deux chiffres pour un nombre : `891` reste un
+    fait, `les` et `9` n'en sont pas.
+    """
+    marques = introspection.marques_des_fiches(_fiches_de_trois())
+
+    assert "les" not in marques["stocks"]
+    assert "entrepots" in marques["stocks"]
+    assert "9" not in marques["production"]
+    assert "70" in marques["production"]
+
+
+def test_deux_fiches_identiques_n_ont_aucune_marque():
+    """Exiger l'impossible ferait servir le repli sur des réponses justes.
+
+    Deux sources décrites des mêmes mots n'ont rien qui les distingue. La
+    ceinture ne doit alors rien réclamer — c'est la seule façon qu'elle a de ne
+    pas punir une réponse pour un défaut du catalogue.
+    """
+    fiches = {
+        "une": "La source **une** (file) — Un export.",
+        "autre": "La source **autre** (file) — Un export.",
+    }
+    faits = "\n\n".join(fiches.values())
+
+    marques = introspection.marques_des_fiches(fiches)
+
+    assert marques == {"une": frozenset(), "autre": frozenset()}
+    assert (
+        introspection.defaut_de_fondation("Les sources `une` et `autre`.", faits, faits, marques)
+        == ""
+    )
+
+
+def test_une_reponse_qui_ne_rend_que_les_noms_est_ecartee():
+    """Le défaut du 2026-09-17, réduit à ce qu'il était.
+
+    « Tu travailles sur les sources `production` et `stocks`. Dis-moi ce que tu
+    souhaites savoir sur ces sources. » : 108 caractères pour 986 servis, deux
+    noms, pas un fait — et la ceinture la servait, parce qu'elle comparait des
+    NOMS et que les deux noms y étaient.
+    """
+    fiches = _fiches_de_trois()
+    marques = introspection.marques_des_fiches(fiches)
+    faits = f"{fiches['production']}\n\n{fiches['stocks']}"
+
+    defaut = introspection.defaut_de_fondation(
+        "Tu travailles sur les sources `production` et `stocks`. "
+        "Dis-moi ce que tu souhaites savoir sur ces sources.",
+        faits,
+        faits,
+        {nom: marques[nom] for nom in ("production", "stocks")},
+    )
+
+    assert defaut == "source(s) citée(s) sans un fait de leur fiche : production, stocks"
+
+
+def test_un_seul_fait_par_fiche_suffit():
+    """Le modèle a le droit de résumer — pas celui de ne rien retenir.
+
+    Un élément, pas la fiche entière : ici le nombre d'arrêts pour `production`
+    et le mot `entrepôts` pour `stocks`, chacun absent de toutes les autres
+    fiches. C'est le bord qu'il ne faut pas durcir : exiger la fiche complète
+    ferait jeter des réponses justes, comme la ceinture d'exhaustivité l'a
+    déjà fait en remplaçant « la source interventions » par tout le catalogue.
+    """
+    fiches = _fiches_de_trois()
+    marques = introspection.marques_des_fiches(fiches)
+    faits = f"{fiches['production']}\n\n{fiches['stocks']}"
+
+    defaut = introspection.defaut_de_fondation(
+        "`production` est une base DuckDB, avec 70 arrêts machine relevés ; "
+        "`stocks` décrit les entrepôts et leurs mouvements.",
+        faits,
+        faits,
+        {nom: marques[nom] for nom in ("production", "stocks")},
+    )
+
+    assert defaut == ""
+
+
+def test_les_marques_se_calculent_sur_tout_le_catalogue():
+    """Pas sur les seules fiches servies, et c'est ce qui les rend fiables.
+
+    `entrepots` ne distingue `stocks` que parce que les quatre autres fiches ne
+    le portent pas. Calculées sur deux fiches, les marques compteraient comme
+    propre tout mot absent de l'autre — et un tour à deux sources jugerait plus
+    large qu'un tour à cinq, pour la même réponse.
+    """
+    fiches = _fiches_de_trois()
+    fiches["entrepots_bis"] = "La source **entrepots_bis** (file) — Les entrepôts, autrement."
+
+    marques = introspection.marques_des_fiches(fiches)
+
+    assert "entrepots" not in marques["stocks"]
+
+
+def test_sans_fiche_servie_la_ceinture_ne_reclame_rien():
+    """L'inventaire du catalogue n'est pas une fiche : il énumère des noms.
+
+    C'est sa réponse, et exiger un fait par source y ferait servir le repli sur
+    « quelles sources as-tu ? » — la question la mieux tenue de la surface.
+    """
+    faits = "J'ai accès à 2 source(s) de données :\n\n- **ventes** (postgres) — Le carnet."
+
+    assert introspection.defaut_de_fondation("Mes sources : `ventes`.", faits, faits) == ""

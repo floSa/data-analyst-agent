@@ -12,6 +12,7 @@ partent à l'utilisateur, et c'est le rôle qu'a pris l'ancien chemin
 déterministe : une ceinture, plus le chemin principal.
 """
 
+import hashlib
 from pathlib import Path
 from typing import get_args
 
@@ -19,12 +20,18 @@ import joblib
 import pytest
 from pydantic_ai import UnexpectedModelBehavior
 
+from data_analyst_agent import prompts
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
 from data_analyst_agent.config import Settings
+from data_analyst_agent.orchestrator import introspection
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Capability, Plan
-from data_analyst_agent.orchestrator.systeme import SystemeDeps, build_systeme_agent
+from data_analyst_agent.orchestrator.systeme import (
+    SystemeDeps,
+    build_systeme_agent,
+    run_systeme,
+)
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from helpers.doubles import FakeClassifier
 from helpers.scripted_llm import (
@@ -907,3 +914,255 @@ def test_une_seule_source_nommee_n_a_pas_d_en_tete(registre: Registry):
 
     assert "que ta question nomme" not in rendu
     assert "stocks" in rendu
+
+
+# --- le second plancher : le modèle n'appelle rien, le message nomme deux sources ---
+
+
+def _sans_aucun_outil() -> ScriptedLLM:
+    """Un agent système qui décline le tour : ``AUTRE``, et aucun appel d'outil."""
+    return ScriptedLLM().script(SYSTEME, [text(introspection.SENTINELLE_HORS_SUJET)])
+
+
+def test_deux_sources_nommees_sans_outil_appele_atteignent_l_agent_systeme(registre: Registry):
+    """« titanic et iris, c'est quoi au juste ? » : aucun outil, et un tour perdu.
+
+    Mesuré le 2026-09-17, trois tirages sur trois : aucun ``ToolCallPart``,
+    réponse ``AUTRE``, et le tour repart au planificateur — qui n'a pas de
+    capacité pour « décris-moi ces deux sources-là ». C'est la famille laissée à
+    0/3 en C41.
+
+    Le plancher ne demande rien au modèle : il constate que le message nomme deux
+    sources du catalogue, sert leurs fiches, et laisse la ceinture écarter le
+    ``AUTRE``.
+    """
+    catalogue = _catalogue_de_trois()
+
+    resultat = run_systeme(
+        "ventes et stocks, c'est quoi au juste ?",
+        model=_sans_aucun_outil().model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        request_limit=3,
+    )
+
+    assert resultat.concerne_le_systeme
+    assert resultat.outils_appeles == ("plancher_des_sources_nommees",)
+    assert "carnet de commandes" in resultat.faits
+    assert "entrepôts" in resultat.faits
+    assert "atelier" not in resultat.faits  # `production` n'est pas nommée
+    # la ceinture fait le reste : le ``AUTRE`` du modèle ne part pas
+    assert introspection.defaut_de_fondation(
+        resultat.reponse, resultat.faits, resultat.faits_a_enumerer, resultat.marques_a_porter
+    )
+
+
+def test_une_seule_source_nommee_laisse_le_tour_au_planificateur(registre: Registry):
+    """« combien de commandes dans ventes ? » nomme une source et se COMPTE.
+
+    C'est la limite du plancher, et la raison pour laquelle il en faut deux et
+    non une. Le modèle n'appelle aucun outil sur ce message — mesuré — et il a
+    raison : la réponse change avec les lignes. Un plancher qui se déclencherait
+    au premier nom cité le contredirait et volerait la question au planificateur.
+    """
+    catalogue = _catalogue_de_trois()
+
+    resultat = run_systeme(
+        "combien de commandes dans ventes ?",
+        model=_sans_aucun_outil().model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        request_limit=3,
+    )
+
+    assert not resultat.concerne_le_systeme
+
+
+def test_sans_source_nommee_le_plancher_ne_se_declenche_pas(registre: Registry):
+    """Une question sur les données qui ne nomme personne repart, comme avant."""
+    catalogue = _catalogue_de_trois()
+
+    resultat = run_systeme(
+        "quelle est la moyenne des montants ?",
+        model=_sans_aucun_outil().model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        request_limit=3,
+    )
+
+    assert not resultat.concerne_le_systeme
+
+
+def test_un_message_reduit_a_des_noms_laisse_le_premier_tour_faire_son_travail(
+    registre: Registry,
+):
+    """« ventes ou clients ? » hésite ENTRE deux sources, il n'en demande pas la fiche.
+
+    L'autre bord du plancher, et c'est un test qui l'a trouvé — pas une
+    relecture. Servir deux fiches ici répondrait à côté et laisserait le fil
+    délié : la bonne réponse est la question du premier tour, qui finit par
+    « sur laquelle veux-tu travailler ? » et lie la réponse à la conversation.
+
+    Le décompte est celui que ``choix_de_source`` mesure déjà : au-delà de trois
+    mots en plus des noms, le message porte une question.
+    """
+    catalogue = _catalogue_de_trois()
+
+    resultat = run_systeme(
+        "ventes ou stocks ?",
+        model=_sans_aucun_outil().model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        request_limit=3,
+    )
+
+    assert not resultat.concerne_le_systeme
+
+
+def test_le_plancher_ne_double_pas_un_outil_deja_appele(registre: Registry):
+    """Quand le modèle a appelé un outil, c'est lui qui a servi — pas le plancher.
+
+    Le plancher ne répare que les tours où rien n'a été appelé. Le laisser
+    ajouter ses fiches par-dessus servirait deux fois les mêmes faits, et la
+    trace nommerait un plancher là où un outil avait fait son travail.
+    """
+    catalogue = _catalogue_de_trois()
+    llm = ScriptedLLM().script(
+        SYSTEME,
+        [tool_call("sources_de_donnees", {}), text("Les sources `ventes` et `stocks`.")],
+    )
+
+    resultat = run_systeme(
+        "ventes et stocks, c'est quoi ?",
+        model=llm.model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        request_limit=3,
+    )
+
+    assert resultat.outils_appeles == ("sources_de_donnees",)
+
+
+def test_une_source_citee_sans_un_fait_de_sa_fiche_fait_servir_le_repli(
+    mini_csv: Path, registre: Registry
+):
+    """Le défaut du 2026-09-17, bout en bout dans le graphe.
+
+    Le modèle reçoit deux fiches et rend deux noms. La ceinture comparait des
+    NOMS : les deux y étaient, donc la réponse était réputée fondée et partait
+    telle quelle — 108 caractères pour 986 servis, zéro fait. C'est le repli qui
+    doit partir, et il est LISIBLE : il a été écrit pour un lecteur.
+    """
+    catalogue = Catalog(
+        sources=[
+            FileSource(name="ventes", path=mini_csv, description="Le carnet de commandes."),
+            FileSource(name="stocks", path=mini_csv, description="Les entrepôts et leurs flux."),
+        ]
+    )
+    llm = agent_systeme(
+        "sources_de_donnees",
+        {},
+        "Tu travailles sur les sources `ventes` et `stocks`. "
+        "Dis-moi ce que tu souhaites savoir sur ces sources.",
+    )
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "je bosse sur quoi si je prends ventes et stocks ?"
+    )
+
+    assert "carnet de commandes" in reponse.answer
+    assert "entrepôts" in reponse.answer
+    detail = next(s for s in reponse.trace if s.node == "system").detail
+    assert "sans un fait de leur fiche" in detail
+
+
+def test_une_reformulation_qui_porte_les_faits_est_toujours_servie(
+    mini_csv: Path, registre: Registry
+):
+    """L'autre bord, et c'est lui qui coûterait cher à durcir.
+
+    La ceinture porte les 36 questions de la surface conversationnelle. Une
+    réponse qui résume honnêtement — un fait par source, dans les mots du
+    modèle — doit continuer de partir telle quelle. La ceinture d'exhaustivité a
+    déjà remplacé « la source `interventions` », qui était juste, par 2 200
+    caractères de catalogue : l'exigence est UN fait, jamais la fiche entière.
+    """
+    catalogue = Catalog(
+        sources=[
+            FileSource(name="ventes", path=mini_csv, description="Le carnet de commandes."),
+            FileSource(name="stocks", path=mini_csv, description="Les entrepôts et leurs flux."),
+        ]
+    )
+    llm = agent_systeme(
+        "sources_de_donnees",
+        {},
+        "`ventes` tient le carnet de commandes ; `stocks` couvre les entrepôts.",
+    )
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "ventes et stocks, ça contient quoi ?"
+    )
+
+    assert reponse.answer.startswith("`ventes` tient le carnet")
+    assert "formulé par le modèle" in next(s for s in reponse.trace if s.node == "system").detail
+
+
+# --- ce qu'on s'interdit d'écrire, figé ---------------------------------------
+
+# Les empreintes du prompt de l'agent système et des sept fiches d'outils, au
+# 2026-09-17. Elles ne sont pas là pour empêcher de les modifier : elles sont là
+# pour qu'une modification soit un GESTE, avec une campagne à l'appui.
+#
+# Cinq formulations ont déjà été écrites pour dire au modèle ce que les deux
+# planchers font désormais tout seuls — trois dans la démarche du prompt, deux
+# dans les fiches de `sources_de_donnees` et de `chercher_une_source`. Les cinq
+# ont été retirées : chacune coûtait une question de la surface
+# conversationnelle, trois tirages sur trois (`features-familier`,
+# `volumetrie-globale`, `periode-directe`). Un témoin de quatre lignes VIDES au
+# même endroit ne coûtait rien — ce n'est donc pas la longueur du prompt, c'est
+# son contenu. Une fiche plus attirante attire aussi ce qui ne la regarde pas.
+EMPREINTE_DU_PROMPT_SYSTEME = "2a77a1ae012951c3e5624aefc41f4de84830859afdc18c3852ece825741723f8"
+EMPREINTES_DES_FICHES_D_OUTIL = {
+    "capacites_de_l_agent": "eb78b85c45d3d067d33da6c14fd4f14e9be2f9010541a62bd80256d92e5b51d2",
+    "sources_de_donnees": "9fe6ce293a71bb0049bdcbccf5f7131936eec1794fcbb14bd7baba4dc850442c",
+    "chercher_une_source": "fa0c1fed82a2afd9a25581b5efacdf08878e63316cf46edaba8a06a02d4492c5",
+    "schema_d_une_source": "1eea42390673be0faaba9b306b95992d989c0e61be3d06aa4c3fe25d6275f3db",
+    "travailler_sur_une_source": "6d5b6232f652a60652e517b5e11318a923440766b342aae1989d4cb89391f989",
+    "modeles_de_prediction": "e6acc1ec8c22ab79a40fa83b6072253d2f310619c89c2a031248f8702394f80f",
+    "attributs_d_un_modele": "412f4dea2265524db4cbe947ef4c841f16e1a5da4b8449b0348d8ac5d3e061e1",
+}
+
+
+def _empreinte(texte: str) -> str:
+    return hashlib.sha256(texte.encode("utf-8")).hexdigest()
+
+
+def test_aucun_paragraphe_de_prompt_n_a_bouge():
+    """Le correctif du 2026-09-17 ne touche à AUCUN mot du prompt système.
+
+    Il est mécanique de bout en bout : ce que le message NOMME
+    (`introspection.sources_nommees`), ce qu'une fiche porte de propre
+    (`introspection.marques_des_fiches`), et deux planchers qui ne parlent qu'aux
+    tours où rien n'a été servi. Rien n'est demandé au modèle.
+    """
+    assert _empreinte(prompts.SYSTEME) == EMPREINTE_DU_PROMPT_SYSTEME
+
+
+def test_aucune_fiche_d_outil_n_a_bouge_au_caractere_pres():
+    """Les sept fiches d'outils, à l'octet près.
+
+    `test_aucune_fiche_d_outil_n_a_bouge` interdisait deux phrases nommément ;
+    celui-ci interdit tout ajout. La différence compte : ce qui a coûté
+    `periode-directe` n'était pas une phrase en particulier, c'était le fait
+    d'avoir rendu une fiche plus attirante.
+    """
+    (toolset,) = build_systeme_agent().toolsets
+
+    empreintes = {nom: _empreinte(outil.description or "") for nom, outil in toolset.tools.items()}
+
+    assert empreintes == EMPREINTES_DES_FICHES_D_OUTIL
