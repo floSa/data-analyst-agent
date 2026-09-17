@@ -49,6 +49,7 @@ quatre autres sujets sont entièrement déterminés par la configuration.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import dataclass, field
 
@@ -127,6 +128,9 @@ class SystemeDeps:
     # qu'un outil a servi pour que le modèle y CHOISISSE — « as-tu une source
     # qui parle de maintenance ? » se répond par une source, pas par cinq.
     faits_a_enumerer: list[str] = field(default_factory=list)
+    # Les sources dont la FICHE a été servie, dans l'ordre. Une fiche doit être
+    # portée par la réponse — pas seulement citée (cf. ``marques_a_porter``).
+    fiches_servies: list[str] = field(default_factory=list)
     outils_appeles: list[str] = field(default_factory=list)
     # La source que l'outil de liaison a retenue ("" = aucune demande). L'outil
     # ne CHANGE rien de lui-même : il enregistre une demande que l'appelant
@@ -136,18 +140,41 @@ class SystemeDeps:
     # celle qu'on QUITTE. "" = aucune, ce qui est le premier tour d'un fil.
     source_de_travail: str = ""
 
-    def retenir(self, outil: str, texte: str, *, a_enumerer: bool = True) -> str:
+    def retenir(
+        self, outil: str, texte: str, *, a_enumerer: bool = True, fiches: tuple[str, ...] = ()
+    ) -> str:
         """Garde ce qu'un outil a rendu — et dit s'il faut le redire en entier.
 
         ``a_enumerer=False`` quand les faits sont de la MATIÈRE À CHOISIR et non
         une liste à réciter. La ceinture continue d'interdire d'inventer ; elle
         cesse d'exiger qu'on récite.
+
+        ``fiches`` : les sources dont la FICHE part dans ce texte. Elles sont
+        notées parce qu'une fiche se juge autrement qu'une liste — son nom cité
+        ne suffit pas, il faut qu'un de ses faits survive à la reformulation
+        (``introspection._fiche_citee_sans_un_fait``). L'inventaire du catalogue
+        n'en est pas une : il énumère des noms, et les noms SONT sa réponse.
         """
         self.outils_appeles.append(outil)
         self.faits.append(texte)
         if a_enumerer:
             self.faits_a_enumerer.append(texte)
+        self.fiches_servies.extend(n for n in fiches if n not in self.fiches_servies)
         return texte
+
+    def marques_a_porter(self) -> dict[str, frozenset[str]]:
+        """Ce qui, pour chaque fiche servie, prouve que la réponse l'a lue.
+
+        Les marques sont calculées sur TOUT le catalogue déclaré et non sur les
+        seules fiches servies : un mot commun aux cinq fiches n'est la marque
+        d'aucune, et le mesurer sur deux fiches seulement en ferait une marque
+        dès que les trois autres sont absentes du tour.
+        """
+        if not self.fiches_servies:
+            return {}
+        toutes = {s.name: self._fiche(s) for s in self.catalogue_declare.sources}
+        marques = introspection.marques_des_fiches(toutes)
+        return {nom: marques[nom] for nom in self.fiches_servies if nom in marques}
 
     def decrire_les_sources(
         self, cible: str = "", *, a_enumerer: bool = True, outil: str = "sources_de_donnees"
@@ -226,14 +253,18 @@ class SystemeDeps:
         if vise:
             trouvee = _trouver_la_source(self.catalogue_declare, vise)
             if trouvee is not None:
-                return self.retenir(outil, self._fiche(trouvee))
+                return self.retenir(outil, self._fiche(trouvee), fiches=(trouvee.name,))
         nommees = introspection.sources_nommees(self.question, self.catalogue_declare)
         if nommees:
-            return self.retenir(outil, introspection.fiches_des_sources(nommees, faits))
+            return self.retenir(
+                outil,
+                introspection.fiches_des_sources(nommees, faits),
+                fiches=tuple(s.name for s in nommees),
+            )
         if a_enumerer and self.source_de_travail:
             liee = _trouver_la_source(self.catalogue_declare, self.source_de_travail)
             if liee is not None:
-                return self.retenir(outil, self._fiche(liee))
+                return self.retenir(outil, self._fiche(liee), fiches=(liee.name,))
         return self.retenir(
             outil,
             introspection.decrire_les_sources(self.catalogue_declare, faits),
@@ -310,6 +341,9 @@ class ResultatSysteme:
     outils_appeles: tuple[str, ...]
     # La source que l'outil de liaison a retenue ("" = aucune demande).
     source_a_lier: str = ""
+    # Pour chaque fiche servie, ce qui prouve qu'une réponse l'a lue (cf.
+    # ``SystemeDeps.marques_a_porter``). Vide = aucune fiche n'est partie.
+    marques_a_porter: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
     @property
     def concerne_le_systeme(self) -> bool:
@@ -578,4 +612,5 @@ def run_systeme(
         faits_a_enumerer="\n\n".join(deps.faits_a_enumerer),
         outils_appeles=tuple(deps.outils_appeles),
         source_a_lier=deps.source_a_lier,
+        marques_a_porter=deps.marques_a_porter(),
     )

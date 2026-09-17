@@ -1302,8 +1302,9 @@ class Orchestrator:
         l'ancien chemin déterministe est devenu :
 
         - aucun outil appelé — la question n'était pas pour lui ;
-        - la formulation invente un nom, ou en omet un rendu par l'outil : les
-          **faits** sont servis tels quels (``defaut_de_fondation``) ;
+        - la formulation invente un nom, en omet un rendu par l'outil, ou cite
+          une source sans porter un seul fait de sa fiche : les **faits** sont
+          servis tels quels (``defaut_de_fondation``) ;
         - l'agent système lui-même n'a pas abouti : le tour repart au
           planificateur au lieu d'échouer.
 
@@ -1353,7 +1354,10 @@ class Orchestrator:
             return liaison
         outils = ", ".join(resultat.outils_appeles)
         defaut = introspection.defaut_de_fondation(
-            resultat.reponse, resultat.faits, resultat.faits_a_enumerer
+            resultat.reponse,
+            resultat.faits,
+            resultat.faits_a_enumerer,
+            resultat.marques_a_porter,
         )
         servie = resultat.faits if defaut else resultat.reponse
         detail = (

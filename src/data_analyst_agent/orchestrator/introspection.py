@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import get_args
 
@@ -890,7 +891,95 @@ def _actions(faits: str) -> list[str]:
     return list(radicaux)
 
 
-def defaut_de_fondation(reponse: str, faits: str, a_enumerer: str | None = None) -> str:
+# Ce qu'il faut à un jeton pour prouver qu'on a LU une fiche. Être absent de
+# toutes les autres fiches n'y suffit pas, et un test l'a montré : « Tu
+# travailles sur les sources `production` et `stocks`. » était déclarée
+# DÉCRITE — `les` n'apparaissait que dans la description de `stocks`, donc
+# comptait pour marque, donc un mot de liaison français suffisait à prouver une
+# lecture. Un mot d'au moins quatre caractères, ou un nombre d'au moins deux
+# chiffres : `duckdb`, `entrepots`, `891` sont des faits ; `les`, `ses`, `9` ne
+# le sont pas. Deux chiffres et non quatre caractères pour les nombres, parce
+# qu'un compte de lignes est un fait quelle que soit sa longueur — `891` est
+# porté par la seule fiche de `titanic` — alors qu'un chiffre isolé se retrouve
+# dans n'importe quelle phrase.
+_LONGUEUR_D_UN_MOT_MARQUANT = 4
+_LONGUEUR_D_UN_NOMBRE_MARQUANT = 2
+
+
+def _fait_une_marque(jeton: str) -> bool:
+    if jeton.isdigit():
+        return len(jeton) >= _LONGUEUR_D_UN_NOMBRE_MARQUANT
+    return len(jeton) >= _LONGUEUR_D_UN_MOT_MARQUANT
+
+
+def marques_des_fiches(fiches: Mapping[str, str]) -> dict[str, frozenset[str]]:
+    """Pour chaque fiche, les jetons qu'elle est SEULE à porter.
+
+    Ce qui, dans une réponse, prouve qu'elle a lu la fiche de cette source-ci :
+    son type quand il la distingue, un de ses volumes, une de ses dates, un mot
+    de sa description qu'aucune autre fiche ne porte. Rien n'est écrit à la
+    main — les marques sont calculées depuis les fiches elles-mêmes, donc elles
+    suivent le catalogue et ne mesurent pas la mémoire de leur auteur.
+
+    **Le NOM de la source en est retiré, et c'est tout l'objet.** Une réponse
+    qui répète les noms qu'on vient de lui donner porte des noms et zéro fait ;
+    c'est le défaut jumeau de l'inventaire complet, et celui qui passait.
+
+    **Et un mot de liaison n'est pas un fait**, même quand une seule fiche le
+    porte (``_fait_une_marque``) : `les` n'a distingué `stocks` que par accident
+    de rédaction, et il suffisait alors d'écrire « sur les sources » pour être
+    réputé avoir lu.
+
+    Les fiches doivent être celles de TOUT le catalogue déclaré et non des
+    seules sources servies : un mot commun aux cinq fiches n'est la marque
+    d'aucune, et le mesurer sur deux fiches seulement en ferait une marque dès
+    que les trois autres sont absentes du tour.
+    """
+    replies = {nom: set(replie(fiche).split()) for nom, fiche in fiches.items()}
+    marques = {}
+    for nom, a_moi in replies.items():
+        ailleurs = {mot for autre, mots in replies.items() if autre != nom for mot in mots}
+        propres = {m for m in a_moi - ailleurs if _fait_une_marque(m)}
+        marques[nom] = frozenset(propres - {replie(nom).strip()})
+    return marques
+
+
+def _fiche_citee_sans_un_fait(reponse: str, a_porter: Mapping[str, frozenset[str]]) -> str:
+    """Une source citée sans un seul fait de sa fiche — ``""`` si rien.
+
+    **Le défaut jumeau de l'omission**, et il passait. « Tu travailles sur les
+    sources `production` et `stocks`. Dis-moi ce que tu souhaites savoir sur ces
+    sources. » : cent huit caractères pour neuf cent quatre-vingt-six servis,
+    deux noms, pas un fait — et la ceinture la servait, parce qu'elle comparait
+    des NOMS et que les deux noms y étaient. Une réponse qui cite une source
+    sans porter un mot de sa fiche ne répond pas plus qu'une réponse qui omet
+    son nom (mesuré le 2026-09-17, trois tirages sur trois).
+
+    Ce qui est exigé est **un** élément, pas la fiche entière : le modèle a le
+    droit de résumer, de reformuler et de choisir ce qu'il retient. Ce qu'il n'a
+    pas, c'est le droit de ne rien retenir.
+
+    Une fiche sans aucune marque ne réclame rien : deux sources déclarées avec
+    la même description n'ont rien qui les distingue, et exiger l'impossible
+    ferait servir le repli sur des réponses justes.
+    """
+    plat = replie(reponse)
+    creuses = [
+        nom
+        for nom, marques in a_porter.items()
+        if marques and not any(f" {marque} " in plat for marque in marques)
+    ]
+    if creuses:
+        return "source(s) citée(s) sans un fait de leur fiche : " + ", ".join(creuses)
+    return ""
+
+
+def defaut_de_fondation(
+    reponse: str,
+    faits: str,
+    a_enumerer: str | None = None,
+    a_porter: Mapping[str, frozenset[str]] | None = None,
+) -> str:
     """Ce qui interdit de servir la formulation du modèle — ``""`` si rien.
 
     Le modèle formule, mais il ne décide pas de ce qui est vrai. Deux défauts
@@ -906,6 +995,11 @@ def defaut_de_fondation(reponse: str, faits: str, a_enumerer: str | None = None)
       défaut mesuré : la version narrée par le modèle avait laissé tomber deux
       colonnes sur dix (mesure du 2026-09-07, §4 de
       `surface-conversationnelle.md`).
+    - **une source citée sans un seul fait de sa fiche.** Le jumeau du
+      précédent : les deux noms servis sont bien là, et rien d'autre. « Tu
+      travailles sur les sources `production` et `stocks`. » répond à une
+      question sur deux sources avec zéro caractère de ce qu'on venait de lire
+      dedans, et passait (mesuré le 2026-09-17, trois tirages sur trois).
     - **une attribution qui ne correspond pas aux faits**, dans les DEUX sens
       (``_attribution_qui_ne_colle_pas``).
     - **une consigne qui ne correspond pas aux faits**, dans les DEUX sens
@@ -917,6 +1011,12 @@ def defaut_de_fondation(reponse: str, faits: str, a_enumerer: str | None = None)
     ``a_enumerer`` : la part des faits qui doit être reprise EN ENTIER. Par
     défaut, tout — c'est le cas d'une question sur le catalogue (« quelles
     sources as-tu ? »), où une liste incomplète est une réponse fausse.
+
+    ``a_porter`` : les sources dont la fiche a été servie, avec ce qui distingue
+    chacune (``marques_des_fiches``). Chacune doit laisser **un** fait dans la
+    réponse — pas seulement son nom (``_fiche_citee_sans_un_fait``). Vide par
+    défaut : aucun autre appelant n'a de fiche à faire porter, et l'inventaire
+    du catalogue n'en est pas une — il énumère des noms, et c'est sa réponse.
 
     **Elle ne vaut pas pour une question qui CHOISIT.** « As-tu une source qui
     parle de maintenance ? » appelle une réponse à UNE source ; exiger qu'elle
@@ -950,6 +1050,9 @@ def defaut_de_fondation(reponse: str, faits: str, a_enumerer: str | None = None)
     tues = [a for a in _actions(exhaustifs) if a not in plat]
     if tues:
         return "action(s) omise(s) : " + ", ".join(tues)
+    creuse = _fiche_citee_sans_un_fait(reponse, a_porter or {})
+    if creuse:
+        return creuse
     return _attribution_qui_ne_colle_pas(reponse, faits) or _consigne_qui_ne_colle_pas(
         reponse, faits
     )
