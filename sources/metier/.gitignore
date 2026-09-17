@@ -1,0 +1,37 @@
+# Ce que le SEMIS engendre ou recopie, et qui n'a donc rien à faire dans le dépôt.
+# Reconstruit à l'identique par :
+#
+#     uv run python scripts/seed_catalogue_metier.py
+#
+# La base Postgres `daa_metier` n'est pas listée ici pour la raison évidente
+# qu'elle n'est pas un fichier — mais elle est engendrée par le même script, et
+# recréée à chaque exécution.
+
+# 3,9 Mo pour 222 lignes : c'est le plancher d'un fichier DuckDB, pas la taille
+# de nos données. Son CONTENU est reproductible — deux exécutions rendent la
+# même empreinte de contenu — mais pas ses OCTETS : un .duckdb porte des
+# identifiants de blocs et un ordre d'écriture qui changent d'une exécution à
+# l'autre.
+production.duckdb
+
+# Le classeur EST figé octet pour octet (`figer_le_classeur` neutralise les
+# horodatages du zip et de docProps). Il reste hors du dépôt pour une autre
+# raison : c'est un binaire de 24 ko qu'aucune revue ne peut lire, et le semis
+# le rend en une seconde.
+stocks.xlsx
+
+# Les deux jeux de référence sont des COPIES OCTET POUR OCTET de
+# `sources/iris.csv` et `sources/titanic.csv`, qui sont versionnés, eux. Les
+# versionner une seconde fois ici ferait DEUX vérités pour un même fichier, et
+# deux vérités finissent toujours par diverger. Une seule copie dans git, plus
+# une étape de copie que le semis vérifie au sha256 : ça ne peut pas diverger.
+iris.csv
+titanic.csv
+
+# ---------------------------------------------------------------------------
+# NE SONT PAS IGNORÉS, et c'est délibéré :
+#
+#   catalogue.yaml       la déclaration — c'est elle qu'on relit en revue
+#   dictionnaires/*.md   le sens des colonnes et les trois pièges ; rien ne les
+#                        régénère, ils sont écrits à la main
+# ---------------------------------------------------------------------------

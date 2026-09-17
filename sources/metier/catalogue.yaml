@@ -1,0 +1,122 @@
+# Catalogue MÉTIER — les Cycles du Ponant, fabricant de vélos à Nantes.
+#
+# Le catalogue de `sources/demonstration/` reste en place : il est réaliste, il
+# porte les campagnes de mesure, et on n'y touche pas. Il a un défaut qu'aucune
+# correction ne lui ôtera — 547 200 relevés de puissance horaires ne se
+# racontent pas devant un prospect, et aucune de ses réponses ne se vérifie de
+# tête. Il a servi à DURCIR le socle. Celui-ci sert à le MONTRER.
+#
+# Un seul critère de conception, et il commande tous les autres : **une réponse
+# fausse doit se voir SANS avoir à la vérifier.**
+#
+#   ventes       postgres    4 tables, 3 clés étrangères — le carnet de commandes
+#   production   duckdb      4 tables — l'atelier, ses machines, ses arrêts
+#   stocks       file (XLSX) 3 feuilles — l'entrepôt vu par le tableur
+#   iris         file (CSV)  150 lignes — jeu de référence, pour le ML
+#   titanic      file (CSV)  891 lignes — jeu de référence, pour le ML
+#
+# Le sujet tient en une phrase : les Cycles du Ponant fabriquent des vélos,
+# les vendent à des revendeurs, et les stockent dans trois entrepôts.
+#
+# LES TROIS BASES MÉTIER SE RECOUPENT PAR LE PRODUIT. `code_produit` vit dans
+# les trois, et « combien de produits ? » a plusieurs réponses LÉGITIMES :
+# 12 dans `ventes` (tout ce qui se vend), 12 dans `stocks` (tout ce qui se
+# stocke), 8 dans `production` (les seuls vélos). L'écart est un fait du
+# métier — on ne fabrique pas tout ce qu'on vend, les quatre accessoires
+# `ACC-**` sont achetés à un fournisseur — et non un artifice. C'est lui qui
+# donne au verrou de source quelque chose à protéger.
+#
+# `iris` et `titanic` sont servis comme FICHIERS, et RECOPIÉS tels quels depuis
+# `sources/` : ce sont des jeux de référence, et les modifier — même d'une
+# ligne, même pour « les mettre au thème » — ferait mentir toute comparaison
+# avec la littérature, avec les modèles du registre et avec les campagnes
+# d'avant. Le fichier est la forme sous laquelle on fait du ML dessus.
+#
+# TROIS PIÈGES DE MODÉLISATION, un par base métier, de trois familles
+# différentes, chacun documenté dans le dictionnaire de SA source :
+#   ventes      un CODE DE STATUT à filtrer pour une mesure et pas pour une autre
+#   production  une VALEUR SENTINELLE qui fausse une moyenne
+#   stocks      une COLONNE SIGNÉE dont la somme brute répond à une autre question
+#
+# Données : `uv run python scripts/seed_catalogue_metier.py` (graine fixe).
+# Oracles, volumétries et les douze questions mesurées : docs/sources-metier.md.
+sources:
+  - type: postgres
+    name: ventes
+    description: >-
+      Le carnet de commandes des Cycles du Ponant (Postgres, quatre tables liées
+      par clés étrangères) — 18 revendeurs, 12 produits au catalogue, 180
+      commandes et leurs 463 lignes sur l'année 2025.
+    dsn: postgresql+pg8000://${DAA_PG_USER}:${DAA_PG_PASSWORD}@${DAA_PG_HOST}:${DAA_PG_PORT}/daa_metier
+    dictionary: dictionnaires/ventes.md
+    # Deux colonnes de date — `clients.date_creation` et `commandes.date_commande`.
+    # La période qui intéresse le métier est celle de l'ACTIVITÉ, pas celle de
+    # l'ouverture des comptes clients.
+    date_reference: commandes.date_commande
+
+  - type: duckdb
+    name: production
+    description: >-
+      L'atelier des Cycles du Ponant (base DuckDB, quatre tables liées par clés
+      étrangères déclarées) — 3 ateliers, 9 machines, 140 ordres de fabrication
+      et 70 arrêts machine sur l'année 2025. Seuls les 8 VÉLOS y passent : les
+      accessoires sont achetés, jamais fabriqués.
+    path: production.duckdb
+    dictionary: dictionnaires/production.md
+    # `arrets_machine.date_arret` est l'autre colonne de date. La période de la
+    # source est celle de la PRODUCTION : c'est la table qui fait son objet.
+    date_reference: ordres_fabrication.date_lancement
+
+  - type: file
+    name: stocks
+    description: >-
+      Les stocks des Cycles du Ponant (classeur Excel, trois feuilles) — trois
+      entrepôts, 480 mouvements d'entrée et de sortie sur 2025, et l'inventaire
+      constaté au 31 décembre.
+    path: stocks.xlsx
+    dictionary: dictionnaires/stocks.md
+    # `inventaire.date_inventaire` est une date de CONSTAT, la même sur les 36
+    # lignes. La période de la source est celle des mouvements.
+    date_reference: mouvements.date_mouvement
+
+  - type: file
+    name: iris
+    description: >-
+      Dataset Iris (fichier CSV, 150 lignes) — mesures des sépales et pétales
+      (sepal_length, sepal_width, petal_length, petal_width) et espèce
+      (setosa, versicolor, virginica). Jeu de référence, sans rapport avec le
+      métier du fabricant : il est là pour les statistiques et le ML.
+    path: iris.csv
+    dictionary: dictionnaires/iris.md
+    features:
+      # Une table à plat dont les en-têtes portent déjà les noms du schéma. La
+      # déclaration est l'identité, et elle reste écrite : c'est elle qui dit
+      # que ce fichier-ci alimente ce modèle-là.
+      iris:
+        sepal_length: sepal_length
+        sepal_width: sepal_width
+        petal_length: petal_length
+        petal_width: petal_width
+    # Aucune colonne de date : rien à désigner.
+
+  - type: file
+    name: titanic
+    description: >-
+      Dataset Titanic (fichier CSV, 891 lignes) — survie, sexe, âge, classe du
+      billet, tarif et port d'embarquement. Jeu de référence, sans rapport avec
+      le métier du fabricant : il est là pour les statistiques et le ML.
+    path: titanic.csv
+    dictionary: dictionnaires/titanic.md
+    features:
+      # Le CSV d'origine porte les en-têtes de Kaggle, en CamelCase anglais, qui
+      # ne sont pas les noms du dataset d'entraînement. La déclaration n'est
+      # donc PAS l'identité ici — et sans elle `fetch_then_predict` devinerait
+      # la colonne, ce qui est exactement ce que `features` existe pour empêcher.
+      titanic:
+        sex: Sex
+        pclass: Pclass
+        age: Age
+        sibsp: SibSp
+        parch: Parch
+        fare: Fare
+        embarked: Embarked
