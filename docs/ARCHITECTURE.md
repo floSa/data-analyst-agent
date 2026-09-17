@@ -638,6 +638,21 @@ graves et tout jeton à blanc souligné — jamais le gras, qu'il emploie pour d
 français ordinaires. Les échappements Markdown (`passenger\_id`) sont retirés avant
 comparaison.
 
+**Mais le repli est un garde-fou, pas une réponse : on redemande avant de le servir.**
+Il est juste, il est fondé, et ce n'est pas la même chose — « parle-moi de stocks et de
+titanic, en deux mots » recevait 774 caractères de fiche, en-tête compris. Quand la
+ceinture écarte une formulation, les faits sont toujours là : on les rend au modèle
+avec la même question, et on le laisse recommencer (`systeme.servir_la_reponse`). Si
+cette seconde formulation est fondée, c'est elle qui part ; sinon le repli part comme
+avant, donc la seconde chance ne peut rien faire perdre. L'agent de réparation n'a
+**aucun outil** — il ne peut rien apprendre qu'on n'ait relevé, il ne peut pas boucler,
+et le tour coûte donc exactement un appel LLM, sur les seuls tours rejetés. Il se juge
+à la MÊME ceinture, sur les mêmes faits. Mesuré : 18 tours sur 60 servis par le repli,
+aucun ne l'est plus, +18 appels pour 60 tours
+([sources-metier.md](sources-metier.md)). La trace nomme la voie — `formulé par le
+modèle`, `reformulé au second tour`, `faits servis tels quels (1re passe : … ; 2e
+passe : …)`.
+
 `introspection.py` reste **pur** — il n'ouvre ni fichier ni connexion, un test le
 vérifie sur son propre code source. L'entrée/sortie vit dans `systeme.py`, comme pour
 toute autre capacité.

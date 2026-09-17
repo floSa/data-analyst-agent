@@ -826,32 +826,240 @@ interdisait deux phrases nommément ; celle-ci interdit tout ajout — parce que
 qui avait coûté `periode-directe` n'était pas une phrase en particulier, c'était
 le fait d'avoir rendu une fiche plus attirante.
 
-### Ce qui reste : une TROISIÈME porte, et elle n'est pas de la même famille
+## Le repli servait un pavé là où l'agent devait parler (2026-09-17)
 
-**`dedans-trois`, 0/3 avant comme après.** « dis-moi ce qu'il y a dans ventes,
-production et iris » est routée sur `schema_d_une_source`, appelé trois fois,
-une fois par nom :
+La restriction est acquise : un message qui nomme plusieurs sources reçoit leurs
+fiches et rien d'autre, 10/10 sur cinq formulations, deux tirages identiques, à
+travers le graphe. Ce qui restait n'était pas ce que l'agent SERT — c'était ce
+que l'utilisateur LIT.
+
+### Le défaut : quatre tours sur cinq lisaient le texte de l'outil
+
+Mesuré par le propriétaire à travers le graphe, catalogue métier. La colonne de
+droite est la comparaison qui compte : le nombre de caractères **rendus à
+l'utilisateur** contre le nombre de caractères **servis par l'outil**.
+
+| message | rendus | servis | |
+|---|---|---|---|
+| « je bosse sur quoi si je prends stocks et production ? » | 986 | 986 | le texte de l'outil, au caractère près |
+| « resume moi vite fait ventes, stocks, iris » | 1 235 | 1 235 | idem |
+| « titanic et iris, c'est quoi au juste ? » | 747 | 747 | idem |
+| « parle-moi un peu de stocks et de titanic, en deux mots » | 774 | 774 | idem |
+| « j'hesite : ventes ou production, qu'est-ce qu'il y a dedans ? » | 640 | 1 026 | **le modèle a formulé** |
+
+Le cinquième est ce qu'on veut. Les quatre autres sont le REPLI : la ceinture a
+écarté la formulation du modèle — ou le modèle n'a rien formulé du tout — et le
+texte brut des faits est parti à sa place.
+
+**Il est juste. Il est fondé. Ce n'est pas une réponse.** « en deux mots »
+recevait 774 caractères de fiche, en-tête compris — et cet en-tête, « toutes les
+2, il n'y en a pas d'autres à chercher », est écrit pour PROUVER quelque chose
+au lecteur, pas pour lui répondre. Le repli est un garde-fou : il doit rester
+rare.
+
+### Le correctif : on redemande avant de servir le pavé
+
+Quand la ceinture écarte la formulation, les faits sont toujours là. On les rend
+au modèle avec la MÊME question, et on le laisse recommencer. Si la seconde
+formulation est fondée, c'est elle qui part ; sinon le repli part comme avant.
+La seconde chance ne peut donc rien faire perdre.
+
+Trois propriétés, et chacune ferme une façon de se tromper ici :
+
+- **l'agent de réparation n'a aucun outil.** Il ne peut pas aller chercher un
+  fait de plus, donc il ne peut rien apprendre qu'on n'ait relevé ; il ne peut
+  pas boucler, donc le tour coûte exactement UN appel LLM ;
+- **la seconde formulation est jugée par la MÊME ceinture, sur les mêmes
+  faits.** Elle ne relâche rien : un nom inventé en seconde passe est écarté
+  comme il l'était en première ;
+- **le tour est fail-closed**, à l'inverse du nœud système. Là, un incident
+  rend la question au planificateur, qui aurait peut-être su répondre. Ici le
+  repli est déjà prêt et il est juste : un incident ne coûte rien.
+
+`servir_la_reponse` est le seul endroit qui décide de ce que l'utilisateur lit,
+et la trace nomme la voie : `formulé par le modèle`, `reformulé au second
+tour (…)`, ou `faits servis tels quels (1re passe : … ; 2e passe : …)`.
+
+### Ce que le prompt et les fiches n'ont, une troisième fois, pas eu le droit de dire
+
+Rien n'a été ajouté au prompt de l'agent système, rien à ses sept fiches
+d'outils, et les deux empreintes SHA-256 sont restées vertes **sans qu'on y
+touche** (`test_aucun_paragraphe_de_prompt_n_a_bouge`,
+`test_aucune_fiche_d_outil_n_a_bouge_au_caractere_pres`). La raison est celle
+d'avant : cinq formulations ont été essayées là et retirées, chacune coûtant une
+question de la surface conversationnelle, trois tirages sur trois.
+
+Le prompt du tour de réparation (`prompts/reparation.txt`) n'est pas une
+exception à cette règle, il est de l'autre côté : il ne parle qu'aux tours DÉJÀ
+rejetés. Il n'existe pas pour les autres, donc il ne peut pas leur coûter quoi
+que ce soit — et c'est ce que les campagnes montrent, appel par appel.
+
+### Le défaut, avant et après
+
+`scripts/mesure_sources_nommees.py --tirages 3`, catalogue métier, 20 messages —
+les quinze d'avant, les deux formulations du pilote qui manquaient, et trois
+neuves. La colonne **voie** est le résultat de ce chantier.
+
+| message | voie avant | voie après | rendus |
+|---|---|---|---|
+| `reference-deux` — titanic et iris, c'est quoi au juste ? | repli | **2e passe** | 747 → **373** |
+| `fondation-deux-noms` — je bosse sur quoi si je prends stocks et production ? | repli | **2e passe** | 986 → **318** |
+| `autre-trois-noms` — resume moi vite fait ventes, stocks, iris | repli | **2e passe** | 1 235 → **417** |
+| `deux-mots-brefs` — parle-moi un peu de stocks et de titanic, en deux mots | repli | **2e passe** | 774 → **92** |
+| `une-phrase-trois` — en une phrase chacune : ventes, stocks, production, c'est quoi ? | repli | **2e passe** | 4 186 → **509** |
+| `difference-deux` — quelle est la différence entre iris et titanic ? | repli | **2e passe** | 747 → **245** |
+| les treize autres | modèle | **1re passe** | inchangés au caractère près |
+
+**18 tours sur 60 étaient servis par le repli. Aucun ne l'est plus**, et les six
+messages basculent aux trois tirages. Ce que « en deux mots » reçoit :
+
+> Stocks : entrepôts, mouvements ; Titanic : survie, âge.
+>
+> Que souhaitez-vous savoir d'autre ?
+
+Quatre-vingt-douze caractères, deux faits, deux sources. La fiche de 774
+caractères est restée au placard, et la ceinture l'y a laissée parce que la
+phrase porte ce qu'elle devait porter.
+
+### Le coût : un appel de plus, et seulement sur les tours rejetés
+
+| | avant | après |
+|---|---|---|
+| tours | 60 | 60 |
+| appels LLM | 117 | **135** |
+| appels d'outil émis | 78 | **78** |
+| tours servis par le repli | 18 | **0** |
+
++18 appels pour 18 tours rejetés : un chacun, jamais deux, et rien sur les
+quarante-deux autres. C'est la borne qu'un agent sans outil garantit.
+
+### Les campagnes : aucune ne recule
+
+Séquentielles, jamais de front — sous charge concurrente ce moteur ne rend pas
+la même chose, et on l'a payé en C41.
+
+| Campagne | Catalogue | Avant | Après |
+|---|---|---|---|
+| `mesure_surface_conversationnelle.py`, 1ʳᵉ | **par défaut** | 36/36 méta, 4/4 témoins, 81+17 appels | **36/36, 4/4, 84+17** |
+| `mesure_surface_conversationnelle.py`, 2ᵈᵉ | **par défaut** | 36/36 méta, 4/4 témoins, 81+17 appels | **36/36, 4/4, 84+17** |
+| `mesure_parcours_de_demonstration.py` | `demonstration` | 48/48, 178 appels | **48/48, 181 appels** |
+| `mesure_questions_metier.py --tirages 3` | `metier` | 35/36, 174 appels | **36/36, 174 appels** |
+| `mesure_sources_nommees.py --tirages 3` | `metier` | 57/60, 117 appels, repli 18/60 | **60/60, 135 appels, repli 0/60** |
+| `uv run pytest -p no:randomly` | — | 1 294 passés, 99,59 % | **1 306 passés, 99,60 %** |
+
+`ca-par-canal` est intermittent : 2/3 avant, 3/3 après, et ce n'est pas un
+verdict — c'est lui qui fait toute la différence entre 35/36 et 36/36.
+
+**Les trois campagnes déjà vertes qui bougent de +3 appels chacune**, et il faut
+dire pourquoi : ce sont trois tours par campagne dont la ceinture écartait DÉJÀ
+la formulation, et qui paient désormais leur seconde chance.
+
+| Campagne | tour | avant | après | ce qu'il en est sorti |
+|---|---|---|---|---|
+| surface (×2) | `sources-consulter` | 2 | 3 | **2e passe** — le modèle réussit au second tour |
+| surface (×2) | `capacites-demander-quoi` | 2 | 3 | repli, comme avant |
+| surface (×2) | `tables-directe` | 2 | 3 | repli, comme avant |
+| démonstration | `sens-puissance` (courte, longue) | 2 | 3 | conformes, comme avant |
+| démonstration | `reserve-de-forme` (longue) | 2 | 3 | conforme, comme avant |
+
+Deux des trois tours de surface restent au repli : la seconde chance y coûte un
+appel sans rien changer, et c'est le prix assumé de la borne — on ne sait pas
+avant d'avoir demandé. `mesure_questions_metier.py` ne bouge pas d'un appel :
+aucun de ses trente-six tours ne se fait écarter.
+
+### Une phrase fausse devant une question juste
+
+**« ventes ou production ? »**, relevée par le pilote avant ce chantier. Le
+message ne demande rien SUR ces deux sources : il hésite ENTRE elles, et
+l'agent système a raison de n'appeler aucun outil — c'est le bord que
+`_plancher_des_sources_nommees` respecte déjà. Le planificateur classe donc
+`query` et rend `source="ventes, production"`, la concaténation des deux noms
+qu'il a lus. L'utilisateur lisait :
+
+> La source « ventes, production » est introuvable. Sur quelle source veux-tu
+> travailler : ventes, production, stocks, iris, titanic ?
+
+La question est juste. La phrase qui la précède est fausse, et elle se voit :
+les deux sources déclarées introuvables sont proposées dans la même phrase,
+deux mots plus loin. Une désignation qui nomme PLUSIEURS sources déclarées
+n'est donc plus traitée comme un nom inconnu — la question part seule. Un vrai
+nom inconnu, une faute de frappe, n'en nomme aucune et garde sa phrase, qui est
+alors l'information utile.
+
+### La troisième porte, ouverte puis fermée — et le diagnostic était faux
+
+**`dedans-trois` est passée de 0/3 à 3/3, et pas par où la section d'avant
+l'annonçait.** Elle disait : « le modèle fait exactement ce qu'il faut ; c'est
+l'outil qui n'a pas de pluriel ». La première moitié est vraie. La seconde
+était une supposition, et la mesure l'a démentie.
+
+Le fil brut, tel qu'il est émis :
 
 ```
 → APPEL  schema_d_une_source({"cible": "ventes"})
 → APPEL  schema_d_une_source({"cible": "production"})
 → APPEL  schema_d_une_source({"cible": "iris"})
-← 2 074 car. servis, où ni `ventes` ni `production` n'apparaissent
-⇒ la ceinture crie « nom(s) qu'aucun fait ne porte : production, ventes »
 ```
 
-Le modèle fait exactement ce qu'il faut ; c'est l'outil qui ne suit pas.
-`decrire_le_schema` désigne UNE cible (`_cible`), et une précision qui nomme
-trois sources ne lui en désigne aucune : `source_visee` rend `None` dès que
-plusieurs noms sont cités, et le tour retombe sur une seule source.
+Trois appels distincts. Et les trois rendaient le schéma d'`iris` — le MÊME
+texte, trois fois, d'où les 2 074 caractères où ni `ventes` ni `production`
+n'apparaissent. Pas un tour d'horizon, pas un pluriel manquant : la même source
+servie trois fois.
 
-Ce n'est pas le défaut de ce chantier-ci et ce n'est pas la même réparation :
-`sources_de_donnees` et `chercher_une_source` rendent une FICHE par source, une
-structure plate qu'on met bout à bout ; `decrire_le_schema` rend un schéma, un
-dictionnaire et le sens d'une colonne, et c'est lui qui porte `sens-colonne`,
-`colonnes-table`, `tables-directe` et les questions de sens des deux catalogues
-de démonstration. Le pluriel s'y écrit, mais il s'y mesure d'abord.
+La cause se lit en deux lignes, une fois qu'on cesse de supposer :
 
+```
+cible='ventes'      → la précision décide 'iris'  | la cible SEULE décide 'ventes'
+cible='production'  → la précision décide 'iris'  | la cible SEULE décide 'production'
+cible='iris'        → la précision décide 'iris'  | la cible SEULE décide 'iris'
+```
+
+L'outil composait `precision = f"{cible} {question}"` et passait le tout à
+`decrire_le_schema`. Le commentaire promettait que « ce que le modèle a
+explicitement désigné prime sur ce que la phrase laisse deviner » — collée, la
+cible ne primait pas. Le message nomme trois sources, `_nomme_dans` rend `None`
+dès que plusieurs noms sont cités, donc la voie de la SOURCE tombait, et c'est
+la voie de la TABLE qui tranchait. `iris` est aussi un nom de table, il est dans
+la phrase de l'utilisateur, et il y reste quel que soit l'argument de l'appel :
+**trois appels distincts décidés par un mot qui n'en distinguait aucun.**
+
+Le correctif ne touche donc pas au pluriel de l'outil, qui n'est pas en cause.
+La désignation est passée à part (`decrire_le_schema(..., designation=)`) et
+choisit la source AVANT le texte du message. Elle décide **seule** : ni la
+source de travail ni le reste de la phrase ne servent à ce premier passage,
+sinon un argument vide de sens ferait gagner la source liée contre une source
+que la question nomme — et la source de travail n'a jamais eu ce rang, elle
+départage sans jamais décider à la place de l'utilisateur. Quand la désignation
+ne décide rien — vide, ou un mot qui n'est le nom de rien — le message décide
+comme avant, au caractère près.
+
+Le NIVEAU de détail, lui, continue de se lire dans tout le texte, et c'est
+`sens-colonne` qui l'impose : « que signifie la colonne class_id ? » avec
+`cible="passengers"` prend sa table dans l'argument et sa colonne dans la
+phrase, et il faut les deux pour rendre une fiche de colonne plutôt qu'une
+table entière.
+
+**Ce que `decrire_le_schema` porte a été mesuré, pas supposé.** L'avertissement
+était juste — cette fonction porte `sens-colonne`, `colonnes-table`, les
+questions de sens des deux catalogues et deux ceintures d'attribution. Les deux
+runners qui en font leur sujet ont donc été rejoués sur le même moteur, avec et
+sans le correctif, les deux fichiers touchés remis à la version d'avant :
+
+| Runner | sans le correctif | avec |
+|---|---|---|
+| `mesure_question_de_sens.py --tirages 3` | 24/36, 144 appels, échecs `N1` `N3` `N4` `W3` | **24/36, 144 appels, mêmes quatre** |
+| `mesure_provenance_du_sens.py --tirages 3` | 27/30, 66 appels, échec `S4` (30/30 oracle d'avant) | **27/30, 66 appels, `S4`** |
+
+Identiques, cas par cas et appel par appel. Le correctif ne change rien pour
+cette famille — ce qui était attendu, puisqu'aucune de ces questions ne remplit
+l'argument `cible` d'un nom qui décide autre chose que la phrase.
+
+Ces deux chiffres sont en dessous de ce que ce document annonçait ailleurs
+(27/36 et 30/30). L'écart est ANTÉRIEUR à ce chantier — il est là avec et sans
+le correctif, à la ligne près — et il n'a pas été poursuivi ici. `N5` est déjà
+documenté comme bascule 3/3 ↔ 0/3 d'une campagne à l'autre sur un socle
+identique ; `N1`, `N3` et `W3` sont la dette de routage déjà inscrite ; `N4` et
+`S4` échouent tous deux sur le même oracle, « fait absent : écarter ».
 ## Où ça vit
 
 | Quoi | Où |
@@ -864,5 +1072,7 @@ de démonstration. Le pluriel s'y écrit, mais il s'y mesure d'abord.
 | Ce que la suite unitaire en tient | [`tests/catalogues/test_catalogue_metier.py`](../tests/catalogues/test_catalogue_metier.py) |
 | La propriété « une fiche citée porte un fait » | [`tests/unit/orchestrator/test_introspection.py`](../tests/unit/orchestrator/test_introspection.py) |
 | Les deux planchers, leurs bords, et les empreintes | [`tests/unit/orchestrator/test_graph_questions_meta.py`](../tests/unit/orchestrator/test_graph_questions_meta.py) |
+| Le tour de réparation, et les trois voies | [`src/data_analyst_agent/orchestrator/systeme.py`](../src/data_analyst_agent/orchestrator/systeme.py) (`servir_la_reponse`) |
+| Ce qu'on lui dit, et à lui seul | [`src/data_analyst_agent/prompts/reparation.txt`](../src/data_analyst_agent/prompts/reparation.txt) |
 | Comment écrire un dictionnaire | [`rediger-un-dictionnaire-de-source.md`](rediger-un-dictionnaire-de-source.md) |
 | L'autre catalogue, qui reste | [`sources-de-demonstration.md`](sources-de-demonstration.md) |
