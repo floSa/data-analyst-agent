@@ -35,6 +35,7 @@ ANALYSIS = prompts.marqueur(prompts.ANALYSIS)
 SYNTHESIS = prompts.marqueur(prompts.SYNTHESIS)
 SYSTEME = prompts.marqueur(prompts.SYSTEME)
 RAPPEL = prompts.marqueur(prompts.RAPPEL)
+REPARATION = prompts.marqueur(prompts.REPARATION)
 
 
 def text(content: str) -> ModelResponse:
@@ -73,6 +74,14 @@ class ScriptedLLM:
     une bonne partie des tests en fabriquent un pour poser leur décor (un
     tableau mémorisé au tour précédent), sans que le rappel soit leur sujet.
     Un test qui s'intéresse à ce chemin script ``RAPPEL`` explicitement.
+
+    **Le tour de RÉPARATION décline aussi**, et ce défaut-là dit quelque chose.
+    Il n'a lieu que sur un tour dont la ceinture a écarté la formulation, et son
+    refus vaut « la seconde formulation n'est pas fondée non plus » : le repli
+    part, donc un test de ceinture écrit avant ce chemin-ci vérifie toujours
+    exactement ce qu'il vérifiait. Un test qui s'intéresse à la seconde chance
+    script ``REPARATION`` explicitement — et ``prompts_for(REPARATION)`` compte
+    les refus, donc le coût du tour reste observable.
     """
 
     # Une réponse texte sans aucun appel d'outil : le signal « cette question
@@ -122,7 +131,7 @@ class ScriptedLLM:
                         raise AssertionError(f"script épuisé pour l'agent {marker!r}")
                     self.captured.append((marker, system, last_user))
                     return queue.pop(0)
-            for marqueur in (SYSTEME, RAPPEL):
+            for marqueur in (SYSTEME, RAPPEL, REPARATION):
                 if marqueur in system:
                     self.captured.append((marqueur, system, last_user))
                     return text(self.REFUS_DU_SYSTEME)

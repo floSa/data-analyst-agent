@@ -13,9 +13,22 @@ runner qui lit la sortie brute mesure donc un tour que personne ne reçoit — e
 l'a fait dire : « resume moi vite fait ventes, stocks, iris » y apparaissait comme
 un tour perdu au planificateur, alors que l'outil était bel et bien appelé, que la
 ceinture écartait le ``AUTRE`` du modèle et que l'utilisateur recevait les trois
-fiches. Ce runner passe désormais par ``systeme.run_systeme`` et rejoue la
-ceinture telle que le nœud du graphe l'applique. La colonne **voie** dit lequel
-des deux chemins a servi.
+fiches. Ce runner passe désormais par ``systeme.run_systeme`` puis par
+``systeme.servir_la_reponse``, c'est-à-dire par la ceinture ET par le tour de
+réparation, exactement comme le nœud du graphe les applique.
+
+**Et c'est la colonne VOIE qui est le résultat de ce runner**, plus le score.
+Elle dit lequel des trois chemins a servi le texte : la formulation du modèle
+(`1re passe`), sa seconde formulation après rejet (`2e passe`), ou le texte des
+faits (`repli`). Un tour conforme servi par le repli et un tour conforme formulé
+comptent pareil au score et ne se ressemblent pas : le repli est juste, fondé, et
+il rend une fiche entière à qui demandait deux mots. La restriction est acquise —
+42/45 au 2026-09-17 sur les quinze premiers messages — donc ce qui se mesure
+désormais est ce que l'utilisateur LIT.
+
+`planificateur` est la quatrième valeur et n'est pas une voie de la ceinture :
+c'est le tour qui n'a jamais atteint l'agent système, donc celui dont aucune
+formulation n'a été jugée.
 
 **Les ensembles attendus sont écrits À LA MAIN**, un par message, et c'est un
 piège corrigé et non un choix de style. L'oracle les calculait avec
@@ -57,6 +70,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -71,7 +85,13 @@ from data_analyst_agent.agents.retrieval.faits import ReglagesDuReleve, RelevesD
 from data_analyst_agent.config import get_settings
 from data_analyst_agent.llm import build_model
 from data_analyst_agent.orchestrator import introspection
-from data_analyst_agent.orchestrator.systeme import run_systeme
+from data_analyst_agent.orchestrator.systeme import (
+    VOIE_PREMIERE_PASSE,
+    VOIE_REPLI,
+    VOIE_SECONDE_PASSE,
+    run_systeme,
+    servir_la_reponse,
+)
 
 # Comment l'inventaire complet s'annonce. C'est NOTRE texte
 # (``introspection._liste_des_sources``), donc la marque est fiable — et c'est
@@ -296,6 +316,7 @@ class Releve:
     outils_retenus: tuple[str, ...]
     voie: str
     defaut: str
+    defaut_seconde: str
     faits: str
     caracteres_servis: int
     caracteres_rendus: int
@@ -379,10 +400,13 @@ def poser(
         releves=releves_du_catalogue,
         request_limit=reglages.systeme_request_limit,
     )
-    defaut = introspection.defaut_de_fondation(
-        resultat.reponse, resultat.faits, resultat.faits_a_enumerer, resultat.marques_a_porter
+    rendue = servir_la_reponse(
+        resultat,
+        question=cas.message,
+        model=modele,
+        request_limit=reglages.systeme_request_limit,
     )
-    servie = resultat.faits if defaut else resultat.reponse
+    servie = rendue.texte
     plat = introspection.replie(servie)
     citees = tuple(
         s.name for s in catalogue.sources if f" {introspection.replie(s.name).strip()} " in plat
@@ -390,12 +414,10 @@ def poser(
     decrites = tuple(
         s.name for s in catalogue.sources if any(f" {m} " in plat for m in _marques(s, fiches))
     )
-    if not resultat.outils_appeles:
-        voie = "planificateur"
-    elif defaut:
-        voie = "repli"
-    else:
-        voie = "modèle"
+    # « planificateur » n'est pas une voie de la ceinture : c'est le tour qui
+    # n'a jamais atteint l'agent système. Il passe devant les trois autres parce
+    # qu'aucune formulation n'a alors été jugée.
+    voie = "planificateur" if not resultat.outils_appeles else rendue.voie
     releve = Releve(
         cle=cas.cle,
         message=cas.message,
@@ -406,7 +428,8 @@ def poser(
         appels=tuple(modele.appels_d_outil),
         outils_retenus=resultat.outils_appeles,
         voie=voie,
-        defaut=defaut,
+        defaut=rendue.defaut_premiere,
+        defaut_seconde=rendue.defaut_seconde,
         faits=resultat.faits,
         caracteres_servis=len(resultat.faits),
         caracteres_rendus=len(servie),
@@ -420,6 +443,22 @@ def poser(
     return releve
 
 
+def _part_des_voies(releves: list[Releve]) -> str:
+    """Par quelle voie les tours ont été servis — le résultat de ce runner.
+
+    Écrit avant le score, et ce n'est pas un ordre arbitraire : la restriction
+    est acquise (42/45 au 2026-09-17), et ce qui se mesure désormais est ce que
+    l'utilisateur LIT. Un tour conforme servi par le repli et un tour conforme
+    formulé par le modèle comptent pareil au score et ne se ressemblent pas :
+    l'un rend une fiche entière à qui demandait deux mots.
+    """
+    compte = Counter(r.voie for r in releves)
+    total = max(len(releves), 1)
+    ordre = (VOIE_PREMIERE_PASSE, VOIE_SECONDE_PASSE, VOIE_REPLI, "planificateur")
+    parts = [f"{voie} {compte[voie]}/{total}" for voie in ordre if compte[voie]]
+    return ", ".join(parts)
+
+
 def rapport(releves: list[Releve], reglages) -> str:
     conformes = sum(1 for r in releves if r.verdict == "conforme")
     cles = list(dict.fromkeys(r.cle for r in releves))
@@ -428,6 +467,8 @@ def rapport(releves: list[Releve], reglages) -> str:
         "",
         f"Moteur : `{reglages.llm_base_url}` (`{reglages.llm_model}`)",
         f"Catalogue : `{reglages.catalog_path}`",
+        "",
+        f"**Voie du texte servi : {_part_des_voies(releves)}.**",
         "",
         f"**{conformes}/{len(releves)} tours conformes** "
         f"({len(cles)} messages, {len(releves) // max(len(cles), 1)} tirages chacun), "
@@ -446,7 +487,7 @@ def rapport(releves: list[Releve], reglages) -> str:
         echecs = dict.fromkeys(r.pourquoi for r in lot if r.verdict != "conforme")
         premier = lot[0]
         appels = "<br>".join(dict.fromkeys(a for r in lot for a in r.appels)) or "(aucun)"
-        voies = ", ".join(dict.fromkeys(r.voie for r in lot))
+        voies = ", ".join(f"{v} x{n}" for v, n in Counter(r.voie for r in lot).items())
         lignes.append(
             f"| `{cle}` — {premier.message} | {', '.join(premier.attendues) or '(catalogue)'} "
             f"| `{appels}` | {premier.caracteres_servis} | {premier.caracteres_rendus} "

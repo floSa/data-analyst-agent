@@ -28,14 +28,20 @@ from data_analyst_agent.orchestrator import introspection
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Capability, Plan
 from data_analyst_agent.orchestrator.systeme import (
+    VOIE_PREMIERE_PASSE,
+    VOIE_REPLI,
+    VOIE_SECONDE_PASSE,
+    ResultatSysteme,
     SystemeDeps,
     build_systeme_agent,
     run_systeme,
+    servir_la_reponse,
 )
 from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
 from helpers.doubles import FakeClassifier
 from helpers.scripted_llm import (
     PLANNER,
+    REPARATION,
     RETRIEVAL,
     SYNTHESIS,
     SYSTEME,
@@ -1110,6 +1116,207 @@ def test_une_reformulation_qui_porte_les_faits_est_toujours_servie(
 
     assert reponse.answer.startswith("`ventes` tient le carnet")
     assert "formulé par le modèle" in next(s for s in reponse.trace if s.node == "system").detail
+
+
+# --- le tour de réparation : une seconde chance avant le pavé ------------------
+#
+# Le repli est un GARDE-FOU, pas une réponse. Il est juste et il est fondé, et
+# ce n'est pas la même chose : « parle-moi de stocks et de titanic, en deux
+# mots » recevait 774 caractères de fiche, en-tête compris. Mesuré à travers le
+# graphe le 2026-09-17, catalogue métier : sur cinq formulations qui nomment
+# plusieurs sources, QUATRE servaient le texte de l'outil au caractère près.
+#
+# Ce que ces tests tiennent : on redemande AVANT de servir le pavé, la seconde
+# formulation est jugée par la MÊME ceinture, le repli n'a pas disparu, et le
+# tour de réparation ne coûte rien à un tour que la première passe a passé.
+
+
+def _deux_sources(mini_csv: Path) -> Catalog:
+    """Deux sources aux descriptions distinctes — donc deux fiches à porter."""
+    return Catalog(
+        sources=[
+            FileSource(name="ventes", path=mini_csv, description="Le carnet de commandes."),
+            FileSource(name="stocks", path=mini_csv, description="Les entrepôts et leurs flux."),
+        ]
+    )
+
+
+def test_une_seconde_formulation_fondee_est_servie_a_la_place_du_pave(
+    mini_csv: Path, registre: Registry
+):
+    """LE tour de ce chantier : le modèle rate, on lui rend les faits, il réussit.
+
+    La première formulation est celle du défaut mesuré — les deux noms servis et
+    zéro fait sur eux (« Tu travailles sur les sources `ventes` et `stocks`. »).
+    La seconde dit un fait par source, en une phrase, ce qui est exactement ce
+    que « en deux mots » demandait. C'est elle qui part, et le pavé reste au
+    placard.
+    """
+    llm = agent_systeme(
+        "sources_de_donnees",
+        {},
+        "Tu travailles sur les sources `ventes` et `stocks`.",
+    ).script(
+        REPARATION,
+        [text("`ventes`, c'est le carnet de commandes ; `stocks`, les entrepôts.")],
+    )
+
+    reponse = orchestrateur(llm, catalog=_deux_sources(mini_csv), registry=registre).ask(
+        "ventes et stocks, en deux mots ?"
+    )
+
+    assert reponse.answer.startswith("`ventes`, c'est le carnet")
+    assert "J'ai accès à" not in reponse.answer  # le repli n'est pas parti
+    detail = next(s for s in reponse.trace if s.node == "system").detail
+    assert "reformulé au second tour" in detail
+    assert "sans un fait de leur fiche" in detail  # la trace dit ce qu'on a écarté
+
+
+def test_la_seconde_formulation_est_jugee_par_la_meme_ceinture(mini_csv: Path, registre: Registry):
+    """La seconde chance ne relâche RIEN, et c'est ce qui la rend sans risque.
+
+    Le tour de réparation invente ici `flights` — le défaut d'``acfd8f5``, par
+    la dernière porte qui restait. Il est écarté comme la première formulation
+    l'a été, et c'est le repli qui part : un nom inventé n'atteint jamais
+    l'utilisateur, quelle que soit la passe qui l'a écrit.
+    """
+    llm = agent_systeme(
+        "sources_de_donnees",
+        {},
+        "Tu travailles sur les sources `ventes` et `stocks`.",
+    ).script(REPARATION, [text("J'ai `ventes`, `stocks` et `flights`, trois fichiers.")])
+
+    reponse = orchestrateur(llm, catalog=_deux_sources(mini_csv), registry=registre).ask(
+        "ventes et stocks, en deux mots ?"
+    )
+
+    assert "flights" not in reponse.answer
+    assert "carnet de commandes" in reponse.answer  # les faits, tels quels
+    detail = next(s for s in reponse.trace if s.node == "system").detail
+    assert "faits servis tels quels" in detail
+    assert "2e passe : nom(s) qu'aucun fait ne porte : flights" in detail
+
+
+def test_le_repli_part_toujours_quand_les_deux_passes_echouent(mini_csv: Path, registre: Registry):
+    """Le repli n'a pas disparu — c'était la condition de ce correctif.
+
+    Le tour de réparation décline (le refus par défaut de la doublure), donc les
+    deux formulations sont écartées, donc les faits partent : exactement le
+    comportement d'avant, sur un tour où il n'y avait rien à gagner.
+    """
+    llm = agent_systeme("sources_de_donnees", {}, "Ma source est `ventes`.")
+
+    reponse = orchestrateur(llm, catalog=_deux_sources(mini_csv), registry=registre).ask(
+        "liste tes bases"
+    )
+
+    assert "stocks" in reponse.answer  # rendue par les faits, oubliée par le modèle
+    assert llm.prompts_for(REPARATION) != []  # le tour a bien eu lieu
+    detail = next(s for s in reponse.trace if s.node == "system").detail
+    assert "1re passe : fait(s) omis : stocks" in detail
+    assert "2e passe : réponse hors sujet" in detail
+
+
+def test_une_premiere_formulation_fondee_ne_coute_aucun_tour_de_plus(
+    mini_csv: Path, registre: Registry
+):
+    """Le coût, et c'est la moitié du contrat : rien sur les tours déjà verts.
+
+    Un tour que la ceinture laisse passer ne rappelle pas le modèle. Sans ce
+    test, la seconde chance pourrait devenir un appel LLM sur CHAQUE question
+    méta — le nœud est en tête du graphe, et il reçoit tout.
+    """
+    llm = agent_systeme(
+        "sources_de_donnees",
+        {},
+        "`ventes` tient le carnet de commandes ; `stocks` couvre les entrepôts.",
+    )
+
+    reponse = orchestrateur(llm, catalog=_deux_sources(mini_csv), registry=registre).ask(
+        "ventes et stocks, ça contient quoi ?"
+    )
+
+    assert reponse.answer.startswith("`ventes` tient le carnet")
+    assert llm.prompts_for(REPARATION) == []
+
+
+def test_le_tour_de_reparation_recoit_les_memes_faits_et_la_meme_question(
+    mini_csv: Path, registre: Registry
+):
+    """Ce qu'on lui rend, et rien de plus : les faits de l'outil, et le message.
+
+    C'est la définition du tour : pas un indice de plus, pas un outil, pas de
+    consigne neuve sur la question. Il ne peut donc rien apprendre que le
+    premier tour n'avait pas — ce qui est précisément ce qui autorise à le juger
+    à la même ceinture.
+    """
+    llm = agent_systeme(
+        "sources_de_donnees", {}, "Tu travailles sur les sources `ventes` et `stocks`."
+    )
+
+    orchestrateur(llm, catalog=_deux_sources(mini_csv), registry=registre).ask(
+        "ventes et stocks, en deux mots ?"
+    )
+
+    (demande,) = llm.prompts_for(REPARATION)
+    assert "ventes et stocks, en deux mots ?" in demande
+    assert "Le carnet de commandes." in demande
+    assert "Les entrepôts et leurs flux." in demande
+    # et le prompt du tour est bien le sien, pas celui de l'agent système
+    (systeme_du_tour,) = llm.systems_for(REPARATION)
+    assert systeme_du_tour == prompts.gabarit(prompts.REPARATION)
+    assert prompts.gabarit(prompts.SYSTEME) not in systeme_du_tour
+
+
+def test_un_tour_de_reparation_qui_n_aboutit_pas_sert_les_faits(
+    mini_csv: Path, registre: Registry, monkeypatch
+):
+    """Fail-CLOSED, à l'inverse du nœud système, et la raison est dans le sens.
+
+    Le nœud système est fail-open : un incident lui fait rendre la question au
+    planificateur, qui aurait peut-être su répondre. Ici il n'y a rien à rendre à
+    personne — le repli est déjà prêt et il est juste. Un incident du tour de
+    réparation ne doit donc rien coûter à l'utilisateur.
+    """
+
+    def _echoue(*args, **kwargs):
+        raise UnexpectedModelBehavior("Exceeded maximum retries")
+
+    monkeypatch.setattr("data_analyst_agent.orchestrator.systeme.build_reparation_agent", _echoue)
+    llm = agent_systeme("sources_de_donnees", {}, "Ma source est `ventes`.")
+
+    reponse = orchestrateur(llm, catalog=_deux_sources(mini_csv), registry=registre).ask(
+        "liste tes bases"
+    )
+
+    assert reponse.error is None
+    assert "stocks" in reponse.answer
+    detail = next(s for s in reponse.trace if s.node == "system").detail
+    assert "2e passe : tour de réparation écarté (UnexpectedModelBehavior)" in detail
+
+
+def test_les_trois_voies_se_nomment_et_se_lisent_dans_la_trace():
+    """La propriété, sans modèle : trois voies, trois détails, et pas un de plus.
+
+    ``servir_la_reponse`` est la seule chose qui décide de ce que l'utilisateur
+    lit ; ce test fige le vocabulaire que la trace et la mesure partagent. Ils
+    doivent le partager : un runner qui nommerait les voies autrement que la
+    trace mesurerait un tour que personne ne peut retrouver dans un journal.
+    """
+    assert (VOIE_PREMIERE_PASSE, VOIE_SECONDE_PASSE, VOIE_REPLI) == (
+        "1re passe",
+        "2e passe",
+        "repli",
+    )
+    faits = "- `ventes` : le carnet de commandes"
+    resultat = ResultatSysteme(
+        reponse=faits, faits=faits, faits_a_enumerer=faits, outils_appeles=("sources_de_donnees",)
+    )
+
+    rendue = servir_la_reponse(resultat, question="?", model=None, request_limit=1)
+
+    assert (rendue.voie, rendue.texte) == (VOIE_PREMIERE_PASSE, faits)
+    assert rendue.detail == "formulé par le modèle"
 
 
 # --- ce qu'on s'interdit d'écrire, figé ---------------------------------------

@@ -49,11 +49,12 @@ quatre autres sujets sont entièrement déterminés par la configuration.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from contextlib import closing
 from dataclasses import dataclass, field
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -69,6 +70,8 @@ from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, Source, open_source
 from data_analyst_agent.agents.retrieval.faits import RelevesDuCatalogue
 from data_analyst_agent.orchestrator import introspection
+
+logger = logging.getLogger("data_analyst_agent.orchestrator")
 
 # Ce qu'on garde de la réponse précédente. Elle peut peser un inventaire
 # entier, et l'historique repart à chaque aller-retour de la boucle d'outils :
@@ -685,4 +688,161 @@ def run_systeme(
         outils_appeles=tuple(deps.outils_appeles),
         source_a_lier=deps.source_a_lier,
         marques_a_porter=deps.marques_a_porter(),
+    )
+
+
+# --- la seconde chance, avant le repli ---------------------------------------
+
+# Les trois voies par lesquelles un texte peut partir à l'utilisateur. Ce sont
+# des noms de VOIE et non des messages : la trace les porte, la mesure les
+# compte, l'utilisateur n'en voit aucun.
+VOIE_PREMIERE_PASSE = "1re passe"
+VOIE_SECONDE_PASSE = "2e passe"
+VOIE_REPLI = "repli"
+
+
+@dataclass(frozen=True)
+class ReponseServie:
+    """Le texte qui part, et par quelle VOIE il part.
+
+    ``voie`` répond à la seule question que la trace et la mesure se posent :
+    l'utilisateur lit-il une formulation du modèle, ou le texte des faits ?
+    ``defaut_premiere`` et ``defaut_seconde`` disent ce que la ceinture a
+    reproché à chacune des deux formulations — vides quand il n'y avait rien à
+    reprocher, ou quand la seconde n'a pas eu lieu.
+    """
+
+    texte: str
+    voie: str
+    defaut_premiere: str = ""
+    defaut_seconde: str = ""
+
+    @property
+    def detail(self) -> str:
+        """Ce que la trace écrit de la voie — et de ce qui l'a décidée.
+
+        « faits servis tels quels » est la formule d'avant, gardée au mot près :
+        c'est elle qu'un exploitant cherche dans une trace, et elle dit
+        exactement ce qui s'est passé.
+        """
+        if self.voie == VOIE_PREMIERE_PASSE:
+            return "formulé par le modèle"
+        if self.voie == VOIE_SECONDE_PASSE:
+            return f"reformulé au second tour ({self.defaut_premiere})"
+        return (
+            "faits servis tels quels "
+            f"(1re passe : {self.defaut_premiere} ; 2e passe : {self.defaut_seconde})"
+        )
+
+
+def _demande_de_reparation(question: str, faits: str) -> str:
+    """Ce que le tour de réparation reçoit : le message, et les faits déjà lus.
+
+    Composé ici et non dans le gabarit, comme le contexte de la synthèse
+    (``Orchestrator._synthesize_analysis``) : le fichier de prompt porte la
+    MÉTHODE, qui ne change pas d'un tour à l'autre, et le message porte la
+    MATIÈRE, qui ne vaut que pour celui-ci.
+    """
+    return f"LE MESSAGE DE L'UTILISATEUR\n\n{question}\n\nLES FAITS LUS POUR Y RÉPONDRE\n\n{faits}"
+
+
+def build_reparation_agent() -> Agent[None, str]:
+    """L'agent du tour de réparation : aucun outil, aucune dépendance, un aller.
+
+    **Aucun outil, et c'est la moitié de l'idée.** Il ne peut pas aller chercher
+    un fait de plus, donc il ne peut rien apprendre qu'on n'ait pas relevé, donc
+    tout ce qu'il écrit se juge à la même ceinture que la première formulation.
+    Il ne peut pas non plus boucler : un aller-retour, un seul, et le coût du
+    tour de réparation est donc exactement UN appel LLM.
+
+    ``system_prompt`` et non ``instructions``, contrairement à l'agent système :
+    il n'y a pas d'historique ici — c'est un tour sans passé, comme la synthèse
+    — et la restriction de ``pydantic-ai`` (un ``system_prompt`` n'est émis que
+    sur un historique vide) ne le concerne donc pas.
+    """
+    return Agent(output_type=str, system_prompt=prompts.gabarit(prompts.REPARATION))
+
+
+def _reformuler(question: str, faits: str, *, model: Model, request_limit: int) -> tuple[str, str]:
+    """Le second essai — le texte rendu, et ce qui a empêché de l'obtenir.
+
+    Fail-closed, et à l'inverse du nœud système : là, un incident du modèle rend
+    la question au planificateur, qui aurait peut-être su répondre ; ici, le
+    repli est DÉJÀ prêt et il est juste. Un tour de réparation qui n'aboutit pas
+    ne doit donc rien coûter à l'utilisateur — il sert les faits, comme avant
+    ce correctif.
+    """
+    try:
+        run = build_reparation_agent().run_sync(
+            _demande_de_reparation(question, faits),
+            model=model,
+            usage_limits=UsageLimits(request_limit=request_limit),
+        )
+    except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
+        logger.warning("tour de réparation écarté : %s", exc)
+        return "", f"tour de réparation écarté ({type(exc).__name__})"
+    return run.output, ""
+
+
+def servir_la_reponse(
+    resultat: ResultatSysteme,
+    *,
+    question: str,
+    model: Model,
+    request_limit: int,
+) -> ReponseServie:
+    """Ce que l'utilisateur lit : la formulation du modèle, la seconde, ou les faits.
+
+    **Le repli est un garde-fou, pas une réponse.** Le texte des faits est juste
+    et il est fondé — c'est toute sa raison d'être — mais ce n'est pas une
+    réponse : « parle-moi de stocks et de titanic, en deux mots » recevait 774
+    caractères de fiche, en-tête compris, et « je bosse sur quoi si je prends
+    stocks et production ? » en recevait 986, au caractère près ceux que l'outil
+    avait rendus. Mesuré par le propriétaire à travers le GRAPHE le 2026-09-17,
+    catalogue métier : sur cinq formulations qui nomment plusieurs sources,
+    QUATRE recevaient le texte de l'outil et une seule une phrase du modèle.
+
+    **Alors on redemande avant de servir le pavé.** La ceinture a écarté la
+    première formulation ; les faits, eux, sont toujours là. On les rend au
+    modèle avec la même question et on le laisse recommencer
+    (``build_reparation_agent``). Si la seconde formulation est fondée, c'est
+    elle qui part. Sinon le repli part, exactement comme avant — la seconde
+    chance ne peut donc rien faire perdre.
+
+    **Le coût est borné et il ne se paie que sur les tours rejetés.** Un appel
+    LLM de plus, jamais deux : l'agent de réparation n'a aucun outil, donc aucun
+    aller-retour à faire. Un tour que la première formulation a passé ne coûte
+    rien de plus.
+
+    **Rien n'a été demandé au modèle en général.** Le prompt de l'agent système
+    et les sept fiches d'outils sont figés à l'octet près
+    (``test_aucun_paragraphe_de_prompt_n_a_bouge``,
+    ``test_aucune_fiche_d_outil_n_a_bouge_au_caractere_pres``), et pour une
+    raison mesurée : cinq formulations ont été essayées là et retirées, chacune
+    coûtant une question de la surface conversationnelle. Le prompt de
+    réparation ne parle qu'aux tours DÉJÀ rejetés — il n'existe pas pour les
+    autres, et il ne peut donc pas leur coûter quoi que ce soit.
+    """
+    premier = _defaut_de(resultat, resultat.reponse)
+    if not premier:
+        return ReponseServie(resultat.reponse, VOIE_PREMIERE_PASSE)
+    seconde, incident = _reformuler(
+        question, resultat.faits, model=model, request_limit=request_limit
+    )
+    second = incident or _defaut_de(resultat, seconde)
+    if not second:
+        return ReponseServie(seconde, VOIE_SECONDE_PASSE, premier)
+    return ReponseServie(resultat.faits, VOIE_REPLI, premier, second)
+
+
+def _defaut_de(resultat: ResultatSysteme, texte: str) -> str:
+    """La ceinture, appliquée à un texte — la première formulation ou la seconde.
+
+    Les deux sont jugées par la MÊME fonction et sur les mêmes faits, et c'est
+    ce qui rend la seconde chance sans risque : elle ne relâche rien. Un tour de
+    réparation qui inventerait un nom, en omettrait un ou citerait une fiche sans
+    en dire un fait serait écarté comme la première formulation l'a été.
+    """
+    return introspection.defaut_de_fondation(
+        texte, resultat.faits, resultat.faits_a_enumerer, resultat.marques_a_porter
     )

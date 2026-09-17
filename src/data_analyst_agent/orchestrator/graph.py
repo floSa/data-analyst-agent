@@ -75,7 +75,11 @@ from data_analyst_agent.orchestrator.rappel import (
     designation_dun_artefact_passe,
     run_rappel,
 )
-from data_analyst_agent.orchestrator.systeme import ResultatSysteme, run_systeme
+from data_analyst_agent.orchestrator.systeme import (
+    ResultatSysteme,
+    run_systeme,
+    servir_la_reponse,
+)
 from data_analyst_agent.orchestrator.workspace import (
     ConversationWorkspace,
     WorkspaceArtifact,
@@ -1303,8 +1307,10 @@ class Orchestrator:
 
         - aucun outil appelé — la question n'était pas pour lui ;
         - la formulation invente un nom, en omet un rendu par l'outil, ou cite
-          une source sans porter un seul fait de sa fiche : les **faits** sont
-          servis tels quels (``defaut_de_fondation``) ;
+          une source sans porter un seul fait de sa fiche : on lui rend les
+          mêmes faits et la même question pour qu'il RECOMMENCE, et les faits ne
+          sont servis tels quels que si la seconde formulation échoue elle aussi
+          (``servir_la_reponse``) ;
         - l'agent système lui-même n'a pas abouti : le tour repart au
           planificateur au lieu d'échouer.
 
@@ -1314,6 +1320,10 @@ class Orchestrator:
         question par un incident de ce nœud-ci. Ce qu'un OUTIL rate — une
         source injoignable, un catalogue illisible — n'est pas rattrapé : c'est
         un vrai défaut de configuration, il remonte au garde-fou et il est dit.
+
+        Le tour de réparation, lui, est **fail-closed** et pour la raison
+        inverse : son repli est déjà prêt et il est juste, donc un incident n'y
+        coûte rien à l'utilisateur (cf. ``systeme._reformuler``).
         """
         start = time.monotonic()
         engage = self._tour_deja_engage(state)
@@ -1353,18 +1363,14 @@ class Orchestrator:
         if liaison is not None:
             return liaison
         outils = ", ".join(resultat.outils_appeles)
-        defaut = introspection.defaut_de_fondation(
-            resultat.reponse,
-            resultat.faits,
-            resultat.faits_a_enumerer,
-            resultat.marques_a_porter,
+        rendue = servir_la_reponse(
+            resultat,
+            question=state["question"],
+            model=self.model,
+            request_limit=self.settings.systeme_request_limit,
         )
-        servie = resultat.faits if defaut else resultat.reponse
-        detail = (
-            f"{outils} — faits servis tels quels ({defaut})"
-            if defaut
-            else (f"{outils} — formulé par le modèle")
-        )
+        servie = rendue.texte
+        detail = f"{outils} — {rendue.detail}"
         retenue, avis = self._lier_la_source_nommee(state)
         if avis:
             servie = f"{avis}\n\n{servie}"
