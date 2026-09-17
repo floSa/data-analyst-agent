@@ -158,6 +158,23 @@ CAS: tuple[Cas, ...] = (
         "resume moi vite fait ventes, stocks, iris",
         ("ventes", "stocks", "iris"),
     ),
+    # --- les deux autres formulations du pilote du 2026-09-17
+    #
+    # Elles sont ici pour ce qu'elles montrent du REPLI, et non pour la
+    # restriction : les deux reçoivent bien les fiches qu'elles nomment. La
+    # première demande « deux mots » et recevait 774 caractères de fiche ; la
+    # seconde est la SEULE des cinq dont le texte servi diffère des faits, donc
+    # la seule où le modèle avait formulé.
+    Cas(
+        "deux-mots-brefs",
+        "parle-moi un peu de stocks et de titanic, en deux mots",
+        ("stocks", "titanic"),
+    ),
+    Cas(
+        "hesite-deux-dedans",
+        "j'hesite : ventes ou production, qu'est-ce qu'il y a dedans ?",
+        ("ventes", "production"),
+    ),
     # --- quatre formulations neuves, écrites AVANT de savoir ce qu'elles rendent
     Cas(
         "contenu-deux-metier",
@@ -174,6 +191,27 @@ CAS: tuple[Cas, ...] = (
         "tour-de-quatre",
         "fais-moi le tour de ventes, production, stocks et iris",
         ("ventes", "production", "stocks", "iris"),
+    ),
+    # --- trois formulations neuves de plus, écrites pour le tour de réparation
+    #
+    # Elles ne visent pas la restriction, qui tient : elles visent la VOIE. Deux
+    # brièvetés explicites — « en une phrase », « vite » — et une comparaison,
+    # c'est-à-dire trois messages auxquels un pavé de fiches répond mal même
+    # quand il est juste.
+    Cas(
+        "une-phrase-trois",
+        "en une phrase chacune : ventes, stocks, production, c'est quoi ?",
+        ("ventes", "stocks", "production"),
+    ),
+    Cas(
+        "difference-deux",
+        "quelle est la différence entre iris et titanic ?",
+        ("iris", "titanic"),
+    ),
+    Cas(
+        "vite-deux",
+        "dis-moi vite ce que je trouve dans production et dans ventes",
+        ("production", "ventes"),
     ),
     # --- les deux témoins : ils doivent recevoir TOUT le catalogue
     #
