@@ -195,6 +195,11 @@ class OrchestratorState(TypedDict, total=False):
     avis_de_source: str  # « je travaille sur X », mis en tête de la réponse
     # « je n'ai pas produit ça », mis en tête quand on PRODUIT au lieu de rappeler
     avis_dabsence: str
+    # Ce que le dictionnaire de la source écrit sur les termes que le MESSAGE
+    # nomme, mis en PIED de la réponse. Renseigné par les deux nœuds qui
+    # répondent en regardant les données, et par eux seuls : c'est le chemin qui
+    # n'a pas de ceinture (cf. `introspection.ce_qu_en_dit_le_dictionnaire`).
+    dire_du_dictionnaire: str
     system: str | None  # réponse à une question SUR le système
     rappel: str | None  # réponse rendue en rappelant un artefact du fil
     clarification: str | None
@@ -1970,6 +1975,9 @@ class Orchestrator:
         return {
             "retrieval": outcome,
             "artifacts": artifacts,
+            "dire_du_dictionnaire": introspection.ce_qu_en_dit_le_dictionnaire(
+                state["question"], source.dictionary_text(), source.name
+            ),
             "trace": [self._step("retrieval", detail, start, **mesures)],
         }
 
@@ -2173,6 +2181,9 @@ class Orchestrator:
         return {
             "analysis": outcome,
             "artifacts": images,
+            "dire_du_dictionnaire": introspection.ce_qu_en_dit_le_dictionnaire(
+                state["question"], source.dictionary_text(), source.name
+            ),
             "trace": [self._step("analysis", detail, start, **mesures)],
         }
 
@@ -2384,8 +2395,53 @@ class Orchestrator:
         # travaillé, l'aveu d'absence dit que ce qui suit est neuf — il doit
         # donc toucher la réponse qu'il qualifie.
         preambules = [state.get("avis_de_source", ""), state.get("avis_dabsence", "")]
-        answer = "\n\n".join([p for p in (*preambules, answer) if p])
+        # Et le dictionnaire EN PIED, après la réponse qu'il qualifie : il ne
+        # remplace rien, il ajoute ce que la source déclare sur les termes que
+        # le message a nommés. Vide partout ailleurs — seuls les deux nœuds qui
+        # regardent les données le renseignent (cf. `_pied_du_dictionnaire`).
+        pied = self._pied_du_dictionnaire(state, answer)
+        answer = "\n\n".join([p for p in (*preambules, answer, pied) if p])
         return {"answer": answer, "trace": [self._step("synthesize", mode, start)]}
+
+    @staticmethod
+    def _pied_du_dictionnaire(state: OrchestratorState, answer: str) -> str:
+        """Ce que le dictionnaire dit des termes du message — "" s'il n'y a rien à dire.
+
+        **La ceinture du chemin des données, et c'est le chemin qui n'en avait
+        pas.** L'agent système compare ce qu'un outil lui a rendu à ce qu'il en
+        formule, et sert les faits eux-mêmes quand la formulation ne les porte
+        pas (``introspection.defaut_de_fondation``). Le planificateur, l'agent
+        SQL et l'agent d'analyse n'ont jamais eu cet équivalent : le
+        dictionnaire est injecté dans leur prompt (`agents/dictionnaire`), il
+        est lu, et rien ne vérifie qu'il ressorte.
+
+        **Mesuré le 2026-09-18, catalogue de démonstration, trois tirages.** Sur
+        les six formulations de `mesure_question_de_sens`, CINQ ne voient jamais
+        l'agent système — le fil brut porte « aucun outil appelé — passe au
+        planificateur », 3 fois sur 3 pour chacune — et repartent en `query` ou
+        en `analyze`. « le statut RET, il recouvre quoi au juste ? » recevait
+        « 2 lignes retournées — voir le tableau ci-dessous » ; le tableau
+        comptait les statuts sans dire ce que `RET` veut dire.
+
+        **Il ne juge pas la réponse, et c'est délibéré.** Chercher si la
+        formulation porte déjà le sens, ce serait mesurer nos tournures — la
+        leçon de la dette `E`, payée une fois. Le texte de la source, lui, est
+        vrai quoi qu'ait écrit le modèle, et le servir en plus ne peut pas le
+        contredire. C'est le choix que le repli de la ceinture fait depuis le
+        début : on préfère le texte de l'artefact à la confiance.
+
+        **Et il ne parle qu'aux tours où il a quelque chose à dire** : une
+        source sans dictionnaire ne déclenche rien — `titanic` et `iris` n'en
+        déclarent aucun, et c'est le volet témoin de la mesure — et un message
+        qui ne nomme aucune entrée du dictionnaire non plus.
+
+        La réponse est passée pour une seule raison : ne pas resservir un texte
+        que la réponse contient DÉJÀ au caractère près. C'est le cas du repli de
+        l'agent système, qui sert l'extrait tel quel — le répéter dessous ferait
+        deux fois le même paragraphe, et ce serait un défaut visible.
+        """
+        pied = state.get("dire_du_dictionnaire") or ""
+        return "" if not pied or pied in answer else pied
 
     @staticmethod
     def _synthesize_query(retrieval: RetrievalResult) -> tuple[str, str]:

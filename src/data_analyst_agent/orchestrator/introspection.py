@@ -576,6 +576,102 @@ def extrait_du_dictionnaire(dictionnaire: str, terme: str, maximum: int = 8) -> 
     return "\n".join(f"> {ligne}" for ligne in citantes[:maximum])
 
 
+def bloc_du_dictionnaire(source: str, extrait: str) -> str:
+    """L'extrait, sous l'en-tête qui dit d'où il vient — "" si l'extrait est vide.
+
+    UN seul endroit écrit cette phrase, et c'est ce qui la rend fiable ailleurs :
+    ``_attribution_qui_ne_colle_pas`` reconnaît les faits qui citent un
+    dictionnaire à cet en-tête-là, et ``_citations`` y cherche la consigne. Deux
+    appelants la composaient ; deux copies d'une marque que du code reconnaît,
+    ce sont deux marques qui divergent en silence.
+    """
+    if not extrait:
+        return ""
+    # ``.capitalize()`` et non deux littéraux : la marque que le code cherche
+    # est écrite en minuscules parce qu'elle se compare à un texte replié, et
+    # la phrase servie commence une ligne. Un seul des deux se déduit de
+    # l'autre ; les écrire tous les deux, c'est les laisser diverger.
+    return f"{_EN_TETE_DE_DICTIONNAIRE.capitalize()} `{source}` :\n{extrait}"
+
+
+# Une LIGNE de tableau Markdown. C'est la forme sous laquelle les dictionnaires
+# de ce dépôt définissent leurs termes, et c'est donc le dictionnaire lui-même
+# qui déclare son vocabulaire : rien n'est écrit à la main ici, la liste suit la
+# source et elle ne mesure pas la mémoire de son auteur.
+_LIGNE_DE_TABLEAU = re.compile(r"^\s*\|.*\|\s*$", re.MULTILINE)
+
+# Et TOUTES ses cellules décorées, pas seulement la première. Un dictionnaire
+# définit de deux façons : une ligne par colonne — « | `puissance_kw` |
+# Puissance instantanée… | » — et une table de correspondance dont les colonnes
+# SONT les termes, « | `code_tarif` | `libelle` | `prix_kwh_eur` | `tva_pct` |».
+# Ne lire que la première cellule laissait tomber la seconde forme, et avec elle
+# `prix_kwh_eur`, mesuré.
+_CELLULE_DECOREE = re.compile(r"`([^`\n|]{1,64})`")
+
+# En deçà, le nom d'une entrée se confond avec un mot français ordinaire. C'est
+# une collision réelle et non une précaution : `BASE` est une entrée du
+# dictionnaire de `facturation` — le poste tarifaire — et « dans la base » est
+# une phrase que n'importe qui écrit. Les colonnes, elles, font toutes cinq
+# caractères ou plus dans les cinq dictionnaires du catalogue de démonstration.
+_LONGUEUR_D_UNE_ENTREE = 5
+
+
+def entrees_du_dictionnaire(dictionnaire: str) -> list[str]:
+    """Les termes que ce dictionnaire DÉFINIT, dans son ordre, dédoublonnés."""
+    vues: dict[str, None] = {}
+    for ligne in _LIGNE_DE_TABLEAU.findall(dictionnaire):
+        for terme in _CELLULE_DECOREE.findall(ligne):
+            nu = terme.strip()
+            if len(nu) >= _LONGUEUR_D_UNE_ENTREE and _FORME_D_IDENTIFIANT.fullmatch(nu):
+                vues.setdefault(nu, None)
+    return list(vues)
+
+
+def ce_qu_en_dit_le_dictionnaire(question: str, dictionnaire: str | None, source: str) -> str:
+    """Ce que le dictionnaire écrit sur les termes que le MESSAGE nomme — "" sinon.
+
+    **Le chemin des données n'a pas de ceinture, et c'est là que le sens se
+    perd.** L'agent système, lui, en a une : ce qu'un outil lui rend est comparé
+    à ce qu'il formule, et les faits partent tels quels si la formulation ne les
+    porte pas (``defaut_de_fondation``). Mais il ne voit pas tous les tours. Sur
+    cinq des six questions de sens mesurées le 2026-09-18, il n'appelle AUCUN
+    outil — trois tirages sur trois, le fil brut dit « aucun outil appelé » — et
+    le tour repart au planificateur, qui le classe `query` ou `analyze`.
+
+    Le dictionnaire est pourtant bien là : il est injecté dans le prompt de
+    l'agent SQL comme dans celui de l'agent d'analyse (cf.
+    `agents/dictionnaire`). Ce qui manque n'est donc pas la lecture, c'est la
+    vérification — rien, sur ce chemin-là, n'exige que ce qui a été lu
+    ressorte. « le statut RET, il recouvre quoi au juste ? » recevait « 2 lignes
+    retournées — voir le tableau ci-dessous », et le tableau comptait les
+    statuts sans dire ce qu'ils veulent dire.
+
+    **Ce qu'on sert, et pourquoi tel quel.** Les lignes du dictionnaire qui
+    citent le terme, sous l'en-tête qui dit de quelle source elles viennent —
+    exactement ce que ``decrire_le_schema`` sert déjà à l'agent système. On ne
+    demande pas au modèle de les reformuler, et on ne cherche pas non plus à
+    deviner s'il les a déjà dites : sa formulation a le droit d'être juste, le
+    texte de la source le reste de toute façon, et c'est le choix que le repli
+    de la ceinture fait depuis le début.
+
+    **Les termes ne sont pas une liste écrite à la main**, et c'est ce qui
+    empêche cette fonction de devenir le lexique qu'on a retiré de ce module :
+    ce sont les entrées que le dictionnaire se donne à lui-même
+    (``entrees_du_dictionnaire``), retenues seulement quand le message les
+    NOMME. Une source qui ne déclare aucun dictionnaire ne déclenche donc rien,
+    et c'est le témoin de la mesure — `titanic` et `iris` n'en ont pas.
+    """
+    if not dictionnaire:
+        return ""
+    plat = replie(question)
+    nommes = [t for t in entrees_du_dictionnaire(dictionnaire) if f" {replie(t).strip()} " in plat]
+    lignes: dict[str, None] = {}
+    for terme in nommes:
+        for ligne in extrait_du_dictionnaire(dictionnaire, terme).splitlines():
+            lignes.setdefault(ligne, None)
+    return bloc_du_dictionnaire(source, "\n".join(lignes))
+
+
 @dataclass(frozen=True)
 class Ontologie:
     """Ce qu'une source dit d'elle-même, déjà lu par le nœud qui l'a ouverte."""
@@ -766,8 +862,9 @@ def decrire_le_schema(
     extrait = (
         extrait_du_dictionnaire(cible.dictionnaire, terme) if cible.dictionnaire and terme else ""
     )
-    if extrait:
-        lignes += ["", f"Ce qu'en dit le dictionnaire de `{cible.source.name}` :", extrait]
+    bloc = bloc_du_dictionnaire(cible.source.name, extrait)
+    if bloc:
+        lignes += ["", bloc]
     return "\n".join(lignes)
 
 
