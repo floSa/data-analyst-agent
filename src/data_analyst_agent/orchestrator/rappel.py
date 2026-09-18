@@ -81,6 +81,64 @@ class Rejeu:
 Rejoueur = Callable[[WorkspaceArtifact, str], AnalysisResult]
 
 
+def rejeu_hors_code(artefact: WorkspaceArtifact) -> tuple[str, str]:
+    """« Il existe, mais il n'y a rien à y rejouer » — pour le modèle, puis pour l'utilisateur.
+
+    C'est le troisième refus de la famille, et il manquait. Un tableau n'est pas
+    du code : on ne le rejoue pas. Faute d'avoir sa phrase, l'appelant passait
+    à ``refus_dartefact`` un nom qu'il venait de DÉCORER — « resultat_1 (ce
+    n'est pas du code) » — pour dire en passant pourquoi il refusait. Ce nom
+    décoré ne désignait évidemment aucun artefact, et le refus rendu était :
+
+        Aucun artefact ne s'appelle « resultat_1 (ce n'est pas du code) » dans
+        cette conversation. Artefacts disponibles : resultat_1.
+
+    La phrase NIE ce qu'elle ÉNUMÈRE, dans la même haleine, et c'est le pire
+    que puisse faire un refus : il ne se contente pas d'être faux, il se
+    contredit sous les yeux de qui le lit. Mesuré, et pas seulement sur la
+    phrase — le modèle qui la recevait rendait ensuite une sortie vide, brûlait
+    son unique reprise, et l'agent de rappel tombait tout entier sur
+    ``Exceeded maximum output retries`` : le tableau que le fil avait produit
+    devenait inatteignable, alors même qu'aucune prédiction n'était en attente
+    (fil témoin `f` de `scripts/mesure_fils_de_prediction.py`, 3 tirages sur 3).
+
+    **Et ce n'est PAS un refus.** Première version de cette réparation : une
+    phrase de refus correcte, qui nommait bien l'artefact et invitait à le
+    relire. Mesurée, 3 tirages sur 3 : le modèle ne relisait pas — il rendait la
+    sentinelle ``AUTRE``, tous les outils appelés avaient refusé, et c'est le
+    refus qui partait à l'utilisateur. La contradiction avait disparu, le
+    tableau restait inatteignable. Un refus est terminal pour qui le lit, et le
+    modèle le lit comme tel.
+
+    Un artefact qui EXISTE ne se cache donc pas derrière un refus. On ne peut
+    pas l'exécuter — rien n'est exécuté ici, et c'était la seule chose que le
+    refus protégeait — mais on peut le LIRE, et le lire est strictement plus
+    utile que de ne rien rendre. La demande (« donne-moi les pourcentages »)
+    porte sur ce que le tableau contient ; ce contenu part avec la phrase.
+
+    **Deux lecteurs, deux phrases**, et il faut bien les deux. Ce que l'outil
+    rend part au MODÈLE, qui formule ensuite ; mais quand sa formulation est
+    disqualifiée (``defaut_de_formulation``), ce sont les FAITS qui partent tels
+    quels à l'utilisateur. Les deux ont été mesurés séparément, et aucune phrase
+    unique ne tient les deux rôles :
+
+    - sans la consigne « tu peux répondre directement », le modèle rend la
+      sentinelle et ne calcule pas les pourcentages (relevé du tour 8) ;
+    - avec elle, l'utilisateur la reçoit en pleine figure sur le chemin de
+      repli, tutoyé par une instruction qui ne lui était pas adressée.
+
+    ``pour_le_modele`` porte donc la consigne ; ``pour_l_utilisateur`` reprend
+    l'en-tête de ``lire_un_artefact`` — nom, nature, contenu — et y ajoute le
+    seul fait qui compte ici : rien n'a été exécuté.
+    """
+    entete = f"{artefact.name} ({artefact.description}) — ce n'est pas du code : "
+    return (
+        entete + "rien n'a été exécuté. Voici son contenu, sur lequel tu peux "
+        "répondre directement :",
+        entete + "rien n'a été exécuté, et voici son contenu :",
+    )
+
+
 def refus_dartefact(workspace: ConversationWorkspace, nom: str) -> str:
     """Pourquoi ce nom ne désigne rien d'exploitable — en distinguant les deux cas.
 
@@ -95,6 +153,17 @@ def refus_dartefact(workspace: ConversationWorkspace, nom: str) -> str:
     """
     disponibles = ", ".join(a.name for a in workspace.catalogue()) or "(aucun)"
     if workspace.sur_le_disque(nom) is None:
+        # La garde qui rend la contradiction IMPOSSIBLE plutôt que corrigée.
+        # Elle ne dépend pas de l'appelant : quel que soit ce qu'on décore
+        # autour d'un nom d'artefact, si le catalogue porte ce nom-là, la phrase
+        # qui le nie ne part pas. C'est la propriété vérifiable de ce chemin,
+        # et `tests/unit/orchestrator/test_rappel.py` la tient sur TOUS les
+        # refus que les deux outils savent produire.
+        porte = nom_dartefact_porte(nom, workspace)
+        if porte:
+            # Sans le contenu — cette garde ne lit pas le disque, elle empêche
+            # seulement la phrase de nier ce qu'elle énumère.
+            return rejeu_hors_code(porte)[1]
         return (
             f"Aucun artefact ne s'appelle « {nom} » dans cette conversation. "
             f"Artefacts disponibles : {disponibles}."
@@ -105,6 +174,27 @@ def refus_dartefact(workspace: ConversationWorkspace, nom: str) -> str:
         f"ÉVINCÉ du contexte de ce tour ({cause}) : je ne peux ni le relire ni le rejouer. "
         f"Artefacts encore disponibles : {disponibles}."
     )
+
+
+def nom_dartefact_porte(
+    designation: str, workspace: ConversationWorkspace
+) -> WorkspaceArtifact | None:
+    """L'artefact du CATALOGUE que cette désignation nomme, décoration comprise.
+
+    « resultat_1 » le nomme ; « resultat_1 (ce n'est pas du code) » aussi — la
+    parenthèse est un commentaire de l'appelant, pas une partie du nom. Lire la
+    désignation plutôt que d'exiger un nom nu est ce qui permet à
+    ``refus_dartefact`` de ne jamais nier un artefact qu'il énumère, quelle que
+    soit la main qui l'appelle.
+
+    Les noms sont d'une forme FERMÉE (``FORME_D_UN_NOM``) : les chercher dans
+    une désignation ne peut pas confondre avec autre chose. Plusieurs noms
+    trouvés, ou aucun : rien n'est rendu — on ne devine pas lequel.
+    """
+    trouves = set(FORME_D_UN_NOM.findall(designation))
+    if len(trouves) != 1:
+        return None
+    return workspace.retenu(next(iter(trouves)))
 
 
 # -- « tu m'avais fait un camembert » : désigner ce qui n'existe pas ----------
@@ -381,9 +471,17 @@ class RappelDeps:
     # de son contenu. C'est la matière de `defaut_de_formulation`.
     attendus: set[str] = field(default_factory=set)
 
-    def retenir(self, outil: str, texte: str) -> str:
+    def retenir(self, outil: str, texte: str, pour_l_utilisateur: str | None = None) -> str:
+        """Ce que l'outil rend au MODÈLE, et ce qu'on servirait à sa place.
+
+        Les deux sont le même texte dans la quasi-totalité des cas — un contenu
+        d'artefact se lit aussi bien des deux côtés. Ils diffèrent quand la
+        phrase porte une consigne adressée au modèle : elle est nécessaire pour
+        qu'il fasse son travail, et elle n'a rien à faire dans une réponse
+        (cf. ``rejeu_hors_code``).
+        """
         self.outils_appeles.append(outil)
-        self.faits.append(texte)
+        self.faits.append(pour_l_utilisateur if pour_l_utilisateur is not None else texte)
         return texte
 
     def refuser(self, outil: str, nom: str) -> str:
@@ -433,6 +531,25 @@ def build_rappel_agent() -> Agent[RappelDeps, str]:
             prompts.RAPPEL, catalogue=catalogue_pour_le_prompt(ctx.deps.workspace)
         )
 
+    def _servir_le_contenu(
+        ctx: RunContext[RappelDeps],
+        outil: str,
+        artefact: WorkspaceArtifact,
+        entete: str,
+        entete_servi: str | None = None,
+    ) -> str:
+        """Le contenu d'un artefact, retenu comme fait ET comme attendu.
+
+        Un seul point de lecture pour les deux outils : ce qui part au modèle et
+        ce sur quoi ``defaut_de_formulation`` le jugera ensuite doivent être la
+        même chose, et deux lectures séparées seraient deux occasions d'oublier
+        d'alimenter ``attendus``.
+        """
+        contenu = ctx.deps.workspace.lire(artefact)
+        ctx.deps.attendus |= {artefact.name} | _jetons(contenu)
+        servi = f"{entete_servi}\n{contenu}" if entete_servi is not None else None
+        return ctx.deps.retenir(outil, f"{entete}\n{contenu}", servi)
+
     @agent.tool
     def lire_un_artefact(ctx: RunContext[RappelDeps], nom: str) -> str:
         """Le contenu d'un artefact de cette conversation, désigné par son NOM.
@@ -444,9 +561,9 @@ def build_rappel_agent() -> Agent[RappelDeps, str]:
         artefact = ctx.deps.workspace.retenu(nom)
         if artefact is None:
             return ctx.deps.refuser("lire_un_artefact", nom)
-        contenu = ctx.deps.workspace.lire(artefact)
-        ctx.deps.attendus |= {artefact.name} | _jetons(contenu)
-        return ctx.deps.retenir("lire_un_artefact", f"{nom} ({artefact.description}) :\n{contenu}")
+        return _servir_le_contenu(
+            ctx, "lire_un_artefact", artefact, f"{nom} ({artefact.description}) :"
+        )
 
     @agent.tool
     def rejouer_un_code(ctx: RunContext[RappelDeps], nom: str, modification: str) -> str:
@@ -457,11 +574,15 @@ def build_rappel_agent() -> Agent[RappelDeps, str]:
         (« mets les barres en bleu au lieu de rouge »).
         """
         artefact = ctx.deps.workspace.retenu(nom)
-        if artefact is None or not artefact.est_du_code:
-            # Un tableau n'est pas du code : le refus le dit comme il dirait un
-            # nom inconnu, plutôt que de tenter d'exécuter un CSV.
-            if artefact is not None:
-                return ctx.deps.refuser("rejouer_un_code", f"{nom} (ce n'est pas du code)")
+        if artefact is not None and not artefact.est_du_code:
+            # Un tableau n'est pas du code : rien n'est exécuté. Mais il EXISTE,
+            # et un artefact qui existe ne se cache pas derrière un refus — on
+            # rend son contenu (cf. ``rejeu_hors_code``).
+            pour_le_modele, pour_l_utilisateur = rejeu_hors_code(artefact)
+            return _servir_le_contenu(
+                ctx, "rejouer_un_code", artefact, pour_le_modele, pour_l_utilisateur
+            )
+        if artefact is None:
             return ctx.deps.refuser("rejouer_un_code", nom)
         resultat = ctx.deps.rejouer(artefact, modification)
         ctx.deps.rejeu = Rejeu(artefact=nom, modification=modification, resultat=resultat)

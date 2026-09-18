@@ -24,6 +24,7 @@ from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.orchestrator.rappel import (
     designation_dun_artefact_passe,
+    nom_dartefact_porte,
     noms_inventes,
     refus_dartefact,
 )
@@ -451,10 +452,19 @@ def test_lire_un_nom_inconnu_refuse_au_lieu_de_lever(
     assert "Aucun artefact ne s'appelle « resultat_7 »" in reponse.answer
 
 
-def test_rejouer_un_TABLEAU_est_refuse_sans_tenter_de_l_executer(
+def test_rejouer_un_TABLEAU_rend_son_contenu_sans_tenter_de_l_executer(
     tmp_path: Path, iris_csv: Path, registry: Registry
 ):
-    """Un CSV n'est pas du code : on le dit, on ne l'envoie pas au bac à sable."""
+    """Un CSV n'est pas du code : rien n'est exécuté, et son CONTENU est rendu.
+
+    Ce test disait auparavant qu'un tableau se refusait. Le refus était juste
+    sur le fond — on n'exécute pas un CSV — et il coûtait le tour : mesuré
+    3 tirages sur 3, le modèle qui le recevait ne relisait pas l'artefact, il
+    rendait la sentinelle, et le tableau que le fil avait pourtant produit
+    restait inatteignable. Un artefact qui EXISTE ne se cache pas derrière un
+    refus : la seule chose que le refus protégeait — ne rien exécuter — est
+    tenue par ``sandbox.executed == []``.
+    """
     ConversationWorkspace(tmp_path, "fil").save_table(["a"], [[1]], "une question")
     sandbox = ScriptedSandbox([])  # tout appel ferait lever IndexError
     llm = ScriptedLLM().script(
@@ -467,7 +477,10 @@ def test_rejouer_un_TABLEAU_est_refuse_sans_tenter_de_l_executer(
     orch = orchestrateur(llm, iris_csv, tmp_path, sandbox, registry)
     reponse = orch.ask("remets ça en bleu", conversation_id="fil")
 
-    assert "ce n'est pas du code" in reponse.answer
+    assert "pas du code" in reponse.answer
+    assert "rien n'a été exécuté" in reponse.answer
+    # la consigne adressée au MODÈLE ne part pas à l'utilisateur
+    assert "tu peux répondre directement" not in reponse.answer
     assert sandbox.executed == []
 
 
@@ -497,6 +510,50 @@ def test_un_message_qui_complete_une_prediction_ne_passe_pas_par_le_rappel(
     assert llm.prompts_for(RAPPEL) == []
     trace = next(s for s in reponse.trace if s.node == "rappel")
     assert "prédiction en attente" in trace.detail
+
+
+def test_une_prediction_en_attente_ne_confisque_pas_un_tableau_du_fil(
+    tmp_path: Path, iris_csv: Path, registry: Registry
+):
+    """L'AUTRE moitié de la borne : ce que le retrait ne doit plus emporter.
+
+    Le défaut mesuré, 3 tirages sur 3 : un fil produit un tableau, une
+    prédiction y reste en attente d'une feature, et « reprends le tableau
+    précédent » ne trouve plus rien — le nœud s'était retiré, le planificateur
+    partait en `query` sur un objet qu'il n'interroge pas, et l'utilisateur
+    lisait « je n'ai pas interrogé la source, je ne peux donc rien en
+    affirmer ». Le tableau était là, le fil l'avait produit, et il fallait
+    ouvrir une conversation pour le récupérer.
+
+    La borne est ``designation_dun_artefact_passe``, que ce nœud emploie déjà :
+    aucune feature d'aucun schéma n'est un tableau, une figure ou un
+    « précédent ». Le témoin qui dit qu'elle n'a pas débordé est le test
+    ci-dessus — « elle était en 1re classe » ne désigne rien, et il se retire
+    toujours.
+    """
+    from data_analyst_agent.orchestrator.graph import PendingInference
+
+    ConversationWorkspace(tmp_path, "fil").save_table(
+        ["canal", "commandes"], [["web", 61]], "combien de commandes par canal ?"
+    )
+    llm = ScriptedLLM().script(
+        RAPPEL,
+        [tool_call("lire_un_artefact", {"nom": "resultat_1"}), text("resultat_1 : web 61.")],
+    )
+    orch = orchestrateur(llm, iris_csv, tmp_path, None, registry)
+    reponse = orch.ask(
+        "reprends le tableau précédent et donne-moi les pourcentages",
+        conversation_id="fil",
+        pending=PendingInference(dataset="titanic", features={"age": 28.0}),
+    )
+
+    assert llm.prompts_for(RAPPEL) != []
+    trace = next(s for s in reponse.trace if s.node == "rappel")
+    assert "prédiction en attente" not in trace.detail
+    assert "lire_un_artefact" in trace.detail
+    assert "61" in reponse.answer
+    # et la prédiction reste en attente : le tour ne l'a ni faite ni jetée
+    assert reponse.pending is not None
 
 
 def test_un_incident_du_modele_de_rappel_rend_la_main_au_planificateur(
@@ -968,3 +1025,55 @@ def test_un_refus_nomme_nest_pas_double_dun_aveu(
 
     assert "Aucun artefact ne s'appelle « graphique_1 »" in reponse.answer
     assert "Ce qui suit est neuf" not in reponse.answer
+
+
+# --- un refus ne nie jamais ce qu'il énumère -------------------------------------
+
+
+def test_un_refus_ne_peut_pas_nier_un_artefact_qu_il_enumere(tmp_path: Path):
+    """LA propriété du défaut mesuré, et elle ne dépend pas de l'appelant.
+
+    Le défaut, tel qu'il partait à l'utilisateur :
+
+        Aucun artefact ne s'appelle « resultat_1 (ce n'est pas du code) » dans
+        cette conversation. Artefacts disponibles : resultat_1.
+
+    L'outil de rejeu décorait le nom pour dire au passage POURQUOI il refusait,
+    et la phrase des noms inconnus prenait la décoration pour le nom. On ne
+    corrige pas l'appelant seul : on rend la contradiction impossible ici, quoi
+    qu'on décore autour d'un nom que le catalogue porte.
+    """
+    workspace = ConversationWorkspace(tmp_path, "fil")
+    workspace.save_table(["a"], [[1]], "une question")
+
+    for designation in (
+        "resultat_1",
+        "resultat_1 (ce n'est pas du code)",
+        "« resultat_1 », un tableau",
+    ):
+        refus = refus_dartefact(workspace, designation)
+        assert "Aucun artefact ne s'appelle" not in refus
+        assert "resultat_1" in refus
+
+
+def test_un_nom_vraiment_inconnu_garde_sa_phrase(tmp_path: Path):
+    """La garde ne mange pas le refus qui est juste."""
+    workspace = ConversationWorkspace(tmp_path, "fil")
+    workspace.save_table(["a"], [[1]], "une question")
+
+    refus = refus_dartefact(workspace, "resultat_7")
+
+    assert "Aucun artefact ne s'appelle « resultat_7 »" in refus
+
+
+def test_une_designation_qui_nomme_deux_artefacts_n_en_designe_aucun(tmp_path: Path):
+    """On ne devine pas lequel des deux : la phrase des noms inconnus reprend."""
+    workspace = ConversationWorkspace(tmp_path, "fil")
+    workspace.save_table(["a"], [[1]], "une question")
+    workspace.save_table(["b"], [[2]], "une autre")
+
+    assert nom_dartefact_porte("resultat_1 et resultat_2", workspace) is None
+    assert nom_dartefact_porte("aucun nom ici", workspace) is None
+    porte = nom_dartefact_porte("resultat_2 (ce n'est pas du code)", workspace)
+    assert porte is not None
+    assert porte.name == "resultat_2"
