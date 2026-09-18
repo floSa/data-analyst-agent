@@ -2477,7 +2477,135 @@ garder un témoin vert branché sur rien.
 Ce qui reste ouvert est le **routage** : `N1`, `N3` et `W3` n'atteignent
 toujours pas l'agent système, et c'est délibéré — quatre leviers ont déjà été
 tirés, un cinquième cesserait de chercher une propriété pour viser trois
-phrases.
+phrases. La suite est à la section du 2026-09-18 : le routage n'a pas bougé, et
+ce n'est pas lui qui faisait perdre le sens.
+
+## Le dictionnaire va jusqu'au prompt, pas jusqu'à l'utilisateur (2026-09-18)
+
+Ce qui restait ouvert à la fin du chantier précédent était nommé « le routage » :
+`N1`, `N3` et `W3` n'atteignent pas l'agent système. Le fil brut dit la même
+chose en plus large, et il dit surtout autre chose sur la cause.
+
+### Ce que le fil brut dit, et il a été relevé avant d'être interprété
+
+Sonde posée sur `run_systeme`, `servir_la_reponse` et `decrire_le_schema`, six
+questions × trois tirages, catalogue de démonstration. Pour chaque tour : le
+chemin de nœuds, les outils appelés, le texte que l'outil a servi, la
+formulation du modèle et le verdict de la ceinture.
+
+| clé | agent système | ce qu'il a répondu | chemin | ce que l'utilisateur a lu |
+|---|---|---|---|---|
+| `N1` | **aucun outil**, 3/3 | `AUTRE` | `system → plan → analysis → synthesize` | des pourcentages calculés sur un échantillon de 10 000 relevés |
+| `N2` | `schema_d_une_source`, 3/3 | la fiche + l'extrait du dictionnaire | `system → synthesize` | « en minutes… l'écarter de toute moyenne » — **3/3 conforme** |
+| `N3` | **aucun outil**, 3/3 | `AUTRE` | `system → plan → retrieval → synthesize` | le libellé, et pas le passage par `referentiel` |
+| `N4` | **aucun outil**, 3/3 | `AUTRE` | `system → plan → retrieval → synthesize` | « 2 lignes retournées — voir le tableau ci-dessous » |
+| `N5` | **aucun outil**, 3/3 | `AUTRE` | `system → plan → retrieval → synthesize` | la bonne réponse, formulée par l'agent SQL |
+| `N6` | **aucun outil**, 3/3 | `AUTRE` | `system → plan → retrieval → synthesize` | la bonne réponse, formulée par l'agent SQL |
+
+**Les six n'ont pas la même cause, et le briefing supposait qu'elles l'avaient.**
+Une seule, `N2`, est prise par l'agent système, et elle passe. Les cinq autres
+ne le voient jamais : le modèle répond `AUTRE` sans appeler d'outil, à
+l'identique sur les trois tirages, et le tour repart au planificateur.
+
+**Et la consigne n'est pas perdue en chemin.** C'était l'autre hypothèse, et
+elle est fausse : le dictionnaire est injecté dans le prompt de l'agent SQL
+comme dans celui de l'agent d'analyse depuis le chantier du dictionnaire
+(cf. `agents/dictionnaire`), et deux des cinq — `N5`, `N6` — répondent juste en
+le citant. Ce qui manque n'est pas la lecture, c'est la **vérification** : la
+ceinture (`introspection.defaut_de_fondation`) ne vit que sur le nœud système.
+Le chemin des données n'en a aucune, et rien n'exige que ce qui a été lu
+ressorte. Deux des cinq tombent donc, et laquelle dépend de la formulation du
+tour — c'est exactement l'instabilité de `N5` documentée plus haut.
+
+### La réparation : la ceinture, du côté des données
+
+Une propriété, mécanique, et aucun mot ajouté à un prompt :
+
+> **Un terme que le message NOMME et dont le dictionnaire de la source parle ne
+> repart pas sans ce que le dictionnaire en dit.**
+
+- les termes ne sont pas une liste écrite à la main : ce sont les entrées que le
+  dictionnaire se donne à lui-même, lues dans ses tableaux Markdown
+  (`introspection.entrees_du_dictionnaire`) ;
+- le texte servi est celui de la source, sous l'en-tête d'attribution que
+  `decrire_le_schema` sert déjà — une seule fonction l'écrit désormais
+  (`bloc_du_dictionnaire`), parce que c'est à cet en-tête que la ceinture
+  reconnaît une provenance et y cherche la consigne ;
+- il ne juge pas la formulation du modèle. Chercher si elle porte déjà le sens,
+  ce serait mesurer nos tournures — la leçon de la dette `E`. Le texte de la
+  source est vrai quoi qu'ait écrit le modèle ;
+- il ne parle qu'aux tours où il a quelque chose à dire : une source sans
+  dictionnaire ne déclenche rien, et c'est le volet témoin de la mesure.
+
+Le prompt de l'agent système et les sept fiches d'outils n'ont pas bougé d'un
+octet — `test_aucun_paragraphe_de_prompt_n_a_bouge` et
+`test_aucune_fiche_d_outil_n_a_bouge_au_caractere_pres` sont verts sans que leur
+empreinte soit touchée. Et le coût est **nul** : 144 appels LLM avant, 144 après.
+
+### Avant / après, deux campagnes de chaque côté
+
+`DAA_CATALOG_PATH=sources/demonstration/catalogue.yaml uv run python
+scripts/mesure_question_de_sens.py --tirages 3`, vLLM
+`google/gemma-4-E4B-it-qat-w4a16-ct` sur `http://localhost:8100/v1`.
+
+| clé | avant ×2 | après ×2 | ce qui a décidé, après |
+|---|---|---|---|
+| `N1` | 0/3, 0/3 | **3/3, 3/3** | `-1` n'est pas une puissance, et sort des moyennes |
+| `N2` | 3/3, 3/3 | 3/3, 3/3 | inchangée — c'est la seule que l'agent système prend |
+| `N3` | 0/3, 0/3 | **3/3, 3/3** | un libellé d'affichage, et le passage par `referentiel` |
+| `N4` | 0/3, 0/3 | **3/3, 3/3** | `RET` = station retirée du service |
+| `N5` | 3/3, 3/3 | 3/3, 3/3 | inchangée sur ces quatre campagnes |
+| `N6` | 3/3, 3/3 | 3/3, 3/3 | inchangée |
+| **volet sens** | **9/18** ×2 | **18/18** ×2 | |
+| **volet témoin** | 15/18 ×2 | 15/18 ×2 | inchangé — `W3` reste 0/3 |
+| **total** | **24/36** ×2 | **33/36** ×2 | 144 appels LLM des deux côtés |
+
+`W3` — « pourquoi class_id et pas directement la classe ? », sur `titanic` —
+reste à 0/3, et **sa cause est à part** : `titanic` ne déclare aucun
+dictionnaire, ce plancher-ci ne peut donc rien pour elle. Son chemin est
+`system → plan → synthesize` et ce qu'elle reçoit est le repli du planificateur,
+« je n'ai pas bien compris ta demande ». C'est un défaut de routage au sens
+strict, le seul des sept, et il est laissé ouvert.
+
+### Ce qui n'a pas bougé
+
+Campagnes séquentielles, jamais de front.
+
+| campagne | catalogue | référence | après |
+|---|---|---|---|
+| `mesure_surface_conversationnelle.py`, 2 campagnes | par défaut | 36/36 + 4/4 | **35/36 + 4/4**, puis **36/36 + 4/4** |
+| `mesure_parcours_de_demonstration.py` (48 questions) | démonstration | 48/48 | **48/48**, 181 appels |
+| `mesure_ouverture_de_source.py` | démonstration | 48/51 | **48/51**, 159 appels |
+| `mesure_provenance_du_sens.py`, 2 campagnes | en dur | 30/30 | **30/30** ×2, 69 appels |
+| `mesure_questions_metier.py` | métier | 12/12 | **11/12**, 58 appels |
+| `mesure_sources_nommees.py --tirages 3` | métier | 60/60 | **60/60**, 126 appels |
+| suite `pytest -p no:randomly` | — | 1 377 / 99,61 % | **1 386 / 99,61 %** |
+
+Les deux lignes qui reculent d'un point sont les deux bascules connues, et
+aucune des deux ne peut venir d'ici : `volumetrie-globale` tourne sur le
+catalogue par défaut, où **aucune source ne déclare de dictionnaire** — ce
+plancher n'y existe pas —, et `ca-par-canal` est le graphique dont l'oracle
+bascule d'une campagne à l'autre à code identique. La seconde campagne de
+surface rend d'ailleurs 36/36.
+
+### Ce qui a été essayé et écarté
+
+- **Router les cinq vers l'agent système.** C'est ce que le briefing demandait,
+  et c'est ce qu'on ne sait pas faire mécaniquement : reconnaître « une question
+  de sens » dans une phrase, c'est le lexique retiré de `introspection`, et un
+  cinquième levier sur le prompt aurait coûté une question de la surface
+  conversationnelle comme les cinq précédents.
+- **Un troisième bord de `defaut_de_fondation`.** Piste juste, mais elle ne
+  répare rien ici : la ceinture ne s'exécute que sur un tour où un outil a été
+  appelé, et les cinq tours mesurés n'en appellent aucun. La renforcer aurait
+  amélioré `N2`, la seule qui passait déjà.
+- **Ne servir l'extrait que si la réponse ne le porte pas déjà.** Essayé sur le
+  fil : `N3` porte bien des mots du dictionnaire — « libellé d'affichage »,
+  « Ville — Quartier » — et laisse tomber le seul qui compte, le passage par
+  `referentiel`. Tout test de recouvrement qu'on a écrit la déclarait servie.
+  C'est la dette `E` par la porte de derrière, et la seule condition gardée est
+  celle qui ne juge rien : ne pas resservir un paragraphe présent au caractère
+  près.
 
 ## Jouer la démonstration
 
