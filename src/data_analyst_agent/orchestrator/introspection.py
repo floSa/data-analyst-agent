@@ -560,20 +560,140 @@ def _decrire_la_table(table: TableInfo) -> list[str]:
     return lignes
 
 
-def extrait_du_dictionnaire(dictionnaire: str, terme: str, maximum: int = 8) -> str:
-    """Les lignes du dictionnaire qui citent ``terme`` ("" s'il n'y en a aucune).
+# Le trait de séparation d'un tableau Markdown : `|---|:--:|`. Il ne dit rien,
+# il dessine — et recopié dans une réponse il ne dessine même plus.
+_SEPARATEUR_DE_TABLEAU = re.compile(r"^:?-+:?$")
+
+# L'ouverture ou la fermeture d'un bloc de code Markdown. Ce qu'il enferme est
+# un EXEMPLE — du SQL, du Python — et un exemple ne se recolle pas en prose :
+# ses retours à la ligne sont sa syntaxe. Servi sous « ce qu'en dit le
+# dictionnaire », il rendait une requête entière sur une seule ligne, entre
+# deux triples accents grecs.
+_CLOTURE_DE_CODE = re.compile(r"^\s*```")
+
+
+def _cellules(ligne: str) -> list[str]:
+    """Les cellules d'une ligne de tableau Markdown, bords vides retirés."""
+    return [c.strip() for c in ligne.strip().strip("|").split("|")]
+
+
+def _blocs_du_dictionnaire(dictionnaire: str) -> list[tuple[str, list[str]]]:
+    """Le dictionnaire découpé en BLOCS : ``("tableau"|"prose", lignes)``.
+
+    Le bloc et non la ligne, et c'est toute la réparation. Un dictionnaire est
+    du Markdown écrit pour un humain : ses paragraphes sont coupés à la largeur
+    d'un éditeur, et prendre une LIGNE d'un paragraphe prend une phrase par le
+    milieu. Relevé tel quel avant :
+
+        > `statut = 'RET'` marque les 30 stations démontées. Le référentiel les
+          garde,
+
+    La virgule finale n'est pas une faute du dictionnaire, c'est un retour à la
+    ligne lu comme une fin. Une ligne de tableau, elle, EST un bloc : elle se
+    suffit, et c'est pourquoi les deux genres se séparent ici.
+
+    Une PUCE ouvre un bloc, elle aussi : c'est l'autre forme sous laquelle un
+    dictionnaire définit ses entrées — « - `class_id` : 1 = pont supérieur » —
+    et coller deux puces voisines dirait d'un terme ce qu'une autre entrée dit
+    d'un autre. Ce qui SUIT une puce sans en être une la continue : c'est le
+    même paragraphe, renfoncé.
+    """
+    blocs: list[tuple[str, list[str]]] = []
+    dans_un_code = False
+    for brute in dictionnaire.splitlines():
+        ligne = brute.strip()
+        if _CLOTURE_DE_CODE.match(brute):
+            dans_un_code = not dans_un_code
+            blocs.append(("fin", []))
+        elif dans_un_code:
+            continue
+        elif not ligne or ligne.startswith("#"):
+            blocs.append(("fin", []))
+        elif _LIGNE_DE_TABLEAU.fullmatch(brute):
+            blocs.append(("tableau", [ligne]))
+        elif _PUCE.match(brute):
+            blocs.append(("prose", [ligne]))
+        elif blocs and blocs[-1][0] == "prose":
+            blocs[-1][1].append(ligne)
+        else:
+            blocs.append(("prose", [ligne]))
+    return [b for b in blocs if b[0] != "fin"]
+
+
+def _en_prose(genre: str, lignes: list[str], terme: str) -> str:
+    """Le bloc rendu en une phrase lisible — "" s'il n'a rien à dire de ``terme``.
+
+    Un paragraphe se recolle : ses retours à la ligne étaient de la mise en
+    page, pas de la ponctuation.
+
+    Une ligne de tableau perd ses barres. Elle n'est retenue que si le terme y
+    est DÉCORÉ et seul dans sa cellule, c'est-à-dire si la ligne le DÉFINIT ou
+    l'ÉNUMÈRE. C'est ce qui écarte la ligne de contrôle que le relevé montrait
+    au milieu d'une fiche de colonne :
+
+        > | En service | 120 (`WHERE statut = 'ACT'`) | 120 |
+
+    Elle cite `statut` dans une clause SQL, elle n'en dit rien ; servie sous
+    « ce qu'en dit le dictionnaire de `referentiel` », elle donne à lire un
+    fragment de tableau de comptage à qui demandait un sens.
+
+    Quand la première cellule EST le terme, elle devient le sujet de la phrase
+    (« `statut` : … ») ; sinon les cellules se suivent, séparées par un tiret —
+    c'est la forme d'une table de correspondance, dont les colonnes sont
+    elles-mêmes des termes.
+    """
+    if genre == "prose":
+        return " ".join(lignes)
+    cellules = [c for c in _cellules(lignes[0]) if c and not _SEPARATEUR_DE_TABLEAU.fullmatch(c)]
+    decore = f"`{terme}`"
+    if not any(c == decore for c in cellules):
+        return ""
+    if cellules[0] == decore:
+        return f"{decore} : {' — '.join(cellules[1:])}" if len(cellules) > 1 else ""
+    return " — ".join(cellules)
+
+
+def extrait_du_dictionnaire(dictionnaire: str, terme: str, maximum: int = 4) -> str:
+    """Ce que le dictionnaire dit de ``terme``, en prose ("" s'il n'en dit rien).
 
     Le dictionnaire d'une source dit ce que les données **veulent dire**, là où
     le DDL ne dit que des types. Le rendre en entier noierait la réponse — sur
     une base réelle il fait plusieurs milliers de mots — d'où l'extrait, borné,
     autour du terme demandé.
+
+    **Le contenu était juste et la forme illisible.** Cette fonction recopiait
+    les LIGNES du fichier, telles quelles, chacune sous un chevron. Relevé tel
+    quel, sur « le statut RET, il recouvre quoi au juste ? » :
+
+        > | `statut` | `ACT` (en service) ou `RET` (retirée du service,
+          matériel démonté). Voir le piège nº 1. |
+        > `statut = 'RET'` marque les 30 stations démontées. Le référentiel les
+          garde,
+        > | En service | 120 (`WHERE statut = 'ACT'`) | 120 |
+
+    Trois défauts, et trois causes distinctes : des barres verticales de tableau
+    Markdown, que la page ne sait pas mettre en tableau ; une phrase coupée au
+    milieu, parce qu'un paragraphe de Markdown est coupé à la largeur d'un
+    éditeur ; et une ligne de comptage sans rapport, retenue parce qu'elle
+    contient le mot. Les trois se règlent en lisant des BLOCS plutôt que des
+    lignes (``_blocs_du_dictionnaire``) et en ne retenant d'un tableau que les
+    lignes qui DÉFINISSENT le terme (``_en_prose``).
+
+    **Ce qui ne change pas : le chevron.** Il n'est pas une décoration, c'est la
+    marque à laquelle trois ceintures reconnaissent le seul texte de ce module
+    que nous n'écrivons pas — ``_citations`` y cherche la consigne du
+    dictionnaire, ``_noms_exiges`` et ``_actions_exigees`` s'abstiennent d'y
+    réclamer quoi que ce soit. Ni l'en-tête d'attribution, qui est ce à quoi les
+    ceintures reconnaissent une provenance (``_attribution_qui_ne_colle_pas``).
     """
-    citantes = [
-        ligne.strip()
-        for ligne in dictionnaire.splitlines()
-        if terme.lower() in ligne.lower() and ligne.strip()
-    ]
-    return "\n".join(f"> {ligne}" for ligne in citantes[:maximum])
+    dits: dict[str, None] = {}
+    for genre, lignes in _blocs_du_dictionnaire(dictionnaire):
+        if not any(terme.lower() in ligne.lower() for ligne in lignes):
+            continue
+        dit = _en_prose(genre, lignes, terme).strip()
+        if dit:
+            dits.setdefault(dit, None)
+    return "\n".join(f"> {dit}" for dit in list(dits)[:maximum])
 
 
 def bloc_du_dictionnaire(source: str, extrait: str) -> str:

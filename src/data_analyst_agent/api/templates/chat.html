@@ -48,6 +48,8 @@
   .agent ul { margin: .35rem 0; padding-left: 1.2rem; }
   .agent li { margin: .1rem 0; }
   .agent h4 { margin: .6rem 0 .25rem; font-size: 1rem; }
+  .agent blockquote { margin: .5rem 0; padding: .1rem 0 .1rem .8rem;
+                      border-left: 3px solid #6b7280aa; opacity: .92; }
   .agent code { background: #6b728033; padding: .05rem .25rem;
                 border-radius: .25rem; font-size: .9em; }
   .agent img { max-width: 100%; border-radius: .4rem; margin-top: .5rem; }
@@ -199,22 +201,36 @@ function enligne(texte) {
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
 }
 
+// Les lignes de CITATION sont celles que l'agent recopie d'un dictionnaire de
+// source : c'est le seul texte d'une réponse que nous n'écrivons pas, et le
+// chevron est la marque à laquelle le serveur le reconnaît lui aussi. Sans ce
+// cas, le chevron s'affichait tel quel en tête de chaque ligne.
 function enHtml(texte) {
   const sortie = [];
   let liste = false;
-  for (const ligne of echapper(texte).split("\n")) {
+  let citation = false;
+  for (const ligne of texte.split("\n")) {
+    const citee = ligne.match(/^\s*>\s?(.*)$/);
+    if (citee) {
+      if (liste) { sortie.push("</ul>"); liste = false; }
+      if (!citation) { sortie.push("<blockquote>"); citation = true; }
+      sortie.push("<p>" + enligne(echapper(citee[1])) + "</p>");
+      continue;
+    }
+    if (citation) { sortie.push("</blockquote>"); citation = false; }
     const puce = ligne.match(/^\s*[*-]\s+(.*)$/);
     if (puce) {
       if (!liste) { sortie.push("<ul>"); liste = true; }
-      sortie.push("<li>" + enligne(puce[1]) + "</li>");
+      sortie.push("<li>" + enligne(echapper(puce[1])) + "</li>");
       continue;
     }
     if (liste) { sortie.push("</ul>"); liste = false; }
     const titre = ligne.match(/^#{1,6}\s+(.*)$/);
-    if (titre) { sortie.push("<h4>" + enligne(titre[1]) + "</h4>"); continue; }
-    if (ligne.trim()) sortie.push("<p>" + enligne(ligne) + "</p>");
+    if (titre) { sortie.push("<h4>" + enligne(echapper(titre[1])) + "</h4>"); continue; }
+    if (ligne.trim()) sortie.push("<p>" + enligne(echapper(ligne)) + "</p>");
   }
   if (liste) sortie.push("</ul>");
+  if (citation) sortie.push("</blockquote>");
   return sortie.join("");
 }
 

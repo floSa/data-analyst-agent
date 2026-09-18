@@ -129,8 +129,81 @@ def test_les_termes_de_PLUSIEURS_entrees_nommees_se_cumulent():
         "survie et duree_min, quelle différence ?", DICTIONNAIRE, "mini"
     )
 
-    assert "`survie` | `1` a survécu" in dit
+    assert "`survie` : `1` a survécu" in dit
     assert "à écarter de toute moyenne" in dit
+
+
+# --- la FORME : ce que le dictionnaire dit, en prose --------------------------
+
+# Le dictionnaire tel qu'un humain l'écrit : une fiche de colonne en tableau, un
+# paragraphe coupé à la largeur de l'éditeur, un exemple SQL, et une ligne de
+# contrôle qui CITE le terme sans rien en dire. Les quatre formes du relevé.
+DICTIONNAIRE_REDIGE = """\
+# Dictionnaire — `parc`
+
+| Colonne | Sens |
+|---|---|
+| `statut` | `ACT` (en service) ou `RET` (retirée, matériel démonté). |
+
+## Le piège
+
+`statut = 'RET'` marque les 30 stations démontées. Le référentiel les garde,
+parce qu'un référentiel garde l'historique.
+
+```sql
+SELECT count(*) FROM parc WHERE statut = 'ACT'
+```
+
+| Question | `parc` | `exploitation` |
+|---|---|---|
+| En service | 120 (`WHERE statut = 'ACT'`) | 120 |
+"""
+
+
+def test_ce_que_le_dictionnaire_dit_est_servi_en_PROSE_et_non_en_lignes_brutes():
+    """Le contenu était juste et la forme illisible — relevé tel quel avant :
+
+        > | `statut` | `ACT` (en service) ou `RET` (retirée du service,
+          matériel démonté). Voir le piège nº 1. |
+        > `statut = 'RET'` marque les 30 stations démontées. Le référentiel les
+          garde,
+        > | En service | 120 (`WHERE statut = 'ACT'`) | 120 |
+
+    Trois défauts, trois causes : des barres de tableau Markdown, que la page ne
+    sait pas mettre en tableau ; une phrase coupée au milieu, parce qu'un
+    paragraphe de Markdown est coupé à la largeur d'un éditeur ; et une ligne de
+    comptage sans rapport, retenue parce qu'elle contient le mot.
+    """
+    dit = introspection.ce_qu_en_dit_le_dictionnaire(
+        "le statut RET, il recouvre quoi ?", DICTIONNAIRE_REDIGE, "parc"
+    )
+
+    # la fiche de la colonne, sans ses barres
+    assert "`statut` : `ACT` (en service) ou `RET` (retirée, matériel démonté)." in dit
+    # le paragraphe ENTIER, recollé : la phrase ne s'arrête plus sur une virgule
+    assert "garde l'historique." in dit
+    # ni barre verticale, ni ligne de contrôle, ni exemple SQL replié sur une ligne
+    assert "|" not in dit
+    assert "En service" not in dit
+    assert "SELECT" not in dit
+    # et l'en-tête d'attribution, lui, ne bouge pas : c'est ce à quoi les
+    # ceintures reconnaissent une provenance
+    assert dit.startswith("Ce qu'en dit le dictionnaire de `parc` :\n> ")
+
+
+def test_le_terme_cite_dans_une_formule_ne_fait_pas_servir_sa_ligne():
+    """« il contient le mot » n'est pas « il en dit quelque chose ».
+
+    La ligne de contrôle du dictionnaire — « | En service | 120 (`WHERE statut =
+    'ACT'`) | 120 | » — cite `statut` dans une clause SQL. Servie sous
+    « ce qu'en dit le dictionnaire », elle donne à lire un fragment de tableau
+    de comptage à qui demandait un sens. Une ligne de tableau n'est retenue que
+    si le terme y est décoré et SEUL dans sa cellule : c'est la forme sous
+    laquelle un dictionnaire déclare ce dont la ligne parle.
+    """
+    controle = "| Question | `parc` |\n|---|---|\n| En service | 120 (`WHERE statut = 'ACT'`) |\n"
+
+    assert introspection.extrait_du_dictionnaire(controle, "statut") == ""
 
 
 def test_l_attribution_est_celle_que_la_ceinture_reconnait():
