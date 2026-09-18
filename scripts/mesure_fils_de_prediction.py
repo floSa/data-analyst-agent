@@ -94,11 +94,8 @@ def _un_rappel_a_servi(releve: Releve) -> bool:
     qui aboutissaient.
     """
     detail = _noeud(releve, "rappel")
-    return bool(detail) and (
-        "lire_un_artefact" in detail
-        or "rejouer_un_code" in detail
-        or detail.startswith("rejeu de")
-    )
+    appele = "lire_un_artefact" in detail or "rejouer_un_code" in detail
+    return bool(detail) and (appele or detail.startswith("rejeu de"))
 
 
 # La contradiction du défaut 3, telle qu'elle se lit dans la réponse SERVIE :

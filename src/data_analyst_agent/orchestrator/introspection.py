@@ -671,6 +671,27 @@ def _en_prose(genre: str, lignes: list[str], terme: str) -> str:
     return " — ".join(cellules)
 
 
+# La taille de l'extrait, et c'est une BORNE DE TAILLE, pas de lignes. La
+# version qui recopiait le fichier ligne à ligne en gardait huit, soit environ
+# six cents caractères sur les dictionnaires de ce dépôt. En passant aux blocs,
+# la borne a changé d'unité sans qu'on y prenne garde : quatre blocs de prose
+# entière font neuf cents caractères denses là où huit lignes coupées en
+# faisaient six cents.
+#
+# Ce n'est pas un détail de présentation, c'est un fait mesuré.
+# `mesure_provenance_du_sens` tombait à 27/30, et c'est `S4` — « puissance_kw,
+# ça signifie quoi ? » — qui payait, 3 tirages sur 3, sur « à écarter des
+# moyennes ». Devant neuf cents caractères, le modèle RÉSUME ; devant six
+# cents, il CITE. Et un résumé dilue la consigne juste assez pour satisfaire la
+# ceinture — qui se contente d'un « ne pas » — sans porter ce que la consigne
+# disait.
+#
+# Un bloc qui déborde est ÉCARTÉ ENTIER, jamais coupé : la phrase tronquée au
+# milieu est précisément le défaut que le découpage en blocs a supprimé, et la
+# réintroduire par la borne serait la reprendre par l'autre bout.
+_TAILLE_DE_L_EXTRAIT = 600
+
+
 def extrait_du_dictionnaire(dictionnaire: str, terme: str, maximum: int = 4) -> str:
     """Ce que le dictionnaire dit de ``terme``, en prose ("" s'il n'en dit rien).
 
@@ -697,6 +718,10 @@ def extrait_du_dictionnaire(dictionnaire: str, terme: str, maximum: int = 4) -> 
     lignes (``_blocs_du_dictionnaire``) et en ne retenant d'un tableau que les
     lignes qui DÉFINISSENT le terme (``_en_prose``).
 
+    **Et la borne est une TAILLE** (``_TAILLE_DE_L_EXTRAIT``), parce qu'en
+    passant des lignes aux blocs elle avait changé d'unité sans qu'on y prenne
+    garde. Un bloc qui déborde est écarté entier, jamais coupé.
+
     **Ce qui ne change pas : le chevron.** Il n'est pas une décoration, c'est la
     marque à laquelle trois ceintures reconnaissent le seul texte de ce module
     que nous n'écrivons pas — ``_citations`` y cherche la consigne du
@@ -711,7 +736,14 @@ def extrait_du_dictionnaire(dictionnaire: str, terme: str, maximum: int = 4) -> 
         dit = _en_prose(genre, lignes, terme).strip()
         if dit:
             dits.setdefault(dit, None)
-    return "\n".join(f"> {dit}" for dit in list(dits)[:maximum])
+    gardes: list[str] = []
+    taille = 0
+    for dit in list(dits)[:maximum]:
+        if gardes and taille + len(dit) > _TAILLE_DE_L_EXTRAIT:
+            break
+        gardes.append(dit)
+        taille += len(dit)
+    return "\n".join(f"> {dit}" for dit in gardes)
 
 
 def bloc_du_dictionnaire(source: str, extrait: str) -> str:
