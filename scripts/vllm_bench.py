@@ -9,8 +9,8 @@ bien répondre correctement en texte tout en n'en émettant aucun :
 2. l'**agent SQL** — trois tools. Sans tool calling : `grounded` reste faux et
    l'utilisateur lit « Je n'ai pas interrogé la source ».
 
-S'y ajoute le **dépassement de contexte** : là où Ollama tronque en silence,
-vLLM rejette par une erreur HTTP. Ce banc confronte `is_context_refusal()` au
+S'y ajoute le **dépassement de contexte** : un prompt trop long est rejeté par
+une erreur HTTP plutôt que tronqué. Ce banc confronte `is_context_refusal()` au
 corps d'erreur réel du serveur.
 
 Ce script ne touche à AUCUN réglage du projet : tout passe en argument, rien

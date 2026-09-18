@@ -18,12 +18,6 @@ ENV_FILE = ".env"
 
 logger = logging.getLogger("data_analyst_agent.config")
 
-# Ancien nom du champ d'URL, du temps où le moteur s'appelait dans la
-# configuration. Conservé en lecture seule : un `.env` en service ne doit pas
-# cesser de marcher parce qu'on a renommé une variable.
-URL_MOTEUR_DEPRECIEE = "DAA_OLLAMA_BASE_URL"
-URL_MOTEUR = "DAA_LLM_BASE_URL"
-
 # Même histoire pour le plafond du dictionnaire : il ne bornait que le prompt de
 # l'agent SQL, il borne maintenant celui de tout agent qui lit le dictionnaire
 # d'une source. Le nom d'avant survit en lecture seule.
@@ -43,25 +37,21 @@ class Settings(BaseSettings):
     # --- LLM mutualisé (docs/CADRAGE.md §5) ---
     # Un seul modèle langage pour tout le système.
     #
-    # Le MOTEUR n'est plus nommé ici : l'application ne parle que
-    # /v1/chat/completions, qu'Ollama comme vLLM servent. Changer de moteur,
-    # c'est changer cette URL — et rien d'autre côté code (audit §4.1).
-    llm_base_url: str = "http://localhost:11434/v1"
-    # Ancien nom, gardé pour ne pas casser les `.env` déjà en service. Renseigné,
-    # il alimente `llm_base_url` et se signale comme déprécié ; à retirer une
-    # fois les fichiers d'environnement migrés.
-    ollama_base_url: str | None = None
-    # Clé d'API. Inutile avec Ollama, EXIGÉE par un vLLM lancé avec `--api-key` :
-    # il rejette alors toute requête sans en-tête `Authorization`. Vide = pas
-    # d'authentification (le SDK OpenAI pose sa clé factice, qu'il exige non
-    # nulle même quand le serveur s'en moque).
+    # L'application ne parle que /v1/chat/completions, que vLLM sert sur le
+    # service central. Déplacer le serveur, c'est changer cette URL — et rien
+    # d'autre côté code (audit §4.1). Le défaut vise le port du service local.
+    llm_base_url: str = "http://localhost:8100/v1"
+    # Clé d'API, EXIGÉE par un vLLM lancé avec `--api-key` : il rejette alors
+    # toute requête sans en-tête `Authorization`. Vide = pas d'authentification
+    # (le SDK OpenAI pose sa clé factice, qu'il exige non nulle même quand le
+    # serveur s'en moque).
     llm_api_key: str = ""
     # Le modèle réellement servi par le central. CADRAGE §5 visait
     # qwen3-coder:30b, qui n'a jamais été chargé : ce repli échouait donc en
     # `404 model not found`, et le masquage des erreurs ne laissait qu'un
     # « je n'ai pas réussi à interpréter la demande » dans la réponse. Le repli
     # doit désigner ce qui existe ; le `.env` reste maître.
-    llm_model: str = "gemma4:e4b"
+    llm_model: str = "google/gemma-4-E4B-it-qat-w4a16-ct"
     llm_temperature: float = 0.0
     # Délai d'un appel LLM et nombre de réessais. Les défauts du SDK OpenAI
     # (600 s, 2 réessais) n'étaient pas une décision : un appel bloqué retenait
@@ -148,21 +138,18 @@ class Settings(BaseSettings):
     # système n'a pas de boucle de correction à mener. Un appel par outil qu'il
     # décide d'ouvrir, un dernier pour formuler ce qu'ils ont rendu.
     #
-    # 4 pendant longtemps, et 4 était serré : une question sur trente-six —
-    # « sur quoi je peux travailler ? » — l'épuisait sous Ollama et tombait dans
-    # le repli du planificateur (« request_limit of 4 »), alors qu'elle passait
-    # sous vLLM. Ce n'était pas une boucle : la question ouvre sur TOUS les
-    # sujets, et Ollama y répond en regardant tout — capacités, sources, deux
-    # fois le schéma, modèles. Cinq outils, donc six allers-retours. vLLM
-    # répond à la même question avec un seul outil.
+    # Le plafond borne une question qui ouvre sur TOUS les sujets — « sur quoi
+    # je peux travailler ? » : elle peut demander capacités, sources, schéma et
+    # modèles avant de formuler. L'atteindre coûte plus cher que de réussir,
+    # parce que l'échec ajoute le tour du planificateur et celui de la synthèse
+    # par-dessus les appels déjà payés.
     #
-    # 6 est la plus basse valeur qui rend 36/36 sur les DEUX moteurs (5 échoue
-    # encore), et elle est GRATUITE : batterie complète, 83 appels sous Ollama
-    # à 4 comme à 6, 78 sous vLLM aux trois valeurs, et pas une question dont
-    # le coût bouge. Un plafond n'est pas un budget dépensé — c'est un budget
-    # disponible, et seule la question qui en avait besoin le touche. L'atteindre
-    # coûtait d'ailleurs plus cher que de réussir : l'échec ajoute le tour du
-    # planificateur et celui de la synthèse.
+    # 6 est de la marge, et cette marge est GRATUITE : batterie complète, 78
+    # appels mesurés à 4, 5 comme à 6, et pas une question dont le coût bouge.
+    # Un plafond n'est pas un budget dépensé, c'est un budget disponible : seule
+    # la question qui en a besoin le touche. Le garder au-dessus du pire cas
+    # observé ne se paie donc pas, et évite qu'une question un peu plus large
+    # tombe dans le repli du planificateur.
     systeme_request_limit: int = 6
 
     # --- Agent de rappel (artefacts du fil : cf. orchestrator/rappel.py) ---
@@ -214,13 +201,13 @@ class Settings(BaseSettings):
     # ou une question très longue. Au dépassement, les objets intermédiaires les
     # plus ANCIENS sont retirés jusqu'à ce que ça tienne — la dégradation est
     # ordonnée, jamais subie. À tenir NETTEMENT sous la fenêtre du serveur
-    # (`OLLAMA_CONTEXT_LENGTH`, 32768 sur le service central) : le budget ne
-    # couvre que le planificateur, les autres agents ajoutent leurs propres tours.
+    # (`--max-model-len`, 32768 sur le service central) : le budget ne couvre
+    # que le planificateur, les autres agents ajoutent leurs propres tours.
     # 0 désactive le budget.
     context_token_budget: int = 8000
-    # Fenêtre de contexte RÉELLEMENT servie par le serveur (Ollama :
-    # `OLLAMA_CONTEXT_LENGTH`, 32768 sur le service central — et non les 131 072
-    # que déclare gemma4). Elle ne règle rien côté client : elle sert à
+    # Fenêtre de contexte RÉELLEMENT servie par le serveur (`--max-model-len`,
+    # 32768 sur le service central — et non les 131 072 que déclare le modèle).
+    # Elle ne règle rien côté client : elle sert à
     # CONSTATER un débordement, en confrontant `prompt_eval_count` à ce qu'on a
     # envoyé. 0 = fenêtre inconnue, la détection se rabat sur l'écart grossier.
     context_model_window: int = 32768
@@ -323,35 +310,6 @@ class Settings(BaseSettings):
         if not isinstance(valeur, str):
             return valeur
         return [morceau.strip() for morceau in valeur.split(",") if morceau.strip()]
-
-    @model_validator(mode="after")
-    def _reprendre_url_du_moteur_depreciee(self) -> "Settings":
-        """Fait vivre l'ancien nom d'URL, en disant qu'il est déprécié.
-
-        Le nouveau nom l'emporte s'il est renseigné explicitement : on ne veut
-        pas qu'une variable oubliée dans un `.env` reprenne la main sur un
-        réglage posé sciemment.
-
-        Deux canaux, et c'est voulu : ``warnings`` pour le développeur et les
-        tests, un log pour l'exploitant — les DeprecationWarning sont muettes
-        par défaut, et c'est précisément lui qui doit migrer son fichier.
-        """
-        if self.ollama_base_url is None:
-            return self
-        if "llm_base_url" in self.model_fields_set:
-            message = (
-                f"{URL_MOTEUR_DEPRECIEE} est dépréciée et IGNORÉE ici : "
-                f"{URL_MOTEUR} est renseignée et l'emporte. Retirez l'ancienne."
-            )
-        else:
-            self.llm_base_url = self.ollama_base_url
-            message = (
-                f"{URL_MOTEUR_DEPRECIEE} est dépréciée : renommez-la {URL_MOTEUR}. "
-                "Sa valeur est reprise pour cette exécution."
-            )
-        warnings.warn(message, DeprecationWarning, stacklevel=2)
-        logger.warning(message)
-        return self
 
     @model_validator(mode="after")
     def _reprendre_le_plafond_deprecie(self) -> "Settings":

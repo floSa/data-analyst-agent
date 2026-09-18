@@ -323,7 +323,7 @@ def test_le_contrat_de_sortie_du_llm_reste_a_quatre_capacites():
 
     Le Literal EST le JSON Schema de sortie structurée : le modèle le voit,
     même quand le prompt ne mentionne pas la valeur ajoutée. Les deux
-    expériences, en live sur gemma4:e4b et reproductibles :
+    expériences, en live sur le modèle en service et reproductibles :
 
     - la valeur annoncée AUSSI dans le prompt : 134 tokens à chaque requête, et
       quatre questions de la batterie passées d'une bonne réponse à une

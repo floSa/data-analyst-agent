@@ -1,7 +1,7 @@
 """L'agent système : le MODÈLE reconnaît la question sur soi, et formule les faits.
 
 Six outils typés (`pydantic-ai`), sur le modèle des trois outils de l'agent
-SQL qui fonctionnent déjà avec ``gemma4:e4b``. Chacun rend un texte de
+SQL qui fonctionnent déjà avec le modèle en service. Chacun rend un texte de
 :mod:`data_analyst_agent.orchestrator.introspection`, donc un texte construit
 depuis un artefact du dépôt — catalogue, registre, schémas d'attributs,
 ontologie réelle de la source. Le modèle décide d'appeler, l'outil rend les

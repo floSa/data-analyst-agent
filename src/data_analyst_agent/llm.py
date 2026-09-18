@@ -5,10 +5,9 @@ UN SEUL modèle langage pour tout le système — routage, SQL, code, synthèse
 les tests le remplacent par TestModel/FunctionModel — jamais d'appel réseau
 dans la suite par défaut ni en CI.
 
-Le moteur n'est pas nommé ici. `/v1/chat/completions` est servi aussi bien par
-Ollama (le moteur en service) que par vLLM (la cible, docs/VLLM.md) : ce module
-ne connaît qu'une URL, une clé d'API facultative, un délai et un nombre de
-réessais. Basculer de l'un à l'autre ne touche que le `.env`.
+Le serveur n'est pas nommé ici. Il expose `/v1/chat/completions` (vLLM,
+docs/MOTEUR.md) et ce module ne connaît qu'une URL, une clé d'API facultative,
+un délai et un nombre de réessais. Le déplacer ne touche que le `.env`.
 """
 
 import threading

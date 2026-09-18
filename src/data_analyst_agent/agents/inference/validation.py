@@ -163,15 +163,15 @@ def _convertir(valeur: str, attendu: type) -> Any:
 def coerce_values(schema: type[BaseModel], payload: dict) -> dict:
     """Convertit les valeurs TEXTUELLES vers le type que le schéma attend.
 
-    Le même modèle, sur la même question, rend ``pclass=1`` servi par Ollama et
-    ``pclass='1'`` servi par vLLM. La prédiction complète était donc refusée sur
-    l'un et acceptée sur l'autre — « Input should be 1, 2 or 3 (reçu : '1') » —
-    alors que l'extraction était juste dans les deux cas.
+    Le serveur rend ``pclass='1'`` là où le schéma attend ``pclass=1``. La
+    prédiction complète était donc refusée — « Input should be 1, 2 or 3
+    (reçu : '1') » — alors que l'extraction était juste.
 
-    La cause n'est pas que vLLM rendrait ses arguments d'outil en chaînes : sur
-    un tool dont le JSON Schema DÉCLARE ``integer``/``number``/``boolean``, les
-    deux serveurs rendent les mêmes types (mesuré, docs/VLLM.md §8.4). Ce qui
-    diffère, c'est ce qu'ils font quand le schéma ne déclare rien —
+    La cause n'est pas que le serveur rendrait ses arguments d'outil en
+    chaînes : sur un tool dont le JSON Schema DÉCLARE
+    ``integer``/``number``/``boolean``, il rend bien ces types (mesuré,
+    docs/MOTEUR.md §8.4). Ce qui flotte, c'est ce qu'il fait quand le schéma ne
+    déclare rien —
     ``Plan.features`` est un ``dict[str, Any]``, soit ``additionalProperties:
     true``, le seul endroit de tout le système où un argument d'outil arrive
     sans type annoncé. Sans consigne, un serveur devine des nombres, l'autre des

@@ -22,7 +22,8 @@ from data_analyst_agent import prompts
 # du dépôt (`orchestrator/systeme.py`, nœud `system` en tête du graphe). La
 # raison est mesurée, pas esthétique —
 # ce Literal EST le JSON Schema de sortie, que le modèle lit même quand le
-# prompt ne dit rien de la valeur ajoutée. Constaté en live sur gemma4:e4b, de
+# prompt ne dit rien de la valeur ajoutée. Constaté en live sur le modèle en
+# service, de
 # façon reproductible : avec une cinquième valeur, « prédis la survie d'une
 # passagère de 1re classe… » ressortait avec `pcass` au lieu de `pclass` —
 # champ inconnu, prédiction remplacée par une relance. La valeur retirée, la

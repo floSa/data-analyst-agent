@@ -596,8 +596,9 @@ class Orchestrator:
                     "nœud %s : échec après %d ms (incident %s)", name, duration, incident
                 )
                 if is_context_refusal(exc):
-                    # Là où Ollama tronque en silence, vLLM rejette. Sans ce
-                    # branchement, le refus arriverait à l'utilisateur sous la
+                    # Un prompt trop long n'est pas tronqué : il est rejeté.
+                    # Sans ce branchement, le refus arriverait à l'utilisateur
+                    # sous la
                     # forme « ModelHTTPError: … », que rien ne relie à la
                     # longueur du prompt — donc rien à faire pour s'en sortir.
                     return {

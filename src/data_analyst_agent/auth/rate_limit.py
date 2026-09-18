@@ -3,8 +3,8 @@
 Pourquoi c'est nécessaire ici et pas ailleurs : ``POST /chat`` déclenche jusqu'à
 onze appels LLM et un conteneur Docker pour un corps de quelques octets. Sans
 quota, c'est un amplificateur de charge gratuit (audit §6.3) — et le LLM
-mutualisé sert **une requête à la fois** (``OLLAMA_NUM_PARALLEL=1``), donc une
-rafale d'un seul compte met tous les autres en file.
+mutualisé a un débit fini, partagé par tous les appelants : une rafale d'un
+seul compte allonge la file de tous les autres.
 
 Fenêtre GLISSANTE et non compteur remis à zéro : un compteur par minute civile
 laisse passer deux fois le quota à cheval sur la minute. On garde les

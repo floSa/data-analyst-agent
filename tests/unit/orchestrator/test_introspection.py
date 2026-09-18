@@ -228,12 +228,11 @@ def test_un_inventaire_enumere_en_ligne_est_exigible(catalogue: Catalog, registr
     ``capacites_de_l_agent``, dont le texte finit par « Mes sources :
     `titanic`, `iris`. Mes modèles de prédiction : … » — une ligne ordinaire,
     sans puce. Il en rendait le résumé sans les noms, et la ceinture ne voyait
-    rien à redire puisqu'aucune PUCE ne les portait. Sous Ollama le même modèle
-    recopiait les faits au long et les noms survivaient par accident ; le
-    passage à vLLM, plus concis, a découvert le trou.
+    rien à redire puisqu'aucune PUCE ne les portait. Le trou tenait à la
+    ceinture, pas au modèle : un résumé concis des faits suffit à le découvrir.
     """
     faits = introspection.decrire_les_capacites(catalogue, registre)
-    # la réponse réellement mesurée sous vLLM, mot pour mot
+    # la réponse réellement mesurée, mot pour mot
     resumee = (
         "Je peux interroger des sources en SQL, analyser et visualiser des données avec "
         "du code Python, prédire des cas ou des individus en utilisant des modèles, et "

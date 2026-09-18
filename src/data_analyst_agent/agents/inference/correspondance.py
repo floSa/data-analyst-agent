@@ -12,12 +12,11 @@ séparés :
 
 Ces deux écarts étaient laissés à l'agent SQL, qui devait les franchir en
 devinant. Mesuré sur la source ``titanic`` avec la question « Prédis la survie
-des cinq premiers passagers de la base », cinq tirages par moteur : vLLM choisit
-``passengers.class_id`` sans alias (``pclass`` manquant, 0/5 lignes prédites,
-5 fois sur 5) ; Ollama choisit ``classes.label`` (``'3e classe'``, 0/5) quatre
-fois sur cinq, et ``class_id AS pclass`` — juste, par chance — une fois. Trois
-colonnes candidates, trois réponses, aucune raison de trancher : c'est une
-devinette, pas une correspondance.
+des cinq premiers passagers de la base », cinq tirages : le modèle choisit
+``passengers.class_id`` sans alias — ``pclass`` manquant, 0/5 lignes prédites,
+5 fois sur 5. ``classes.label`` (``'3e classe'``) et ``class_id AS pclass`` ont
+aussi été observés au fil des mesures. Trois colonnes candidates, aucune raison
+de trancher : c'est une devinette, pas une correspondance.
 
 **Elle est donc déclarée, dans le catalogue, par la source** — c'est la source
 qui sait quelle colonne porte quoi, et elle seule : le même modèle ``titanic``
@@ -238,7 +237,7 @@ class Correspondance:
         rien à choisir.
 
         La dernière phrase n'est pas une politesse : la consigne ne porte QUE sur
-        la liste des colonnes. Sans elle, mesuré sous Ollama, une consigne aussi
+        la liste des colonnes. Sans elle, et c'est mesuré, une consigne aussi
         détaillée recouvrait la demande elle-même — « les cinq premiers
         passagers » repartait sans ``LIMIT``, et ramenait toute la table.
         """

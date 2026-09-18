@@ -131,16 +131,16 @@ def test_la_fixture_disolation_retire_le_env_du_poste_a_lentree(monkeypatch):
     premier test. Importer ``api/app.py`` exécute son ``app = create_app()`` de
     niveau module — donc get_settings() — dès la collecte ; l'état « avant » que
     chaque test mémorise est donc déjà pollué. Il faut le retirer à l'entrée."""
-    monkeypatch.setenv("DAA_OLLAMA_BASE_URL", "http://poste:11434/v1")
+    monkeypatch.setenv("DAA_LLM_BASE_URL", "http://poste:8100/v1")
     fixture = conftest.environnement_isole.__wrapped__()
 
     next(fixture)  # entrée : la variable du poste doit disparaître
-    retiree = "DAA_OLLAMA_BASE_URL" not in os.environ
+    retiree = "DAA_LLM_BASE_URL" not in os.environ
     with pytest.raises(StopIteration):
         next(fixture)  # sortie : et revenir telle quelle
 
     assert retiree
-    assert os.environ["DAA_OLLAMA_BASE_URL"] == "http://poste:11434/v1"
+    assert os.environ["DAA_LLM_BASE_URL"] == "http://poste:8100/v1"
 
 
 def test_la_fixture_disolation_coupe_get_settings_du_fichier_du_poste():
@@ -151,16 +151,6 @@ def test_la_fixture_disolation_coupe_get_settings_du_fichier_du_poste():
 
     assert get_settings().workspace_dir == Path("var/workspaces")
     assert "DAA_WORKSPACE_DIR" not in os.environ
-
-
-def test_aucune_depreciation_du_moteur_ne_traverse_la_suite(recwarn):
-    """Le `.env` du poste porte encore DAA_OLLAMA_BASE_URL. Tant qu'il fuitait,
-    la dépréciation criait à chaque Settings construit dans la suite — 242
-    avertissements sur un run complet, du bruit qui masquait les vrais."""
-    get_settings()
-
-    assert Settings(_env_file=None).ollama_base_url is None
-    assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
 
 
 def test_la_fixture_disolation_vide_le_cache_de_get_settings():
@@ -174,49 +164,39 @@ def test_la_fixture_disolation_vide_le_cache_de_get_settings():
     assert get_settings() is not premier
 
 
-# -- moteur LLM : le nom du moteur sort de la configuration --------------------
+# -- moteur LLM : le nom du serveur sort de la configuration -------------------
 
 
 def test_url_du_moteur_par_defaut():
-    assert make_settings().llm_base_url == "http://localhost:11434/v1"
+    """SANS `.env`, l'application vise le service en place — pas un autre port.
+
+    C'est le défaut du CODE qui est éprouvé ici, et lui seul : les campagnes
+    tournent avec le `.env` recopié et ne prouveraient rien de cette ligne.
+    ``_env_file=None`` coupe le fichier ; la fixture d'isolation coupe les
+    variables du poste.
+    """
+    assert Settings(_env_file=None).llm_base_url == "http://localhost:8100/v1"
 
 
-def test_ancienne_variable_du_moteur_toujours_honoree(monkeypatch):
-    """Un `.env` en service porte DAA_OLLAMA_BASE_URL : le renommage ne doit pas
-    couper l'instance qui tourne."""
-    monkeypatch.setenv("DAA_OLLAMA_BASE_URL", "http://central:11434/v1")
+def test_modele_par_defaut():
+    """Même raison, pour le modèle : le repli doit désigner ce qui est servi.
 
-    with pytest.deprecated_call():
-        settings = Settings(_env_file=None)
-
-    assert settings.llm_base_url == "http://central:11434/v1"
-
-
-def test_ancienne_variable_signalee_dans_les_logs(monkeypatch, caplog):
-    """Les DeprecationWarning sont muettes par défaut : c'est le log que
-    l'exploitant verra, et c'est lui qui doit migrer son fichier."""
-    monkeypatch.setenv("DAA_OLLAMA_BASE_URL", "http://central:11434/v1")
-
-    with caplog.at_level("WARNING"), pytest.deprecated_call():
-        Settings(_env_file=None)
-
-    assert "DAA_LLM_BASE_URL" in caplog.text
+    Un repli qui nomme un modèle absent échoue en ``404 model not found``, et le
+    masquage des erreurs n'en laisse qu'un « je n'ai pas réussi à interpréter la
+    demande » dans la réponse — un symptôme qui ne dit pas sa cause.
+    """
+    assert Settings(_env_file=None).llm_model == "google/gemma-4-E4B-it-qat-w4a16-ct"
 
 
-def test_nouvelle_variable_prime_sur_lancienne(monkeypatch):
-    """Un réglage posé sciemment ne se fait pas reprendre par une variable oubliée."""
-    monkeypatch.setenv("DAA_OLLAMA_BASE_URL", "http://ancien:11434/v1")
-    monkeypatch.setenv("DAA_LLM_BASE_URL", "http://vllm:8000/v1")
+def test_le_env_prime_sur_le_defaut(monkeypatch):
+    """Le défaut est un repli, pas un verrou : l'environnement reste maître."""
+    monkeypatch.setenv("DAA_LLM_BASE_URL", "http://autre:8101/v1")
+    monkeypatch.setenv("DAA_LLM_MODEL", "un/autre-modele")
 
-    with pytest.deprecated_call():
-        settings = Settings(_env_file=None)
+    settings = Settings(_env_file=None)
 
-    assert settings.llm_base_url == "http://vllm:8000/v1"
-
-
-def test_aucun_avertissement_sans_lancienne_variable(recwarn):
-    assert Settings(_env_file=None).ollama_base_url is None
-    assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+    assert settings.llm_base_url == "http://autre:8101/v1"
+    assert settings.llm_model == "un/autre-modele"
 
 
 # -- plafond du dictionnaire : un réglage qui a changé de nom en changeant de

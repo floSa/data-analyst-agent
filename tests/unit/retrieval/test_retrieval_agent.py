@@ -208,11 +208,10 @@ def test_un_dictionnaire_entier_ne_signale_rien(adapter):
 
 # --- get_schema accepte un argument de table plutôt que de le refuser --------
 #
-# L'outil n'en prenait aucun. Sous vLLM, le modèle lui passait
-# `{"table_name": ...}`, la validation refusait, il réessayait, et le budget de
-# reprise valant 1 le tour mourait sur « la source de données n'a pas pu être
-# interrogée » — 9 fois sur 9, sur trois sources. Jamais sous Ollama : le même
-# modèle, deux gabarits d'appel d'outil.
+# L'outil n'en prenait aucun. Le modèle lui passait `{"table_name": ...}`, la
+# validation refusait, il réessayait, et le budget de reprise valant 1 le tour
+# mourait sur « la source de données n'a pas pu être interrogée » — 9 fois sur
+# 9, sur trois sources.
 
 
 def test_get_schema_sans_argument_rend_le_schema_complet(adapter):

@@ -1,28 +1,27 @@
-"""Mesure ce que chaque serveur LLM rend comme TYPE dans les arguments d'un tool.
+"""Mesure ce que le serveur LLM rend comme TYPE dans les arguments d'un tool.
 
-Une prédiction complète aboutissait sous Ollama et était refusée sous vLLM,
-pour la même question et le même modèle : le planificateur rendait `pclass=1`
-d'un côté, `pclass='1'` de l'autre, et `Literal[1, 2, 3]` refuse `'1'`.
+Une prédiction complète était refusée parce que le planificateur rendait
+`pclass='1'` là où `Literal[1, 2, 3]` attend `1`.
 
-L'explication de travail — « vLLM rend ses arguments d'outil en chaînes » —
-était fausse, et ce runner est ce qui l'a montré. Il pose à chaque serveur un
-tool dont le JSON Schema DÉCLARE ses types (`integer`, `number`, `boolean`, et
-un `integer` sous `enum`, qui est la forme d'un `Literal[1, 2, 3]`) et affiche
-le type Python de chaque argument rendu. Les deux serveurs rendent la même
-chose.
+L'explication de travail — « le serveur rend ses arguments d'outil en
+chaînes » — était fausse, et ce runner est ce qui l'a montré. Il pose au serveur
+un tool dont le JSON Schema DÉCLARE ses types (`integer`, `number`, `boolean`,
+et un `integer` sous `enum`, qui est la forme d'un `Literal[1, 2, 3]`) et
+affiche le type Python de chaque argument rendu. Un type DÉCLARÉ est respecté.
 
 L'écart est ailleurs : dans le seul endroit du système où le schéma ne déclare
 rien — `Plan.features`, un `dict[str, Any]`, soit `additionalProperties: true`.
-Sans type annoncé, chaque serveur devine. C'est pourquoi la conversion vit dans
+Sans type annoncé, le serveur devine. C'est pourquoi la conversion vit dans
 `agents/inference/validation.py`, où le type attendu existe enfin.
 
     uv run python scripts/mesure_typage_des_arguments_d_outil.py
-    uv run python scripts/mesure_typage_des_arguments_d_outil.py --moteur vllm
+    uv run python scripts/mesure_typage_des_arguments_d_outil.py \
+        --base-url http://autre:8100/v1 --model <modèle>
 
-Contre les VRAIS serveurs, comme `live_scenarios.py` et à la différence de la
-suite pytest. Un moteur injoignable est signalé et n'interrompt pas les autres.
+Contre le VRAI serveur, comme `live_scenarios.py` et à la différence de la
+suite pytest.
 
-Mesures dans docs/VLLM.md §8.4 et docs/surface-conversationnelle.md §16.
+Mesures dans docs/MOTEUR.md §8.4 et docs/surface-conversationnelle.md §16.
 """
 
 from __future__ import annotations
@@ -33,13 +32,11 @@ import sys
 
 from openai import OpenAI, OpenAIError
 
-# Les deux moteurs de la machine de dev. Les URL sont écrites ici et non lues
-# dans le `.env` : ce runner COMPARE les serveurs, il ne s'adresse pas à celui
-# qui est en service.
-MOTEURS: dict[str, tuple[str, str]] = {
-    "ollama": ("http://localhost:11434/v1", "gemma4:e4b"),
-    "vllm": ("http://localhost:8100/v1", "google/gemma-4-E4B-it-qat-w4a16-ct"),
-}
+# Le serveur de la machine de dev. L'URL est écrite ici et non lue dans le
+# `.env` : ce runner mesure un serveur qu'on lui désigne, il ne s'adresse pas
+# forcément à celui qui est en service.
+BASE_URL = "http://localhost:8100/v1"
+MODELE = "google/gemma-4-E4B-it-qat-w4a16-ct"
 
 # Un tool qui déclare tout ce qu'un schéma de features peut demander : un
 # entier, un flottant, un booléen, et un entier sous `enum` — la forme que
@@ -92,9 +89,9 @@ def _conforme(valeur: object, attendu: type) -> bool:
     return isinstance(valeur, attendu)
 
 
-def interroger(nom_moteur: str, base_url: str, modele: str) -> bool:
+def interroger(base_url: str, modele: str) -> bool:
     """Pose la question au serveur et rend True si tous les types conviennent."""
-    print(f"\n=== {nom_moteur} — {base_url} ({modele})")
+    print(f"\n=== {base_url} ({modele})")
     client = OpenAI(base_url=base_url, api_key="api-key-not-set", timeout=120.0, max_retries=0)
     try:
         reponse = client.chat.completions.create(
@@ -135,25 +132,19 @@ def interroger(nom_moteur: str, base_url: str, modele: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--moteur",
-        nargs="*",
-        choices=sorted(MOTEURS),
-        help="n'interroger que ces moteurs (par défaut : tous)",
-    )
+    parser.add_argument("--base-url", default=BASE_URL, help=f"défaut : {BASE_URL}")
+    parser.add_argument("--model", default=MODELE, help=f"défaut : {MODELE}")
     args = parser.parse_args()
 
-    demandes = args.moteur or sorted(MOTEURS)
-    verdicts = {nom: interroger(nom, *MOTEURS[nom]) for nom in demandes}
+    ok = interroger(args.base_url, args.model)
 
     print("\n--- verdict")
-    for nom, ok in verdicts.items():
-        print(f"  {nom:8} : {'types déclarés respectés' if ok else 'ÉCART ou serveur muet'}")
+    print(f"  {'types déclarés respectés' if ok else 'ÉCART ou serveur muet'}")
     print(
-        "\nUn type DÉCLARÉ est respecté par les deux serveurs. Ce qui les sépare est\n"
-        "ce qu'ils font quand le schéma ne déclare rien — cf. docs/VLLM.md §8.4."
+        "\nUn type DÉCLARÉ est respecté. Ce qui flotte, c'est ce que le serveur fait\n"
+        "quand le schéma ne déclare rien — cf. docs/MOTEUR.md §8.4."
     )
-    sys.exit(0 if all(verdicts.values()) else 1)
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":

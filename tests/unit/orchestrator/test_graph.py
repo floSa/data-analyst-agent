@@ -110,11 +110,11 @@ def test_flux_predict_complet(registry: Registry):
 
 
 def test_flux_predict_complet_avec_des_features_en_chaines(registry: Registry):
-    """Le même plan, servi par vLLM : toutes les valeurs sont des chaînes.
+    """Le même plan, dont toutes les valeurs arrivent en chaînes.
 
-    Ce n'est pas une extraction ratée — c'est le moteur qui rend les arguments
-    d'appel d'outil en chaînes là où Ollama rend des nombres. Le tour doit
-    aboutir à la MÊME prédiction, sans quoi le serveur décide de ce que
+    Ce n'est pas une extraction ratée — c'est le serveur qui rend les arguments
+    d'appel d'outil en chaînes là où le schéma ne déclare aucun type. Le tour
+    doit aboutir à la MÊME prédiction, sans quoi le serveur décide de ce que
     l'utilisateur obtient.
     """
     en_chaines = {nom: str(valeur) for nom, valeur in TITANIC_OK.items()}
@@ -176,7 +176,7 @@ def test_valeur_hors_liste_refusee_en_la_citant(
 
     Ce que ce test garde, une fois le planificateur corrigé pour transmettre :
     la valeur arrive ici telle que l'utilisateur l'a dite — convertible
-    (``'4'``) ou pas (``'4e classe'``, ce que rend Ollama) — et le refus la
+    (``'4'``) ou pas (``'4e classe'``, également observé) — et le refus la
     CITE. Sans la citation, la relance reproche un champ sans dire ce qui
     clochait, et l'utilisateur redonne la même valeur.
     """
@@ -969,7 +969,7 @@ def test_debordement_constate_cote_serveur_remonte_a_l_utilisateur(
 ):
     """Le serveur a tronqué sans le dire : on le constate et on le dit.
 
-    Reproduit sans serveur le plafonnement mesuré contre gemma4:e4b : un premier
+    Reproduit sans serveur le plafonnement mesuré en live : un premier
     tour relève ce que le modèle dit avoir évalué, le second déclare cette
     valeur comme fenêtre — le modèle rend alors tout juste de quoi la remplir,
     pour un prompt plus long qu'elle. C'est exactement le constat qui a valu la
@@ -992,7 +992,7 @@ def test_debordement_constate_cote_serveur_remonte_a_l_utilisateur(
 def test_le_refus_explicite_du_serveur_est_dit_en_clair(
     tmp_path: Path, mini_csv: Path, registry: Registry, monkeypatch
 ):
-    """vLLM rejette là où Ollama tronque : le refus ne doit pas finir en ModelHTTPError."""
+    """Un prompt trop long est rejeté : le refus ne doit pas finir en ModelHTTPError."""
 
     class _PlannerRefuse:
         def run_sync(self, *args, **kwargs):
@@ -1043,7 +1043,7 @@ def test_prompt_plus_long_que_la_fenetre_du_serveur_est_dit_avant_l_appel(
 ):
     """Sans ce constat, un débordement massif ne laisse qu'un « je n'ai pas compris ».
 
-    Mesuré contre gemma4:e4b, plafonds désactivés : à 48 350 tokens envoyés pour
+    Mesuré en live, plafonds désactivés : à 48 350 tokens envoyés pour
     une fenêtre de 32 768, le modèle ne rend plus de sortie structurée, le
     planificateur retombe sur son repli, et rien ne reliait ce repli à la
     longueur du prompt. Ici la fenêtre déclarée est minuscule, pour constater le
@@ -1247,8 +1247,8 @@ def test_chainage_indice_de_colonnes_dans_le_prompt(tmp_path: Path, registry: Re
     assert "passagers.niveau AS pclass" in retrieval_prompt
     for field in ("sex", "age", "sibsp", "parch", "fare", "embarked"):
         assert f"{field} AS {field}" in retrieval_prompt
-    # la consigne porte sur les colonnes, et le dit : sans cette phrase, mesuré
-    # sous Ollama, « les cinq premiers » repartait sans LIMIT.
+    # la consigne porte sur les colonnes, et le dit : sans cette phrase, et
+    # c'est mesuré, « les cinq premiers » repartait sans LIMIT.
     assert "le filtre et le nombre de lignes restent ceux de la demande" in retrieval_prompt
 
 

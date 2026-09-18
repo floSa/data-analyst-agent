@@ -1,10 +1,10 @@
 """Banc de concurrence : N utilisateurs DISTINCTS qui travaillent en même temps.
 
 Le produit est multi-utilisateurs depuis les chantiers C4 et C5 — comptes
-argon2id, sessions côté serveur, cloisonnement par dossier — et la bascule sur
-vLLM a été faite POUR le parallélisme, contre un Ollama qui sert une requête à
-la fois. Rien de tout ça n'avait été mesuré sous charge : les vingt-huit
-chantiers ont mesuré séquentiellement.
+argon2id, sessions côté serveur, cloisonnement par dossier — et vLLM a été
+choisi POUR le parallélisme : il sert plusieurs requêtes de front. Rien de tout
+ça n'avait été mesuré sous charge : les vingt-huit chantiers ont mesuré
+séquentiellement.
 
 Ce que ce banc n'est pas
 ------------------------
@@ -14,8 +14,8 @@ cloisonnement autant que le débit. Un banc mono-compte ne dirait rien de la
 propriété la plus chère du produit.
 
 Le banc **n'alloue rien sur la carte** : il envoie des requêtes HTTP à
-l'application, qui parle elle-même au moteur déjà en service. Il ne relance ni
-vLLM ni Ollama et ne touche à aucun de leurs réglages.
+l'application, qui parle elle-même au moteur déjà en service. Il ne relance pas
+le serveur vLLM et ne touche à aucun de ses réglages.
 
 Le terrain
 ----------
@@ -40,7 +40,8 @@ Les épreuves (``--epreuve``, répétable)
 ``charge``        latences p50/p95, débit et erreurs pour N croissant, par capacité.
 ``cloisonnement`` audit du canari, des fils et des dossiers après la charge.
 ``meme-fil``      deux tours SIMULTANÉS sur un même fil : le fil les garde-t-il tous ?
-``moteurs``       vLLM contre Ollama, au niveau du MOTEUR : ce que la bascule a apporté.
+``moteurs``       K requêtes simultanées AU MOTEUR : le parallélisme qu'il sert
+                  vraiment, et de quoi le comparer à un second serveur (``--moteur-b``).
 
 Usage
 -----
@@ -49,7 +50,7 @@ Usage
         --llm-model google/gemma-4-E4B-it-qat-w4a16-ct
 
     uv run python scripts/mesure_concurrence.py --epreuve moteurs \\
-        --moteur-b http://localhost:11434/v1 --modele-b gemma4:e4b
+        --moteur-b http://autre-hote:8100/v1 --modele-b <modèle>
 
 Le terrain est supprimé en sortie — comptes de test compris — sauf
 ``--garder-le-terrain``. ``--json`` écrit les mesures brutes, requête par
@@ -444,8 +445,8 @@ class SondeVllm:
     voit jamais plus de deux, le goulot n'est pas le moteur. S'il en voit huit et
     que ``num_requests_waiting`` reste à zéro, il n'est pas saturé non plus.
 
-    Muette si l'URL ne sert pas de métriques (Ollama n'en a pas) : le banc doit
-    tourner contre les deux moteurs.
+    Muette si l'URL ne sert pas de métriques : le banc doit tourner aussi
+    contre un serveur qui n'en expose pas.
     """
 
     MOTIF = re.compile(
@@ -670,9 +671,9 @@ def chauffer_lapplication(client: Client, utilisateur: Utilisateur) -> float:
     Le premier ``POST /chat`` d'un serveur paie ce qu'aucun des suivants ne
     paiera : l'orchestrateur est construit paresseusement, le catalogue est lu,
     le relevé des sources est fait, et le moteur charge ce qu'il a à charger.
-    Mesuré sans chauffe, le palier N=1 portait tout ça : 88,0 s contre 55,1 s au
-    palier N=4 sur Ollama — un premier palier plus lent que le second, ce qui
-    n'a aucun sens et ferait conclure à un parallélisme qui n'existe pas.
+    Mesuré sans chauffe, le palier N=1 portait tout ça : 88,0 s contre 55,1 s
+    au palier N=4 — un premier palier plus lent que le second, ce qui n'a aucun
+    sens et ferait conclure à un parallélisme qui n'existe pas.
 
     Le tour est mené par le premier utilisateur, dans un fil à lui qui compte
     comme les autres pour l'audit de cloisonnement — il n'y a pas de raison de
@@ -1100,11 +1101,11 @@ def _tir_simultane(
 def _prompt_distinct(prompt: str, index: int) -> str:
     """Le même travail, mais un prompt qui ne partage AUCUN préfixe avec les autres.
 
-    Tirer K fois le même prompt ne mesure pas le parallélisme : les deux moteurs
-    gardent le cache d'un préfixe déjà vu, et les K-1 requêtes suivantes sautent
-    l'évaluation du prompt. Mesuré : à K=8 sur Ollama, 48,0 s avec des prompts
-    identiques là où l'on attendait huit fois une requête — le cache expliquait
-    l'écart, pas le parallélisme.
+    Tirer K fois le même prompt ne mesure pas le parallélisme : le serveur
+    garde le cache d'un préfixe déjà vu, et les K-1 requêtes suivantes sautent
+    l'évaluation du prompt. Mesuré : à K=8, 48,0 s avec des prompts identiques
+    là où l'on attendait huit fois une requête — le cache expliquait l'écart,
+    pas le parallélisme.
 
     Le discriminant est mis EN TÊTE, pas en queue : un préfixe commun suivi d'un
     suffixe différent reste un préfixe commun.
@@ -1122,7 +1123,7 @@ def epreuve_moteurs(
     nombre d'allers-retours variable d'une question à l'autre. K requêtes de même
     longueur, parties ensemble, et le temps qu'il faut pour que toutes soient
     rendues : si le moteur sert une requête à la fois, ce temps est K fois celui
-    d'une seule. C'est exactement l'argument qui a motivé la bascule.
+    d'une seule. C'est exactement l'argument qui a motivé le choix du serveur.
     """
     prompt = (
         "Explique en un paragraphe ce qu'est une jointure entre deux tables "
@@ -1133,9 +1134,9 @@ def epreuve_moteurs(
         # Un tir de CHAUFFE, jeté. Le premier appel d'un moteur paie ce que les
         # suivants ne paient plus — chargement des poids en mémoire vive du GPU,
         # premier passage d'un cache. Le compter dans le palier K=1 ferait
-        # attribuer au parallélisme ce qui vient du démarrage : mesuré sur
-        # Ollama, 17,1 s au premier appel contre ~5 s ensuite, soit un rapport
-        # de trois sorti de nulle part.
+        # attribuer au parallélisme ce qui vient du démarrage : mesuré, 17,1 s
+        # au premier appel contre ~5 s ensuite, soit un rapport de trois sorti
+        # de nulle part.
         chauffe = _appel_moteur(base_url, modele, _prompt_distinct(prompt, -1), tokens, cle)
         print(f"  {nom:<8} chauffe (jetée) : {chauffe:.1f} s")
         for k in paliers:
@@ -1447,7 +1448,7 @@ def main() -> int:
             )
             moteurs = [("vllm", args.llm_base_url, args.llm_model, get_settings().llm_api_key)]
             if args.moteur_b:
-                moteurs.append(("ollama", args.moteur_b, args.modele_b or args.llm_model, ""))
+                moteurs.append(("moteur-b", args.moteur_b, args.modele_b or args.llm_model, ""))
             mesures["moteurs"] = epreuve_moteurs(
                 moteurs,
                 [int(k) for k in args.paliers_moteurs.split(",") if k.strip()],

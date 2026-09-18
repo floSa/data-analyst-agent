@@ -1,7 +1,7 @@
 """Batterie de scénarios LIVE (bout en bout) contre l'API en marche.
 
 Contrairement à la suite pytest (LLM scripté, déterministe), ce runner
-interroge le VRAI système — LLM local (Ollama), Postgres, sandbox Docker — sur
+interroge le VRAI système — LLM local, Postgres, sandbox Docker — sur
 cinq conversations de cinq tours « en cascade » (chaque tour dépend des
 précédents : mémoire, anaphores, figures, slot-filling…), telles qu'un analyste
 les mène : décrire un dataset, creuser la réponse précédente, demander une
@@ -18,7 +18,8 @@ Le LLM étant non déterministe, on vérifie des INVARIANTS, à deux niveaux :
 - SOUPLE (rapporté, n'échoue pas) : capacité routée, nœuds de la trace,
   présence d'un tableau/figure, quelques mots-clés dans la réponse.
 
-Prérequis : l'API tourne (uvicorn), Ollama a le modèle, Postgres 'titanic' est
+Prérequis : l'API tourne (uvicorn), le serveur LLM sert le modèle, Postgres
+'titanic' est
 seedé (scripts/seed_titanic_postgres.py), l'image sandbox est construite, et un
 compte existe (scripts/manage_users.py create <login>) — l'API n'a plus de route
 ouverte hormis /health.

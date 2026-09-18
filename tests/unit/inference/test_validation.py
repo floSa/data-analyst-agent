@@ -173,14 +173,14 @@ def test_champ_vraiment_inconnu_reste_signale():
     assert any(i.problem == "champ_inconnu" and i.field == "couleur_petale" for i in outcome.issues)
 
 
-# -- arguments d'outil rendus en chaînes (vLLM vs Ollama) ------------------------
+# -- arguments d'outil rendus en chaînes --------------------------------------
 
-# Ce que le planificateur a réellement rendu, servi par vLLM, pour « Prédis la
-# survie d'une passagère de 1re classe de 28 ans, tarif 80 livres, embarquée à
-# Southampton, sans frère, sœur, parent ni enfant à bord. » — l'extraction est
-# juste, TOUTES les valeurs sont des chaînes. Le même modèle servi par Ollama
-# rend `pclass=1`, `age=28`, `fare=80`, `sibsp=0`, `parch=0`.
-TITANIC_VLLM = {
+# Ce que le planificateur a réellement rendu pour « Prédis la survie d'une
+# passagère de 1re classe de 28 ans, tarif 80 livres, embarquée à Southampton,
+# sans frère, sœur, parent ni enfant à bord. » — l'extraction est juste, et
+# TOUTES les valeurs sont des chaînes. Rien ne garantit l'inverse : sur
+# `Plan.features`, le schéma ne déclare aucun type.
+TITANIC_EN_CHAINES = {
     "sex": "female",
     "pclass": "1",
     "age": "28",
@@ -192,13 +192,13 @@ TITANIC_VLLM = {
 
 
 def test_prediction_complete_en_chaines_aboutit():
-    """Le moteur ne décide pas si une prédiction aboutit.
+    """Le typage rendu par le serveur ne décide pas si une prédiction aboutit.
 
-    Refusée sous vLLM et acceptée sous Ollama, pour la même question et le même
-    modèle : c'est `Literal[1, 2, 3]` qui compare des valeurs, et pour qui '1'
-    n'est pas 1. Pydantic rattrapait déjà les `int`/`float` en mode souple.
+    Elle était refusée sur une extraction JUSTE : c'est `Literal[1, 2, 3]` qui
+    compare des valeurs, et pour qui '1' n'est pas 1. Pydantic rattrapait déjà
+    les `int`/`float` en mode souple, jamais les chaînes.
     """
-    outcome = validate_features(TitanicFeatures, TITANIC_VLLM)
+    outcome = validate_features(TitanicFeatures, TITANIC_EN_CHAINES)
 
     assert outcome.valid, outcome.issues
     assert outcome.features == TITANIC_OK
@@ -238,7 +238,7 @@ def test_les_trois_schemas_encaissent_un_payload_tout_en_chaines():
 
 def test_valeur_hors_bornes_en_chaine_reste_refusee():
     """La coercition n'est pas un relâchement : '4' devient 4, et 4 est refusé."""
-    outcome = validate_features(TitanicFeatures, {**TITANIC_VLLM, "pclass": "4"})
+    outcome = validate_features(TitanicFeatures, {**TITANIC_EN_CHAINES, "pclass": "4"})
 
     assert not outcome.valid
     issue = next(i for i in outcome.issues if i.field == "pclass")
@@ -254,19 +254,19 @@ def test_valeur_non_convertible_reste_refusee_en_citant_ce_qui_a_ete_ecrit():
     devenir un silence.
     """
     for valeur in ("abc", "3e classe", ""):
-        outcome = validate_features(TitanicFeatures, {**TITANIC_VLLM, "pclass": valeur})
+        outcome = validate_features(TitanicFeatures, {**TITANIC_EN_CHAINES, "pclass": valeur})
 
         assert not outcome.valid, valeur
         issue = next(i for i in outcome.issues if i.field == "pclass")
         assert repr(valeur) in issue.message
 
-    outcome = validate_features(TitanicFeatures, {**TITANIC_VLLM, "age": "douze"})
+    outcome = validate_features(TitanicFeatures, {**TITANIC_EN_CHAINES, "age": "douze"})
     assert not outcome.valid
     assert "'douze'" in next(i for i in outcome.issues if i.field == "age").message
 
 
 def test_les_bornes_valent_aussi_sur_une_chaine():
-    outcome = validate_features(TitanicFeatures, {**TITANIC_VLLM, "age": "150"})
+    outcome = validate_features(TitanicFeatures, {**TITANIC_EN_CHAINES, "age": "150"})
 
     assert not outcome.valid
     issue = next(i for i in outcome.issues if i.field == "age")

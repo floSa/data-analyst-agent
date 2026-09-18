@@ -47,8 +47,8 @@ def estimate_tokens(*parts: str | None) -> int:
     servi. On compte donc des caractères.
 
     **De quel côté cette estimation se trompe :** elle **surestime**, toujours.
-    Mesurée contre le tokeniseur réel de ``gemma4:e4b`` (``prompt_eval_count``)
-    sur des prompts de planificateur de 3 712 à 108 762 caractères, elle rend
+    Mesurée contre le tokeniseur réel du serveur (``prompt_eval_count``) sur
+    des prompts de planificateur de 3 712 à 108 762 caractères, elle rend
     1,01 à 1,17 fois le compte du serveur, et jamais moins de 1,00 :
 
         car.   estimé   réel   estimé/réel
@@ -193,8 +193,9 @@ class ContextTrim(BaseModel):
 
 # -- débordement constaté côté serveur ----------------------------------------
 
-# Une fenêtre est « pleine » un peu avant son compte exact : Ollama rend 32 767
-# pour 32 768 servis. On ne cherche pas l'égalité, on cherche le plafonnement.
+# Une fenêtre est « pleine » un peu avant son compte exact : un serveur qui
+# tronque rend 32 767 pour 32 768 servis. On ne cherche pas l'égalité, on
+# cherche le plafonnement.
 PART_DE_FENETRE_PLEINE = 0.99
 
 # Sous cet écart absolu, le filet du rapport ne se déclenche pas : sur de tout
@@ -233,7 +234,7 @@ def exceeds_model_window(estimated: int, limits: ContextLimits) -> str:
     débordement est tel que le modèle ne rend plus de sortie exploitable, il n'y
     a pas de ``prompt_eval_count`` à lire au retour — l'appel a échoué autrement.
 
-    Mesuré contre ``gemma4:e4b`` (fenêtre servie 32 768), plafonds désactivés :
+    Mesuré (fenêtre servie 32 768), plafonds désactivés :
     48 350 tokens envoyés, plus aucune sortie structurée, le planificateur
     retombe sur son repli et l'utilisateur lit « Je n'ai pas bien compris ta
     demande ». Rien ne reliait ce message à la longueur du prompt.
@@ -255,9 +256,9 @@ def detect_overflow(
     """Constate côté serveur ce que le budget calculé en amont n'a pas su prévoir.
 
     Le budget est une prévision ; ``prompt_eval_count`` est une mesure. Les deux
-    sont nécessaires, parce qu'un serveur peut tronquer sans rien dire — mesuré
-    contre ``gemma4:e4b`` : 36 262 tokens envoyés, 32 767 évalués, aucune
-    erreur, réponse « Je ».
+    sont nécessaires, parce qu'un serveur peut tronquer sans rien dire —
+    mesuré : 36 262 tokens envoyés, 32 767 évalués, aucune erreur, réponse
+    « Je ».
 
     Deux indices, dans cet ordre :
 
@@ -280,12 +281,13 @@ def detect_overflow(
     return None
 
 
-# -- refus explicite (vLLM) ---------------------------------------------------
+# -- refus explicite ----------------------------------------------------------
 
-# Là où Ollama tronque en silence, vLLM répond par une erreur HTTP : un 400 dont
-# le corps dit « This model's maximum context length is N tokens. However, you
-# requested M tokens » (constaté, docs/VLLM.md §3.3). Le code doit tenir LES DEUX
-# comportements — c'est le prérequis de la migration (audit §7, tâches 8-9).
+# Le serveur refuse un prompt trop long par une erreur HTTP : un 400 dont le
+# corps dit « This model's maximum context length is N tokens. However, you
+# requested M tokens » (constaté, docs/MOTEUR.md §3.3). Le refus est traité à
+# côté de la troncature silencieuse détectée plus haut : un serveur peut faire
+# l'un ou l'autre, et le code tient les deux cas plutôt que de parier.
 STATUTS_REFUS = frozenset({400, 413, 422})
 MOTIFS_REFUS = re.compile(
     r"maximum context length"

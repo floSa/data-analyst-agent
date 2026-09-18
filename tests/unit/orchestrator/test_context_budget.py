@@ -219,8 +219,8 @@ def test_limits_lues_des_reglages_pour_le_budget():
 
 # --- débordement constaté côté serveur ---------------------------------------
 
-# Les chiffres de ces cas viennent tous d'une mesure réelle contre gemma4:e4b,
-# servi avec OLLAMA_CONTEXT_LENGTH=32768 : les tests, eux, n'appellent rien.
+# Les chiffres de ces cas viennent tous d'une mesure réelle contre un serveur
+# dont la fenêtre servie valait 32768 : les tests, eux, n'appellent rien.
 LIMITES = ContextLimits(model_window=32768, overflow_ratio=0.4)
 
 

@@ -1,4 +1,4 @@
-"""Test live du LLM réel (Ollama local) — exclu par défaut et en CI.
+"""Test live du LLM réel (serveur local) — exclu par défaut et en CI.
 
 Lancer explicitement : uv run pytest -m live --no-cov
 """

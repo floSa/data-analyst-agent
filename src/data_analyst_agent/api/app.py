@@ -1,7 +1,8 @@
 """API FastAPI : POST /chat -> réponse en langage naturel + objets affichables.
 
 L'orchestrateur est construit paresseusement au premier appel (le serveur
-démarre sans Ollama) et reste injectable pour les tests. Les pages sont des
+démarre sans que le moteur d'inférence réponde) et reste injectable pour les
+tests. Les pages sont des
 gabarits servis depuis ``api/templates/`` — aucun asset externe, compatible
 on-prem.
 

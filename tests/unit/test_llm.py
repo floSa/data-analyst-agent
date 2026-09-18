@@ -1,9 +1,9 @@
 """Tests du client LLM mutualisé (sans réseau : rien n'est appelé, on inspecte).
 
-Le moteur n'est pas nommé dans la configuration : ce qui est vérifié ici, c'est
-que tout ce dont un serveur OpenAI-compatible peut avoir besoin — URL, clé
-d'API, délai, réessais — arrive bien jusqu'au client HTTP. C'est la condition
-pour qu'une bascule Ollama → vLLM ne soit qu'une affaire de `.env`.
+Le serveur n'est pas nommé dans la configuration : ce qui est vérifié ici,
+c'est que tout ce dont un serveur OpenAI-compatible peut avoir besoin — URL,
+clé d'API, délai, réessais — arrive bien jusqu'au client HTTP. C'est la
+condition pour que le déplacer ne soit qu'une affaire de `.env`.
 """
 
 import pytest
@@ -19,10 +19,10 @@ def make_settings(**overrides) -> Settings:
 
 
 def test_build_model_utilise_les_reglages():
-    settings = make_settings(llm_model="qwen-test:1b", llm_base_url="http://serveur:11434/v1")
+    settings = make_settings(llm_model="qwen-test:1b", llm_base_url="http://serveur:8100/v1")
     model = build_model(settings)
     assert model.model_name == "qwen-test:1b"
-    assert "serveur:11434" in str(model.client.base_url)
+    assert "serveur:8100" in str(model.client.base_url)
 
 
 def test_temperature_transmise():
@@ -30,21 +30,15 @@ def test_temperature_transmise():
     assert model.settings["temperature"] == 0.0
 
 
-def test_ancienne_url_reprise_par_build_model():
-    """Un `.env` en service porte encore DAA_OLLAMA_BASE_URL : il doit marcher."""
-    with pytest.deprecated_call():
-        settings = make_settings(ollama_base_url="http://ancien:11434/v1")
-    assert "ancien:11434" in str(build_model(settings).client.base_url)
-
-
 def test_cle_dapi_transmise():
-    """Un vLLM lancé avec --api-key rejette toute requête sans Authorization."""
+    """Un serveur lancé avec --api-key rejette toute requête sans Authorization."""
     model = build_model(make_settings(llm_api_key="jeton-vllm"))
     assert model.client.api_key == "jeton-vllm"
 
 
 def test_cle_dapi_vide_remplacee_par_une_factice():
-    """Ollama n'en demande aucune, mais le SDK OpenAI refuse une clé vide."""
+    """Un serveur sans --api-key n'en demande aucune, mais le SDK OpenAI
+    refuse une clé vide."""
     model = build_model(make_settings(llm_api_key=""))
     assert model.client.api_key == CLE_FACTICE
 

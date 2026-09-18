@@ -38,9 +38,10 @@ nœud a répondu, si la phrase d'aveu y est, combien de figures sont sorties.
 
 Prérequis : le serveur LLM répond (``DAA_LLM_BASE_URL``), Postgres est seedé
 (``scripts/seed_titanic_postgres.py``) et Docker sert l'image du bac à sable.
-On bascule de moteur par l'environnement, jamais en modifiant le `.env` :
+On vise un autre serveur par l'environnement, jamais en modifiant le `.env` :
 
-    DAA_LLM_BASE_URL=http://localhost:11434/v1 DAA_LLM_MODEL=gemma4:e4b \\
+    DAA_LLM_BASE_URL=http://localhost:8100/v1 \\
+        DAA_LLM_MODEL=google/gemma-4-E4B-it-qat-w4a16-ct \\
         uv run python scripts/mesure_artefact_absent.py
 """
 
