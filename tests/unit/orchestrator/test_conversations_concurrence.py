@@ -376,17 +376,28 @@ def test_une_ecriture_interrompue_laisse_le_transcript_precedent_lisible(
 ):
     """`write_text` tronquait le fichier PUIS écrivait : interrompu entre les
     deux, il laissait un JSON coupé, donc une conversation illisible (`load`
-    renvoie None) et un fil perdu."""
+    renvoie None) et un fil perdu.
+
+    La panne est POSÉE et RETIRÉE par un bloc, et non annulée après coup. Les
+    deux marchent ici — un seul attribut est remplacé — mais ils ne disent pas
+    la même chose : ``undo()`` défait TOUT ce que ce ``monkeypatch`` a posé
+    depuis le début du test, y compris ce qu'une fixture ou une ligne ajoutée
+    plus haut y mettrait un jour. La scène mesurerait alors contre un départ qui
+    a bougé sous elle, et elle le ferait sans rien dire. Le bloc, lui, rend
+    exactement ce qu'il a pris, et il dit en une indentation où la panne
+    commence et où elle finit — ce qui est justement ce que ce test raconte :
+    l'écriture échoue LÀ, et la relecture qui suit se fait sur un disque sain.
+    """
     conversation = store.create()
     store.record_turn(conversation.id, question="q1", answer="a1")
 
     def replace_qui_echoue(*_args, **_kwargs):
         raise OSError("disque plein")
 
-    monkeypatch.setattr(module_workspace.os, "replace", replace_qui_echoue)
-    with pytest.raises(OSError, match="disque plein"):
-        store.record_turn(conversation.id, question="q2", answer="a2")
-    monkeypatch.undo()
+    with monkeypatch.context() as disque_plein:
+        disque_plein.setattr(module_workspace.os, "replace", replace_qui_echoue)
+        with pytest.raises(OSError, match="disque plein"):
+            store.record_turn(conversation.id, question="q2", answer="a2")
 
     relue = store.load(conversation.id)
     assert relue is not None  # ni tronqué, ni illisible
