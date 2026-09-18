@@ -452,36 +452,63 @@ def test_lire_un_nom_inconnu_refuse_au_lieu_de_lever(
     assert "Aucun artefact ne s'appelle « resultat_7 »" in reponse.answer
 
 
-def test_rejouer_un_TABLEAU_rend_son_contenu_sans_tenter_de_l_executer(
+CALCUL = "import pandas as pd\nt = pd.read_csv('/data/resultat_1.csv')\nprint(t)\n"
+
+
+def test_un_chiffre_derive_est_CALCULE_sur_le_tableau_pas_formule_par_le_modele(
     tmp_path: Path, iris_csv: Path, registry: Registry
 ):
-    """Un CSV n'est pas du code : rien n'est exécuté, et son CONTENU est rendu.
+    """« donne-moi les pourcentages » écrit du Python et l'exécute.
 
-    Ce test disait auparavant qu'un tableau se refusait. Le refus était juste
-    sur le fond — on n'exécute pas un CSV — et il coûtait le tour : mesuré
-    3 tirages sur 3, le modèle qui le recevait ne relisait pas l'artefact, il
-    rendait la sentinelle, et le tableau que le fil avait pourtant produit
-    restait inatteignable. Un artefact qui EXISTE ne se cache pas derrière un
-    refus : la seule chose que le refus protégeait — ne rien exécuter — est
-    tenue par ``sandbox.executed == []``.
+    C'était le seul chemin par lequel l'application rendait un chiffre FAUX sans
+    que rien ne s'en aperçoive. Le contenu du tableau partait au modèle, qui
+    divisait lui-même : sur les commandes par canal (magasin 100, grossiste 36,
+    en ligne 44 — 180 au total), il rendait 52,63 / 18,95 / 23,08 %. La somme ne
+    fait pas 100, et aucune des trois n'est juste ; le tableau, lui, était exact
+    et vérifié. Un tableau n'a pas de code à rejouer, mais il a un CSV, et ce
+    CSV est déjà monté sous /data/ : la division se fait donc là où tout le
+    reste se fait, dans le bac à sable.
+
+    Deux propriétés, et il les faut toutes les deux : le code a bien tourné, et
+    ce qui part à l'utilisateur vient de ce qu'il a IMPRIMÉ — le tour est rendu
+    comme une analyse, pas comme une phrase de rappel.
     """
-    ConversationWorkspace(tmp_path, "fil").save_table(["a"], [[1]], "une question")
-    sandbox = ScriptedSandbox([])  # tout appel ferait lever IndexError
-    llm = ScriptedLLM().script(
-        RAPPEL,
-        [
-            tool_call("rejouer_un_code", {"nom": "resultat_1", "modification": "en bleu"}),
-            text("C'est rejoué."),
-        ],
+    ConversationWorkspace(tmp_path, "fil").save_table(
+        ["canal", "n"], [["magasin", 100], ["grossiste", 36], ["en ligne", 44]], "par canal ?"
+    )
+    sandbox = ScriptedSandbox(
+        [SandboxResult(status="ok", stdout="magasin 55.56\ngrossiste 20.00\nen ligne 24.44\n")]
+    )
+    llm = (
+        ScriptedLLM()
+        .script(
+            RAPPEL,
+            [
+                tool_call(
+                    "rejouer_un_code",
+                    {"nom": "resultat_1", "modification": "donne-moi les pourcentages"},
+                ),
+                text("C'est calculé."),
+            ],
+        )
+        .script(ANALYSIS, figure_ok(CALCUL))
+        .script(SYNTHESIS, [text("magasin 55,56 %, grossiste 20,00 %, en ligne 24,44 %.")])
     )
     orch = orchestrateur(llm, iris_csv, tmp_path, sandbox, registry)
-    reponse = orch.ask("remets ça en bleu", conversation_id="fil")
+    reponse = orch.ask("reprends le tableau et donne-moi les pourcentages", conversation_id="fil")
 
-    assert "pas du code" in reponse.answer
-    assert "rien n'a été exécuté" in reponse.answer
-    # la consigne adressée au MODÈLE ne part pas à l'utilisateur
-    assert "tu peux répondre directement" not in reponse.answer
-    assert sandbox.executed == []
+    assert reponse.error is None
+    # le calcul a bien tourné dans le bac à sable, sur le CSV du tableau
+    assert sandbox.executed == [CALCUL.strip()]
+    # le tableau n'a PAS été passé comme un code à reprendre : ses lignes de CSV
+    # ne sont pas du Python, et le modèle serait reparti d'un « code » qui n'en
+    # est pas un. Ce qu'il reçoit, c'est le CHEMIN du fichier.
+    invite = llm.prompts_for(ANALYSIS)[0]
+    assert "a déjà été produit au tour précédent par ce code" not in invite
+    assert "/data/resultat_1.csv" in invite
+    # un rejeu EST une analyse : même plan, même synthèse, même mémorisation
+    assert reponse.plan.capability == "analyze"
+    assert "55,56" in reponse.answer
 
 
 def test_un_message_qui_complete_une_prediction_ne_passe_pas_par_le_rappel(

@@ -81,14 +81,13 @@ class Rejeu:
 Rejoueur = Callable[[WorkspaceArtifact, str], AnalysisResult]
 
 
-def rejeu_hors_code(artefact: WorkspaceArtifact) -> tuple[str, str]:
-    """« Il existe, mais il n'y a rien à y rejouer » — pour le modèle, puis pour l'utilisateur.
+def artefact_bien_present(artefact: WorkspaceArtifact) -> str:
+    """« Ce nom-là désigne bien quelque chose, et le voici » — la phrase anti-contradiction.
 
-    C'est le troisième refus de la famille, et il manquait. Un tableau n'est pas
-    du code : on ne le rejoue pas. Faute d'avoir sa phrase, l'appelant passait
-    à ``refus_dartefact`` un nom qu'il venait de DÉCORER — « resultat_1 (ce
-    n'est pas du code) » — pour dire en passant pourquoi il refusait. Ce nom
-    décoré ne désignait évidemment aucun artefact, et le refus rendu était :
+    Elle ne sert qu'à ``refus_dartefact``, et elle existe parce qu'un refus
+    s'était contredit. L'outil de rejeu décorait autrefois le nom pour dire au
+    passage pourquoi il refusait — « resultat_1 (ce n'est pas du code) » — et la
+    phrase des noms inconnus prenait la décoration pour le nom :
 
         Aucun artefact ne s'appelle « resultat_1 (ce n'est pas du code) » dans
         cette conversation. Artefacts disponibles : resultat_1.
@@ -99,8 +98,8 @@ def rejeu_hors_code(artefact: WorkspaceArtifact) -> tuple[str, str]:
     phrase — le modèle qui la recevait rendait ensuite une sortie vide, brûlait
     son unique reprise, et l'agent de rappel tombait tout entier sur
     ``Exceeded maximum output retries`` : le tableau que le fil avait produit
-    devenait inatteignable, alors même qu'aucune prédiction n'était en attente
-    (fil témoin `f` de `scripts/mesure_fils_de_prediction.py`, 3 tirages sur 3).
+    devenait inatteignable (fil témoin `f` de
+    `scripts/mesure_fils_de_prediction.py`, 3 tirages sur 3).
 
     **Et ce n'est PAS un refus.** Première version de cette réparation : une
     phrase de refus correcte, qui nommait bien l'artefact et invitait à le
@@ -108,34 +107,21 @@ def rejeu_hors_code(artefact: WorkspaceArtifact) -> tuple[str, str]:
     sentinelle ``AUTRE``, tous les outils appelés avaient refusé, et c'est le
     refus qui partait à l'utilisateur. La contradiction avait disparu, le
     tableau restait inatteignable. Un refus est terminal pour qui le lit, et le
-    modèle le lit comme tel.
+    modèle le lit comme tel. Cette phrase-ci ne l'est pas : elle CONSTATE une
+    présence et invite à la reprendre.
 
-    Un artefact qui EXISTE ne se cache donc pas derrière un refus. On ne peut
-    pas l'exécuter — rien n'est exécuté ici, et c'était la seule chose que le
-    refus protégeait — mais on peut le LIRE, et le lire est strictement plus
-    utile que de ne rien rendre. La demande (« donne-moi les pourcentages »)
-    porte sur ce que le tableau contient ; ce contenu part avec la phrase.
+    L'appelant qui décorait n'existe plus — un tableau se rejoue désormais comme
+    le reste, en calculant dessus (cf. ``rejouer_un_code``). La garde, elle,
+    reste : elle ne dépend d'aucun appelant, et c'est tout son intérêt. Quelle
+    que soit la main qui décore un nom que le catalogue porte, la phrase qui le
+    nie ne part pas.
 
-    **Deux lecteurs, deux phrases**, et il faut bien les deux. Ce que l'outil
-    rend part au MODÈLE, qui formule ensuite ; mais quand sa formulation est
-    disqualifiée (``defaut_de_formulation``), ce sont les FAITS qui partent tels
-    quels à l'utilisateur. Les deux ont été mesurés séparément, et aucune phrase
-    unique ne tient les deux rôles :
-
-    - sans la consigne « tu peux répondre directement », le modèle rend la
-      sentinelle et ne calcule pas les pourcentages (relevé du tour 8) ;
-    - avec elle, l'utilisateur la reçoit en pleine figure sur le chemin de
-      repli, tutoyé par une instruction qui ne lui était pas adressée.
-
-    ``pour_le_modele`` porte donc la consigne ; ``pour_l_utilisateur`` reprend
-    l'en-tête de ``lire_un_artefact`` — nom, nature, contenu — et y ajoute le
-    seul fait qui compte ici : rien n'a été exécuté.
+    Sans le contenu : cette garde ne lit pas le disque, elle empêche seulement
+    une phrase de nier ce qu'elle énumère.
     """
-    entete = f"{artefact.name} ({artefact.description}) — ce n'est pas du code : "
     return (
-        entete + "rien n'a été exécuté. Voici son contenu, sur lequel tu peux "
-        "répondre directement :",
-        entete + "rien n'a été exécuté, et voici son contenu :",
+        f"L'artefact {artefact.name} ({artefact.description}) est bien présent dans "
+        f"cette conversation : on peut le relire ou le rejouer par son nom."
     )
 
 
@@ -163,7 +149,7 @@ def refus_dartefact(workspace: ConversationWorkspace, nom: str) -> str:
         if porte:
             # Sans le contenu — cette garde ne lit pas le disque, elle empêche
             # seulement la phrase de nier ce qu'elle énumère.
-            return rejeu_hors_code(porte)[1]
+            return artefact_bien_present(porte)
         return (
             f"Aucun artefact ne s'appelle « {nom} » dans cette conversation. "
             f"Artefacts disponibles : {disponibles}."
@@ -471,17 +457,17 @@ class RappelDeps:
     # de son contenu. C'est la matière de `defaut_de_formulation`.
     attendus: set[str] = field(default_factory=set)
 
-    def retenir(self, outil: str, texte: str, pour_l_utilisateur: str | None = None) -> str:
-        """Ce que l'outil rend au MODÈLE, et ce qu'on servirait à sa place.
+    def retenir(self, outil: str, texte: str) -> str:
+        """Ce que l'outil rend au modèle — et qu'on servira tel quel si sa phrase est disqualifiée.
 
-        Les deux sont le même texte dans la quasi-totalité des cas — un contenu
-        d'artefact se lit aussi bien des deux côtés. Ils diffèrent quand la
-        phrase porte une consigne adressée au modèle : elle est nécessaire pour
-        qu'il fasse son travail, et elle n'a rien à faire dans une réponse
-        (cf. ``rejeu_hors_code``).
+        Un seul texte pour les deux lecteurs : ce qu'un outil rend ici est un
+        constat — un contenu d'artefact, un refus, le compte rendu d'un rejeu —
+        et un constat se lit aussi bien des deux côtés. Une consigne adressée au
+        modèle n'aurait rien à faire dans une réponse, et c'est pourquoi aucun
+        outil n'en met dans ce qu'il rend.
         """
         self.outils_appeles.append(outil)
-        self.faits.append(pour_l_utilisateur if pour_l_utilisateur is not None else texte)
+        self.faits.append(texte)
         return texte
 
     def refuser(self, outil: str, nom: str) -> str:
@@ -532,23 +518,17 @@ def build_rappel_agent() -> Agent[RappelDeps, str]:
         )
 
     def _servir_le_contenu(
-        ctx: RunContext[RappelDeps],
-        outil: str,
-        artefact: WorkspaceArtifact,
-        entete: str,
-        entete_servi: str | None = None,
+        ctx: RunContext[RappelDeps], outil: str, artefact: WorkspaceArtifact, entete: str
     ) -> str:
         """Le contenu d'un artefact, retenu comme fait ET comme attendu.
 
-        Un seul point de lecture pour les deux outils : ce qui part au modèle et
-        ce sur quoi ``defaut_de_formulation`` le jugera ensuite doivent être la
-        même chose, et deux lectures séparées seraient deux occasions d'oublier
-        d'alimenter ``attendus``.
+        Ce qui part au modèle et ce sur quoi ``defaut_de_formulation`` le jugera
+        ensuite doivent être la même chose : deux lectures séparées seraient
+        deux occasions d'oublier d'alimenter ``attendus``.
         """
         contenu = ctx.deps.workspace.lire(artefact)
         ctx.deps.attendus |= {artefact.name} | _jetons(contenu)
-        servi = f"{entete_servi}\n{contenu}" if entete_servi is not None else None
-        return ctx.deps.retenir(outil, f"{entete}\n{contenu}", servi)
+        return ctx.deps.retenir(outil, f"{entete}\n{contenu}")
 
     @agent.tool
     def lire_un_artefact(ctx: RunContext[RappelDeps], nom: str) -> str:
@@ -567,21 +547,17 @@ def build_rappel_agent() -> Agent[RappelDeps, str]:
 
     @agent.tool
     def rejouer_un_code(ctx: RunContext[RappelDeps], nom: str, modification: str) -> str:
-        """Reprend le code d'un artefact, y applique une modification, le réexécute.
+        """Reprend un artefact et le REJOUE en Python : code modifié, ou calcul sur un tableau.
 
-        `nom` : le nom de l'artefact de code (« graphique_1 »).
-        `modification` : ce que l'utilisateur veut changer, dans ses mots
-        (« mets les barres en bleu au lieu de rouge »).
+        `nom` : le nom de l'artefact (« graphique_1 », « resultat_1 »).
+        `modification` : ce que l'utilisateur veut, dans ses mots (« mets les
+        barres en bleu au lieu de rouge », « donne-moi les pourcentages »).
+
+        C'est l'outil de TOUT chiffre dérivé — un pourcentage, un total, une
+        moyenne, un écart calculés sur un tableau déjà produit. Ne calcule
+        jamais toi-même : appelle-le et rapporte ce qu'il rend.
         """
         artefact = ctx.deps.workspace.retenu(nom)
-        if artefact is not None and not artefact.est_du_code:
-            # Un tableau n'est pas du code : rien n'est exécuté. Mais il EXISTE,
-            # et un artefact qui existe ne se cache pas derrière un refus — on
-            # rend son contenu (cf. ``rejeu_hors_code``).
-            pour_le_modele, pour_l_utilisateur = rejeu_hors_code(artefact)
-            return _servir_le_contenu(
-                ctx, "rejouer_un_code", artefact, pour_le_modele, pour_l_utilisateur
-            )
         if artefact is None:
             return ctx.deps.refuser("rejouer_un_code", nom)
         resultat = ctx.deps.rejouer(artefact, modification)

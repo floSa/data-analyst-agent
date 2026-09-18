@@ -1694,10 +1694,51 @@ class Orchestrator:
             return ""
         return "prédiction en attente de features"
 
+    # Ce qu'on dit au code généré quand ce qu'on lui donne à reprendre est un
+    # TABLEAU et non du code. Le fichier est déjà monté et déjà décrit par
+    # `_mount_workspace` ; ce gabarit ajoute la seule chose qui manque, et elle
+    # est décisive : le calcul porte sur CE tableau-là, pas sur la source.
+    #
+    # Sans « sans réinterroger la source », le code généré repart volontiers du
+    # CSV d'origine — il est monté lui aussi — et le tour répond alors à une
+    # autre question que celle qu'on lui a posée : « les pourcentages du tableau
+    # précédent » n'est pas « les pourcentages de la source ».
+    _CALCUL_SUR_UN_TABLEAU = (
+        "Le tableau « {nom} » a déjà été produit dans cette conversation et il "
+        "est monté sous /data/{fichier} ({lignes} ligne(s) ; colonnes : "
+        "{colonnes}). Charge-le avec pandas et calcule à partir de LUI, sans "
+        "réinterroger la source. Imprime le résultat complet.\n\n"
+        "Demande : {demande}"
+    )
+
+    def _consigne_de_calcul(self, artefact: WorkspaceArtifact, demande: str) -> str:
+        return self._CALCUL_SUR_UN_TABLEAU.format(
+            nom=artefact.name,
+            fichier=artefact.file,
+            lignes=artefact.row_count,
+            colonnes=", ".join(artefact.columns) or "(inconnues)",
+            demande=demande,
+        )
+
     def _rejouer_un_code(
         self, state: OrchestratorState, artefact: WorkspaceArtifact, modification: str
     ) -> AnalysisResult:
         """Reprend le code d'un artefact, y applique la modification, le réexécute.
+
+        **Et un TABLEAU se calcule.** Un tableau n'a pas de code à rejouer, mais
+        il a un CSV, et ce CSV est déjà monté sous ``/data/`` par
+        ``_mount_workspace``. « reprends le tableau précédent et donne-moi les
+        pourcentages » écrit donc du Python qui lit ce fichier-là, et le bac à
+        sable rend le chiffre. Le code est absent, la matière ne l'est pas.
+
+        C'est le seul chemin par lequel l'application rendait un chiffre FAUX
+        sans que rien ne s'en aperçoive. Mesuré, catalogue métier, sur le
+        tableau des commandes par canal (magasin 100, grossiste 36, en ligne 44
+        — 180 au total) : le contenu du tableau partait au modèle, qui divisait
+        lui-même et rendait 52,63 / 18,95 / 23,08 %. La somme ne fait pas 100 et
+        aucune des trois n'est juste ; le tableau, lui, était exact et vérifié.
+        Un chiffre dérivé n'est pas une formulation, c'est un résultat : il se
+        calcule, et il se vérifie comme le reste — par son exécution.
 
         **Par le bac à sable, et par lui seul.** ``run_analysis`` est appelée
         exactement comme au premier tour : mêmes montages en lecture seule,
@@ -1727,12 +1768,17 @@ class Orchestrator:
             source = catalogue.sources[0]
         if source is None:
             raise KeyError("aucune source à monter pour rejouer ce code")
+        tableau = artefact.est_un_tableau
         with self._decor_de_donnees(state, source) as (data_files, data_context, avis):
             resultat = run_analysis(
-                modification,
+                self._consigne_de_calcul(artefact, modification) if tableau else modification,
                 data_files=data_files,
                 data_context=data_context,
-                previous_code=self._lire_le_code(state, artefact),
+                # Un tableau n'a pas de code d'origine. Lui en passer un serait
+                # lui passer ses propres lignes de CSV — `lire` rend le
+                # contenu, pas du Python — et le modèle repartirait d'un
+                # « code » qui n'en est pas un.
+                previous_code=None if tableau else self._lire_le_code(state, artefact),
                 model=self.model,
                 settings=self.settings,
                 sandbox=self._sandbox_override,
