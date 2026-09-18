@@ -597,6 +597,21 @@ def _blocs_du_dictionnaire(dictionnaire: str) -> list[tuple[str, list[str]]]:
     et coller deux puces voisines dirait d'un terme ce qu'une autre entrée dit
     d'un autre. Ce qui SUIT une puce sans en être une la continue : c'est le
     même paragraphe, renfoncé.
+
+    **Un TITRE est un bloc, et il a fallu le repayer pour le comprendre.** Une
+    première version les traitait comme de simples séparateurs, par souci de
+    propreté. Mesuré : `mesure_provenance_du_sens` tombait de 30/30 à 27/30, et
+    c'est `S4` — « puissance_kw, ça signifie quoi ? » — qui payait, 3 tirages
+    sur 3, sur le fait « à écarter des moyennes ». Le dictionnaire de
+    `telemetrie` titre en effet la section qu'il consacre au piège :
+
+        ### 1. `puissance_kw = -1` est une valeur sentinelle, pas une puissance
+
+    C'est le fait dit en une ligne courte et citable, et c'est celle que le
+    modèle reprenait. Privé d'elle, il n'avait plus que trois paragraphes denses
+    à résumer — il les paraphrasait, et la consigne se diluait dans la
+    paraphrase. Un titre qui nomme le terme n'est pas de la mise en page : c'est
+    ce que le dictionnaire dit de plus ramassé sur lui.
     """
     blocs: list[tuple[str, list[str]]] = []
     dans_un_code = False
@@ -607,7 +622,10 @@ def _blocs_du_dictionnaire(dictionnaire: str) -> list[tuple[str, list[str]]]:
             blocs.append(("fin", []))
         elif dans_un_code:
             continue
-        elif not ligne or ligne.startswith("#"):
+        elif not ligne:
+            blocs.append(("fin", []))
+        elif ligne.startswith("#"):
+            blocs.append(("prose", [ligne.lstrip("#").strip()]))
             blocs.append(("fin", []))
         elif _LIGNE_DE_TABLEAU.fullmatch(brute):
             blocs.append(("tableau", [ligne]))
