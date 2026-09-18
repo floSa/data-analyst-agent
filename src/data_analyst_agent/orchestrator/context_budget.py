@@ -310,7 +310,7 @@ CONTEXT_REFUSAL_MESSAGE = (
 def is_context_refusal(exc: BaseException) -> bool:
     """Reconnaît le refus explicite d'un serveur dont la fenêtre est dépassée.
 
-    **Confrontée au corps d'erreur réel de vLLM 0.28** (docs/VLLM.md §3.3) :
+    **Confrontée au corps d'erreur réel de vLLM 0.28** (docs/MOTEUR.md §3.3) :
     reconnue sans modification, sur un 400 dont le message commence par « This
     model's maximum context length is 32768 tokens ». Et pas de faux positif sur
     les deux autres 400 que rend vLLM — ceux qui réclament ses options de tool

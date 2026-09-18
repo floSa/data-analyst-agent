@@ -35,7 +35,7 @@ Le moteur **n'est pas installé par cette procédure** : c'est un service partag
 monté à part (dépôt `llm-service`), que plusieurs applications joignent. En
 service ici : vLLM sur le port 8100, servant
 `google/gemma-4-E4B-it-qat-w4a16-ct`. Le banc d'essai et les options qui font
-marcher le *tool calling* sont dans [VLLM.md](VLLM.md).
+marcher le *tool calling* sont dans [MOTEUR.md](MOTEUR.md).
 
 Ce qui n'est **pas** un prérequis : Python, `uv`, les dépendances. Elles vivent
 dans l'image. La machine n'a besoin que de Docker.

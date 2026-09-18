@@ -28,8 +28,8 @@ formulation à laquelle personne n'avait pensé.
 | 12 | la **source de travail** d'une conversation : proposée, validée, portée par le fil | **oui**, mais le §12 croyait le choix acquis — cf. §14 |
 | 13 | ce qui restait ouvert **au moment du §12** | daté : le §14 en reprend deux points |
 | **14** | l'**ordre du catalogue** décidait de la réponse, mesuré dans les deux sens ; ce qui a été corrigé, et l'inventaire qui se lit au lieu de se réciter | **oui** |
-| **15** | la même batterie sur **deux moteurs** — le trou de la ceinture que vLLM a découvert, et la mesure à 36/36 des deux côtés | **oui** |
-| **16** | le typage des arguments d'outil : le **seul** champ que le schéma ne déclare pas, et la prédiction que seul Ollama rendait | **oui** |
+| **15** | le trou de la ceinture que la batterie a découvert, et la mesure à 36/36 | **oui** |
+| **16** | le typage des arguments d'outil : le **seul** champ que le schéma ne déclare pas, et la prédiction qui n'allait pas au bout | **oui** |
 | **17** | le planificateur **substituait** une valeur légale à l'entrée impossible : la garde mesurée sur une entrée que le système ne fabriquait pas | **oui** |
 | **18** | un témoin qui **bouclait** : une question sur les colonnes, dans un prompt qui n'en connaissait pas | **oui** |
 | **19** | la correspondance source → features **devinée** : trois requêtes pour une même question, et la déclaration qui les remplace | **oui** |
@@ -64,7 +64,7 @@ dans la chaîne de caractères plutôt que lue dans le catalogue.
 
 Le runner est [`scripts/mesure_surface_conversationnelle.py`](../scripts/mesure_surface_conversationnelle.py),
 sur le modèle de `live_scenarios.py` : **le vrai système**, pas la suite pytest.
-Serveur LLM en place (`gemma4:e4b` servi par Ollama) et sources réelles du catalogue
+Serveur LLM en place et sources réelles du catalogue
 — `titanic` (Postgres, deux tables jointes) et `iris` (CSV via DuckDB).
 
 ```bash
@@ -129,7 +129,7 @@ questions méta : ils sont là pour ne pas bouger.
 
 ## 3. Mesure du 2026-09-07, avant correction
 
-Commit `3a91723`, `gemma4:e4b`, température 0.
+Commit `3a91723`, modèle en service, température 0.
 
 ### Questions méta — 21 question(s)
 
@@ -583,7 +583,7 @@ modèle ; ce qui reste du code, c'est **ce que le modèle a le droit de savoir**
 
 [`orchestrator/systeme.py`](../src/data_analyst_agent/orchestrator/systeme.py) —
 un agent `pydantic-ai` à six outils typés, sur le modèle des trois outils de
-l'agent SQL, qui fonctionnent déjà avec `gemma4:e4b`. Chaque outil rend un texte
+l'agent SQL, qui fonctionnent déjà avec le modèle en service. Chaque outil rend un texte
 de `introspection.py`, donc un texte **construit depuis un artefact du dépôt**.
 
 | Outil | Source de vérité | Connexion ? |
@@ -836,7 +836,7 @@ ou un `COUNT`. L'agent système s'en abstient dans les trois rejeux.
 | Prédiction avec features complètes (témoin) | 1 appel | **2 appels** |
 
 **Une question sur les données paie exactement un aller-retour de plus** : celui
-du nœud système qui décline. Sur `gemma4:e4b`, ce refus prend 1 à 3 secondes,
+du nœud système qui décline. Sur le modèle en service, ce refus prend 1 à 3 secondes,
 contre 15 à 30 pour le tour complet.
 
 **Une question sur le système coûte deux appels**, où le lexique en coûtait zéro
@@ -1260,14 +1260,14 @@ tranché. S'y ajoutent :
   le chemin système, antérieurs à ce chantier et non expliqués. Ils appellent
   leur propre mesure.
 
-## 15. Deux moteurs, la même batterie — et le trou que vLLM a découvert
+## 15. La batterie de questions méta, et le trou qu'elle a découvert
 
-La bascule du moteur vers vLLM ([VLLM.md §7](VLLM.md#7-le-modèle-du-vllm-partagé--gemma-4-e4b-it-qat-w4a16-ct))
-a fait tomber quatre questions qui tenaient sous Ollama. Même code, même
+La bascule du moteur vers vLLM ([MOTEUR.md §7](MOTEUR.md#7-le-modèle-servi--gemma-4-e4b-it-qat-w4a16-ct))
+a fait tomber quatre questions qui tenaient sous l'ancien moteur. Même code, même
 modèle, deux serveurs. Le relevé du propriétaire, conversation neuve à chaque
 fois :
 
-| Question | vLLM | Ollama |
+| Question | moteur en service | ancien moteur |
 |---|---|---|
 | « Sur quoi peux-tu travailler ? » | **raté**, 1 s | correct, 15 s |
 | « sur quoi je peux travailler ? » | **raté**, 1 s | correct, 16 s |
@@ -1281,7 +1281,7 @@ celle qu'on supposait ni, à proprement parler, une affaire de moteur.
 
 L'hypothèse de départ était que l'agent système n'appelait pas ses outils —
 une réponse en une seconde qui paraphrase le prompt système ressemble beaucoup
-à cela, et le [§7.4 de VLLM.md](VLLM.md#74-le-mauvais-analyseur--pas-un-400-un-faux-négatif-silencieux)
+à cela, et le [§7.4 de MOTEUR.md](MOTEUR.md#74-le-mauvais-analyseur--pas-un-400-un-faux-négatif-silencieux)
 avait justement montré qu'un analyseur inadapté laisse l'appel d'outil *fuir
 dans le texte*, sans le moindre code d'erreur. Deux causes opposées, deux
 remèdes opposés : il fallait regarder le fil, pas le déduire.
@@ -1349,7 +1349,7 @@ lignes commençant par une puce. L'inventaire de `decrire_les_capacites` tient
 sur une ligne ordinaire : il n'exigeait rien, et la ceinture laissait passer.
 
 **Ce que vLLM a changé n'est donc pas le mécanisme, c'est la verbosité.** Sous
-Ollama, le même modèle recopie les faits presque au long — d'où les 11 à 16
+l'ancien moteur, le même modèle recopiait les faits presque au long — d'où les 11 à 16
 secondes — et les noms survivent **par accident**. Sous vLLM il condense en une
 phrase, en une seconde, et l'accident ne se produit plus. Le défaut était déjà
 là ; un moteur plus concis l'a fait passer d'une question sur trente-six à
@@ -1411,7 +1411,7 @@ correction de la ceinture, à elle seule, rendait déjà la bonne réponse.
 
 Conversation neuve à chaque fois, `--only` sur les quatre clés :
 
-| Question | vLLM avant | vLLM après | Ollama avant | Ollama après |
+| Question | vLLM avant | vLLM après | ancien moteur avant | ancien moteur après |
 |---|---|---|---|---|
 | `sources-reformulee` — « Sur quoi peux-tu travailler ? » | **à côté**, 1,4 s | correct, 1,6 s | correct, 18,8 s | correct, 5,8–18,5 s |
 | `sources-premiere-personne` — « sur quoi je peux travailler ? » | **à côté**, 1,3 s | correct, 1,6 s | correct, 13,3 s | correct, 15,3–21,3 s |
@@ -1426,7 +1426,7 @@ avait gardé l'inventaire et jeté les actions. **C'est un défaut distinct**, i
 est antérieur à la bascule, et c'est celui que le propriétaire signalait comme
 raté sur les deux moteurs.
 
-**Il n'est pas déterministe sous Ollama.** Le passage de référence rejoué ici
+**Il n'est pas déterministe sous l'ancien moteur.** Le passage de référence rejoué ici
 l'a compté correct ; le relevé du propriétaire l'avait compté raté. Sous vLLM,
 en revanche, il ratait **à chaque fois** — c'est là qu'il a pu être observé, et
 c'est le second service que la bascule aura rendu. Les deux défauts sont
@@ -1439,7 +1439,7 @@ partir.
 ### 15.5 La batterie complète, sur les deux moteurs
 
 ```bash
-# Ollama (le moteur du .env, inchangé)
+# l'ancien moteur, à l'époque celui du .env
 uv run python scripts/mesure_surface_conversationnelle.py
 
 # vLLM, par variables d'environnement — le .env n'est pas touché
@@ -1453,9 +1453,9 @@ uv run python scripts/mesure_surface_conversationnelle.py
 | vLLM | avant | 32 / 36 | 2 / 4 | 82 | 70 s | 1,9 s |
 | vLLM | **après, passage 1** | **36 / 36** | 2 / 4 | 78 | 118 s | 3,3 s |
 | vLLM | **après, passage 2** | **36 / 36** | 2 / 4 | 78 | 122 s | 3,4 s |
-| Ollama | avant | 34 / 36 | 2 / 4 | 83 | 305 s | 8,5 s |
-| Ollama | **après, passage 1** | **36 / 36** | **3 / 4** | 78 | 568 s | 15,8 s |
-| Ollama | **après, passage 2** | **36 / 36** | **3 / 4** | 78 | 334 s | 9,3 s |
+| ancien moteur | avant | 34 / 36 | 2 / 4 | 83 | 305 s | 8,5 s |
+| ancien moteur | **après, passage 1** | **36 / 36** | **3 / 4** | 78 | 568 s | 15,8 s |
+| ancien moteur | **après, passage 2** | **36 / 36** | **3 / 4** | 78 | 334 s | 9,3 s |
 
 **36 / 36 sur les quatre passages, et sur les deux moteurs.** Aucun passage de
 référence antérieur n'avait fait mieux que 36 (§11, §14), et les deux passages
@@ -1464,13 +1464,13 @@ du §14 plafonnaient à 35.
 Le **coût en appels LLM baisse** — 78 contre 82 et 83 — parce qu'une réponse
 servie par la ceinture ne coûte pas d'aller-retour supplémentaire. Le temps de
 paroi, lui, monte : les réponses sont **plus longues d'environ 20 %** (354 →
-428 caractères en moyenne sous vLLM, 634 → 715 sous Ollama), puisqu'elles
+428 caractères en moyenne sous vLLM, 634 → 715 sous l'ancien moteur), puisqu'elles
 portent désormais les noms qu'elles laissaient tomber. Le reste de l'écart —
-334 s contre 568 s pour deux passages Ollama identiques — est la variance de la
+334 s contre 568 s pour deux passages identiques — est la variance de la
 machine, qui servait les deux moteurs sur la même carte pendant toute la
 mesure : ce tableau ne compare pas des vitesses de serveurs.
 
-Les questions méta sous Ollama restent servies à **35 sur 36 par l'agent
+Les questions méta sous l'ancien moteur restent servies à **35 sur 36 par l'agent
 système** (34 avant), et sous vLLM à 34 sur 36 : la correction n'a déplacé
 aucune question vers le planificateur.
 
@@ -1479,7 +1479,7 @@ aucune question vers le planificateur.
 Les témoins ne mesurent pas l'agent système : ils vérifient qu'**il ne prend
 pas** ce qui ne lui appartient pas.
 
-| Témoin | vLLM avant | vLLM après | Ollama avant | Ollama après |
+| Témoin | vLLM avant | vLLM après | ancien moteur avant | ancien moteur après |
 |---|---|---|---|---|
 | `temoin-comptage` | correct | correct | correct | correct |
 | `temoin-maximum` | correct | correct | correct | correct |
@@ -1488,7 +1488,7 @@ pas** ce qui ne lui appartient pas.
 
 Sur les quatre passages d'après, **le nœud système laisse passer les quatre
 témoins** : « aucun outil appelé — passe au planificateur ». C'était déjà vrai
-sous vLLM ; sous Ollama, `temoin-prediction` était **pris** par l'agent système,
+sous vLLM ; sous l'ancien moteur, `temoin-prediction` était **pris** par l'agent système,
 qui répondait par son registre de modèles au lieu de prédire. L'exemple ajouté
 au prompt le rend au planificateur — 3 essais sur 3 avant la batterie, puis les
 deux passages complets.
@@ -1497,7 +1497,7 @@ Restent deux échecs, tous deux **en aval du nœud système**, et ce que leur
 trace en dit :
 
 - **`temoin-colonnes-a-trous`, sur les deux moteurs.** « Quelles colonnes de la
-  table `passengers` contiennent des valeurs manquantes ? » Sous Ollama, l'agent
+  table `passengers` contiennent des valeurs manquantes ? » Sous l'ancien moteur, l'agent
   SQL boucle et épuise son `retrieval_request_limit = 10` (`incident e65aaf64`,
   112 s) ou finit par renoncer (97 s) ; rejoué **seul**, il écrit pourtant la
   bonne requête — un `CASE WHEN COUNT(col) < COUNT(*)` par colonne — et rend
@@ -1509,12 +1509,12 @@ trace en dit :
 - **`temoin-prediction`, sous vLLM seulement.** Le nœud système le laisse
   passer, le planificateur le classe `predict` — et la validation refuse :
   `pclass (Classe du billet) : Input should be 1, 2 or 3 (reçu : '1')`. Le
-  modèle servi par vLLM rend ses arguments d'outil en **chaînes**, là où Ollama
+  modèle servi par vLLM rend ses arguments d'outil en **chaînes**, là où l'ancien moteur
   rend des entiers, et `Literal[1, 2, 3]` refuse `'1'`. C'est un écart de
   typage sur le chemin d'inférence, pas sur le chemin système ; le corriger
   touche `SCHEMAS` et la validation des features, et appelle sa propre mesure.
 
-**Les témoins sous Ollama sont donc à 3 / 4 et non 4 / 4.** Le quatrième est
+**Les témoins sous l'ancien moteur sont donc à 3 / 4 et non 4 / 4.** Le quatrième est
 `temoin-colonnes-a-trous`, qui ratait déjà avant ce chantier : la correction
 n'a rien déplacé vers le planificateur, mais elle n'a pas non plus réparé
 l'agent SQL, et ce n'était pas son objet.
@@ -1525,7 +1525,7 @@ l'agent SQL, et ce n'était pas son objet.
   chemins différents. Le seul écart de la batterie qui ne soit pas expliqué
   par ce §15 ;
 - ~~**les arguments d'outil en chaînes sous vLLM**~~ — **traité depuis**,
-  [§16](#16-literal1-2-3-refusait-1--la-prédiction-que-seul-ollama-rendait).
+  [§16](#16-literal1-2-3-refusait-1--la-prédiction-qui-nallait-pas-au-bout).
   L'étendue mesurée n'était pas celle qu'on supposait : ce n'est pas vLLM qui
   rend des chaînes, c'est `Plan.features` qui ne déclare aucun type — le seul
   argument d'outil du système dans ce cas ;
@@ -1538,13 +1538,13 @@ l'agent SQL, et ce n'était pas son objet.
   reparti au planificateur au lieu d'échouer — mais la réponse rendue n'était
   pas la bonne, et rien dans l'interface ne le disait.
 
-## 16. `Literal[1, 2, 3]` refusait `'1'` : la prédiction que seul Ollama rendait
+## 16. `Literal[1, 2, 3]` refusait `'1'` : la prédiction qui n'allait pas au bout
 
 Le [§15.7](#157-ce-qui-reste-ouvert-après-le-15) laissait deux écarts ouverts.
-Celui-ci en ferme un : `temoin-prediction`, correct sous Ollama et **à côté sous
+Celui-ci en ferme un : `temoin-prediction`, correct sous l'ancien moteur et **à côté sous
 vLLM**, pour la même question et le même modèle.
 
-> Le `.env` n'a pas été touché. Ollama reste le moteur en service ; les mesures
+> Le `.env` n'a pas été touché ; les mesures
 > sous vLLM se font par `DAA_LLM_BASE_URL` et `DAA_LLM_MODEL` à l'exécution.
 
 ### 16.1 Le défaut, reproduit sur les deux moteurs avant de toucher à rien
@@ -1556,7 +1556,7 @@ Question de la batterie, conversation neuve, `HEAD d8c0142` :
 
 Le plan rendu par le planificateur, valeur par valeur, avec son type Python :
 
-| Feature | Ollama | vLLM |
+| Feature | ancien moteur | vLLM |
 |---|---|---|
 | `sex` | `'female'` *(str)* | `'female'` *(str)* |
 | `pclass` | `1` *(int)* | `'1'` *(str)* |
@@ -1571,7 +1571,7 @@ traduit « 1re classe » en `pclass=1` et « Southampton » en `embarked='S'`. S
 le type diffère. Et les réponses divergent :
 
 ```
-Ollama : Prédiction (titanic) : a survécu (probabilité 93.4%)
+ancien moteur : Prédiction (titanic) : a survécu (probabilité 93.4%)
          — détail : n'a pas survécu : 6.6%, a survécu : 93.4%
 
 vLLM   : Je ne peux pas encore lancer la prédiction titanic :
@@ -1587,7 +1587,7 @@ C'était l'explication de travail, et elle est fausse. Un tool aux arguments
 ([`scripts/mesure_typage_des_arguments_d_outil.py`](../scripts/mesure_typage_des_arguments_d_outil.py)) :
 
 ```
-Ollama : {"acompte":25.5,"convives":4,"etage":2,"nom":"Dupont","terrasse":true}
+ancien moteur : {"acompte":25.5,"convives":4,"etage":2,"nom":"Dupont","terrasse":true}
 vLLM   : {"acompte": 25.5, "convives": 4, "etage": 2, "nom": "Dupont", "terrasse": true}
 ```
 
@@ -1608,7 +1608,7 @@ annoncé. Tous les autres champs du plan — `capability`, `source`, `dataset`,
 sous vLLM, ils rendent bien des `str` et des `None`. Les cinq tools de l'agent
 système et les trois de l'agent SQL n'ont que des arguments texte : indemnes par
 construction. Cela ferme aussi le premier point resté ouvert au
-[§8.3 de VLLM.md](VLLM.md#83-ce-qui-reste-non-mesuré-côté-agent-système).
+[§8.3 de MOTEUR.md](MOTEUR.md#83-ce-qui-reste-non-mesuré-côté-agent-système).
 
 ### 16.3 L'étendue : tout arrivait en chaînes, une seule chose cassait
 
@@ -1680,7 +1680,7 @@ libellé humain. Il doit rester refusé, et il l'est.
 ### 16.6 La batterie complète, sur les deux moteurs
 
 ```bash
-# Ollama (le moteur du .env, inchangé)
+# l'ancien moteur, à l'époque celui du .env
 uv run python scripts/mesure_surface_conversationnelle.py
 
 # vLLM, par variables d'environnement
@@ -1693,21 +1693,21 @@ uv run python scripts/mesure_surface_conversationnelle.py
 |---|---|---|---|---|---|
 | vLLM | §15 (avant ce §16) | 36 / 36 | 2 / 4 | 78 | 118 s, 122 s |
 | vLLM | **après** | **36 / 36** | **3 / 4** | 78 | 79 s |
-| Ollama | §15 (avant ce §16) | 36 / 36 | 3 / 4 | 78 | 568 s, 334 s |
-| Ollama | **après** | **36 / 36** | **4 / 4** | 78 | 333 s |
+| ancien moteur | §15 (avant ce §16) | 36 / 36 | 3 / 4 | 78 | 568 s, 334 s |
+| ancien moteur | **après** | **36 / 36** | **4 / 4** | 78 | 333 s |
 
 **Aucune régression sur les 36 questions méta**, et le coût en appels LLM est
 inchangé — 78 des deux côtés, comme au §15. Attendu : la correction est en aval
 du nœud système, sur le chemin d'inférence, et ne lui ôte ni ne lui ajoute un
 seul aller-retour. Les questions méta restent servies par l'agent système à 35
-sur 36 sous Ollama et 34 sur 36 sous vLLM, exactement comme au §15.
+sur 36 sous l'ancien moteur et 34 sur 36 sous vLLM, exactement comme au §15.
 
 Les durées ne comparent pas les deux serveurs : la même carte les servait tous
 les deux.
 
 ### 16.7 Les témoins
 
-| Témoin | vLLM §15 | vLLM après | Ollama §15 | Ollama après |
+| Témoin | vLLM §15 | vLLM après | ancien moteur §15 | ancien moteur après |
 |---|---|---|---|---|
 | `temoin-comptage` | correct | correct | correct | correct |
 | `temoin-maximum` | correct | correct | correct | correct |
@@ -1715,16 +1715,16 @@ les deux.
 | `temoin-prediction` | **à côté** | **correct** | correct | correct |
 
 **`temoin-prediction` passe désormais sous vLLM**, avec la réponse mot pour mot
-de l'oracle Ollama :
+de l'oracle :
 
 > Prédiction (titanic) : a survécu (probabilité 93.4%) — détail : n'a pas
 > survécu : 6.6%, a survécu : 93.4%
 
 Deux appels LLM, `capability = predict`, synthèse « modèle (déterministe) » :
-même chemin, même coût, même résultat que sous Ollama.
+même chemin, même coût, même résultat que sous l'ancien moteur.
 
 **`temoin-colonnes-a-trous` reste hors sujet, et il faut le dire proprement.**
-Il est passé sous Ollama à ce passage-ci — le §15.6 avait déjà relevé qu'il
+Il est passé sous l'ancien moteur à ce passage-ci — le §15.6 avait déjà relevé qu'il
 n'est **pas déterministe** de ce côté : il a consommé 10 appels LLM, soit
 exactement `retrieval_request_limit`, contre 5 pour les autres témoins. Il rate
 toujours sous vLLM, et par le même chemin qu'au §15 : `SELECT * FROM passengers
@@ -1761,7 +1761,7 @@ La 4e classe n'existe pas : `pclass` vaut 1, 2 ou 3.
 
 | Moteur | Réponse, prompt d'origine |
 |---|---|
-| Ollama | « Je ne peux pas encore lancer la prédiction titanic : pclass … (reçu : 4) » |
+| ancien moteur | « Je ne peux pas encore lancer la prédiction titanic : pclass … (reçu : 4) » |
 | vLLM | **« Prédiction (titanic) : a survécu (probabilité 64,6 %) »** |
 
 Le plan rendu sous vLLM :
@@ -1804,7 +1804,7 @@ Six entrées impossibles, sur les deux moteurs, prompt d'origine. « Refusé en
 citant » veut dire : aucune prédiction, et la relance **rend à l'utilisateur la
 valeur qu'il a écrite**.
 
-| Cas hostile | Champ | vLLM | Ollama |
+| Cas hostile | Champ | moteur en service | ancien moteur |
 |---|---|---|---|
 | « 4e classe » | `pclass` (`Literal[1,2,3]`) | **substitué -> `'3'`, prédiction rendue** | refusé, cite `4` |
 | « embarquée à Marseille » | `embarked` (`Literal['S','C','Q']`) | **substitué -> `'C'`, prédiction rendue** | refusé, cite `'Marseille'` |
@@ -1826,7 +1826,7 @@ Quatre choses que la mesure apprend, et qu'il aurait été faux d'extrapoler :
   n'en a aucun : il est passé tel quel, et refusé. La substitution n'est donc
   pas un mécanisme uniforme — elle se déclenche là où le modèle croit
   reconnaître ce que l'utilisateur *voulait* dire.
-- **Le défaut est propre à vLLM.** Ollama refusait déjà les cinq. Vérifié par
+- **Le défaut ne se voyait pas partout.** L'ancien moteur refusait déjà les cinq. Vérifié par
   trois passages sur `pclass` et `embarked` : refus 3 fois sur 3. Un quatrième
   passage, antérieur, avait produit un `pclass=None` avec un `dataset` corrompu
   — **non reproduit**, et rapporté ici comme tel.
@@ -1863,7 +1863,7 @@ c'est de les **ordonner** : traduire d'abord, transmettre seulement à défaut.
 
 ### 17.4 Le défaut, après
 
-| Cas hostile | vLLM avant | vLLM après | Ollama avant | Ollama après |
+| Cas hostile | vLLM avant | vLLM après | ancien moteur avant | ancien moteur après |
 |---|---|---|---|---|
 | « 4e classe » | **prédiction** | refusé, cite `4` | refusé | refusé, cite `4` |
 | « embarquée à Marseille » | **prédiction** | refusé, cite `'Marseille'` | refusé | refusé, cite `'Marseille'` |
@@ -1886,7 +1886,7 @@ raison d'être. Sept formulations légitimes, mesurées **avant et après**, tro
 passages par variante et par moteur (les deux moteurs se sont montrés
 reproductibles : les trois passages d'une même variante sont identiques).
 
-| Forme légitime | vLLM avant | vLLM après | Ollama avant | Ollama après |
+| Forme légitime | vLLM avant | vLLM après | ancien moteur avant | ancien moteur après |
 |---|---|---|---|---|
 | « 1re classe » | aboutit | aboutit | aboutit | aboutit |
 | « première classe » | aboutit | *sex manquant* | aboutit | aboutit |
@@ -1919,7 +1919,7 @@ Quatre rédactions, toutes mesurées sur les deux moteurs plutôt qu'arbitrées 
 l'intuition. Toutes ferment le défaut (5/5 hostiles) ; elles se départagent sur
 ce qu'elles coûtent aux formes légitimes.
 
-| Rédaction | vLLM légitimes | Ollama légitimes |
+| Rédaction | vLLM légitimes | ancien moteur, légitimes |
 |---|---|---|
 | prompt d'origine | 3 / 7 | 6 / 7 |
 | deux interdits concurrents, « transmettre » en dernier | 5 / 7 | 5 / 7, **incident** sur « 1re classe » |
@@ -1950,7 +1950,7 @@ Deux tests, et aucun ne remplace l'autre.
   qu'un repli de ligne ne fasse pas passer une règle pour absente.
 - `tests/unit/orchestrator/test_graph.py` — la valeur transmise ressort
   **citée**, pour les trois champs énumérés, convertible (`'4'`) ou pas
-  (`'4e classe'`, ce que rend réellement Ollama). Sans la citation, la relance
+  (`'4e classe'`, également observé). Sans la citation, la relance
   reproche un champ sans dire ce qui clochait, et l'utilisateur redonne la
   même valeur.
 
@@ -1960,7 +1960,7 @@ de ce § le mesure, et c'est pourquoi ses chiffres sont ici.
 ### 17.8 Pas de régression : la batterie complète, sur les deux moteurs
 
 ```bash
-# Ollama (le moteur du .env, inchangé)
+# l'ancien moteur, à l'époque celui du .env
 uv run python scripts/mesure_surface_conversationnelle.py
 
 # vLLM, par variables d'environnement
@@ -1973,8 +1973,8 @@ uv run python scripts/mesure_surface_conversationnelle.py
 |---|---|---|---|---|---|
 | vLLM | §16 (avant ce §17) | 36 / 36 | 3 / 4 | 78 | 79 s |
 | vLLM | **après** | **36 / 36** | **3 / 4** | 78 | 77 s |
-| Ollama | §16 (avant ce §17) | 36 / 36 | 4 / 4 | 78 | 333 s |
-| Ollama | **après** | **36 / 36** | 3 / 4 | 78 | 326 s |
+| ancien moteur | §16 (avant ce §17) | 36 / 36 | 4 / 4 | 78 | 333 s |
+| ancien moteur | **après** | **36 / 36** | 3 / 4 | 78 | 326 s |
 
 **36 / 36 sur les deux moteurs, et 78 appels LLM des deux côtés** — inchangé
 depuis le §15. Attendu : la correction ne touche qu'au contenu d'un prompt, pas
@@ -1985,9 +1985,9 @@ réponse qu'au §16 (2 appels LLM, `capability = predict`, synthèse « modèle
 (déterministe) ») : la correction n'a pas fermé le chemin qu'elle venait
 d'ouvrir.
 
-**Le témoin Ollama passe de 4/4 à 3/4, et il faut le dire sans l'arrondir.**
+**Le témoin de l'ancien moteur passe de 4/4 à 3/4, et il faut le dire sans l'arrondir.**
 Le quatrième est `temoin-colonnes-a-trous`, dont les §15.6 et §16.7 avaient
-déjà relevé qu'il **n'est pas déterministe sous Ollama** : compté correct au
+déjà relevé qu'il **n'est pas déterministe sous l'ancien moteur** : compté correct au
 passage du §16, à côté ici, où il a consommé 12 appels LLM en tournant sur des
 colonnes qu'il croyait absentes. Il rate sous vLLM à tous les passages, par le
 chemin connu (`SELECT * … IS NULL`, 179 lignes au lieu de la liste des
@@ -2034,7 +2034,7 @@ sans jamais montrer les requêtes. C'est ce qui manquait pour corriger autrement
 qu'à l'aveugle. Les voici, relevées dans la batterie elle-même, adaptateur
 instrumenté (`var/chantier-c22/`).
 
-**Ollama — 10 allers-retours, plafond `retrieval_request_limit` épuisé, 73,4 s.**
+**Ancien moteur — 10 allers-retours, plafond `retrieval_request_limit` épuisé, 73,4 s.**
 Six requêtes :
 
 | # | Requête | Rendu |
@@ -2076,7 +2076,7 @@ le tableau ci-dessous ». La liste des colonnes n'apparaît nulle part.
 ### 18.2 Ce qui distingue le cas qui aboutit
 
 Rejoué seul, l'agent écrit parfois la bonne requête : le §15.6 le notait sans
-l'expliquer. Quatre rejeux sous Ollama donnent l'explication, et elle est dans
+l'expliquer. Quatre rejeux sous l'ancien moteur donnent l'explication, et elle est dans
 la **forme du résultat**, pas dans le SQL :
 
 | Requête écrite | Forme | Synthèse | Verdict |
@@ -2100,7 +2100,7 @@ agrégat dont la phrase EST la réponse.
 Mesurer CHAQUE colonne d'une table n'est ni l'une ni l'autre, et aucune
 question de cette famille ne réclame un `COUNT` « explicitement ». La consigne
 poussait donc activement vers le `SELECT *` — ce que vLLM a fait — ou laissait
-le modèle improviser une requête par colonne — ce qu'Ollama a fait. **Rien ne
+le modèle improviser une requête par colonne — ce que l'ancien moteur a fait. **Rien ne
 lui disait qu'il pouvait compter plusieurs colonnes d'un coup.**
 
 ### 18.4 Le remède, en deux moitiés — et ce qu'il n'est pas
@@ -2145,7 +2145,7 @@ d'agrandir le budget.
 
 ### 18.5 L'oracle avait un bord manquant, et il comptait juste une réponse fausse
 
-En capturant l'état d'avant, la batterie a rendu **4/4 sous Ollama** sur la
+En capturant l'état d'avant, la batterie a rendu **4/4 sous l'ancien moteur** sur la
 réponse citée au §18.1 — celle qui nomme `name` et `fare`. `attendus_tous` ne
 vérifiait que la PRÉSENCE de `age` et `embarked` ; deux colonnes pleines
 nommées en plus ne coûtaient rien.
@@ -2166,13 +2166,13 @@ Trois répétitions par question et par moteur, conversation neuve à chaque foi
 | Question | Moteur | Requêtes | Temps | Réponse |
 |---|---|---|---|---|
 | valeurs manquantes / `passengers` | vLLM | 1 | 3,5 s | `age` et `embarked` — 3/3 |
-| | Ollama | 1 | 25–30 s | `age` et `embarked` — 3/3 |
+| | ancien moteur | 1 | 25–30 s | `age` et `embarked` — 3/3 |
 | valeurs distinctes par colonne | vLLM | 1 | 5,3 s | les 10 comptes exacts — 3/3 |
-| | Ollama | 1 | 27 s | corrects — 3/3 |
+| | ancien moteur | 1 | 27 s | corrects — 3/3 |
 | la colonne la plus remplie | vLLM | 1 | 4,8 s | les colonnes sans trou — 3/3 |
-| | Ollama | 1 à 2 | 33 s | 1/3 propre ; 2/3 répondent `passenger_id` |
+| | ancien moteur | 1 à 2 | 33 s | 1/3 propre ; 2/3 répondent `passenger_id` |
 | valeurs manquantes / `iris` | vLLM | 1 | 3,4 s | « aucune » — 3/3 |
-| | Ollama | 1 à 2 | 23–26 s | « aucune » — 3/3 |
+| | ancien moteur | 1 à 2 | 23–26 s | « aucune » — 3/3 |
 
 Le SQL produit, identique dans sa forme sur les deux moteurs :
 
@@ -2187,7 +2187,7 @@ FROM passengers
 fichier, dialecte DuckDB, sans aucun trou — est répondue par la même mécanique :
 la correction ne connaît ni la table ni la question.
 
-Reste un écart, honnête : sous Ollama, « la colonne la plus remplie » repart
+Reste un écart, honnête : sous l'ancien moteur, « la colonne la plus remplie » repart
 deux fois sur trois vers un second `run_sql` à 891 lignes et conclut
 `passenger_id`. Ce n'est pas faux — `passenger_id` est bien pleine — mais c'est
 le dernier endroit de la famille où le modèle relit des lignes au lieu de lire
@@ -2197,19 +2197,19 @@ sa mesure.
 
 Batterie complète, conversation neuve à chaque question, oracle durci du §18.5.
 
-| | vLLM avant | vLLM après | Ollama avant | Ollama après |
+| | vLLM avant | vLLM après | ancien moteur avant | ancien moteur après |
 |---|---|---|---|---|
 | Questions méta | 36 / 36 | **36 / 36** | 36 / 36 | **35 / 36** |
 | Témoins | 3 / 4 | **4 / 4** | 4 / 4 *(faux vert)* | **4 / 4** |
 | Coût, méta | 78 appels | 78 appels | 78 appels | 83 appels |
 | `temoin-colonnes-a-trous` | 5 appels | 5 appels | **10 appels, 73,4 s** | **5 appels** |
 
-Le « 4 / 4 » d'Ollama AVANT est celui du §18.5 : la réponse nommait `name` et
+Le « 4 / 4 » de l'ancien moteur AVANT est celui du §18.5 : la réponse nommait `name` et
 `fare`. Sous l'oracle durci, cette réponse-là compte désormais à côté — la
-colonne « Ollama avant » est donc plus flatteuse que la réalité, et la seule
+colonne « ancien moteur avant » est donc plus flatteuse que la réalité, et la seule
 comparaison honnête est celle du texte rendu, donnée au §18.1.
 
-**L'écart d'Ollama après — `sources-premiere-personne`, et il n'est pas d'ici.**
+**L'écart de l'ancien moteur après — `sources-premiere-personne`, et il n'est pas d'ici.**
 « sur quoi je peux travailler ? » tombe dans le repli, 3 fois sur 3, avec la
 trace `agent système écarté (incident 7d753f5a) — passe au planificateur`. Le
 chemin est celui de l'agent système, que ce chantier ne touche pas : ni le
@@ -2235,10 +2235,10 @@ Suite complète : **875 passés, 99,49 %** (872 avant le chantier).
 
 ### 18.9 Ce qui reste ouvert après le §18
 
-- **`sources-premiere-personne` sous Ollama** — l'agent système écarté sur
+- **`sources-premiere-personne` sous l'ancien moteur** — l'agent système écarté sur
   incident, 3 fois sur 3, indépendamment de ce chantier (§18.7). C'est le
   `systeme_request_limit = 4` du §15.7 qui remonte ;
-- **« la colonne la plus remplie » sous Ollama** — deux fois sur trois, un
+- **« la colonne la plus remplie » sous l'ancien moteur** — deux fois sur trois, un
   second `run_sql` à 891 lignes et une conclusion tirée des lignes plutôt que
   de la mesure. La réponse n'est pas fausse ; le chemin n'est pas celui qu'on
   voulait ;
@@ -2258,7 +2258,7 @@ Suite complète : **875 passés, 99,49 %** (872 avant le chantier).
 
 Relevé depuis quatre chantiers et renvoyé chaque fois au suivant
 ([§15.6](#156-les-témoins-et-les-deux-questions-de-données-qui-restent),
-[§16](#16-literal1-2-3-refusait-1--la-prédiction-que-seul-ollama-rendait),
+[§16](#16-literal1-2-3-refusait-1--la-prédiction-qui-nallait-pas-au-bout),
 [§17](#17-la-4e-classe-nexiste-pas-et-lagent-prédisait-quand-même),
 [§18.9](#189-ce-qui-reste-ouvert-après-le-18)) : `fetch_then_predict` — aller
 chercher des lignes en base, puis prédire dessus — échouait sur des lignes
@@ -2276,8 +2276,8 @@ et la ligne réellement reçue :
 | Moteur | Tirages | SQL choisi pour la classe | Ce que la ligne portait | Lignes prédites |
 |---|---|---|---|---|
 | vLLM | 5/5 | `p.class_id` — **sans alias** | colonne `class_id` | **0/5** |
-| Ollama | 4/5 | `c.label AS pclass` | `'3e classe'` | **0/5** |
-| Ollama | 1/5 | `class_id AS pclass` | `3` | 5/5 |
+| ancien moteur | 4/5 | `c.label AS pclass` | `'3e classe'` | **0/5** |
+| ancien moteur | 1/5 | `class_id AS pclass` | `3` | 5/5 |
 
 Un sixième tirage, pris avant la série, avait donné `c.level AS pclass` — la
 réponse juste, par une troisième route. Quatre requêtes différentes pour une
@@ -2289,7 +2289,7 @@ Ce que la validation disait, mot pour mot :
   (Classe du billet (1re, 2e, 3e)) : valeur manquante) — pas de prédiction.`
   La colonne s'appelait `class_id`, elle ne portait aucun nom du schéma, elle a
   été écartée du payload ;
-- sous Ollama — même refus, pour une raison opposée : la colonne s'appelait bien
+- sous l'ancien moteur — même refus, pour une raison opposée : la colonne s'appelait bien
   `pclass`, et valait `'3e classe'`.
 
 **Le défaut n'est donc pas une valeur mal traduite. C'est une correspondance
@@ -2438,7 +2438,7 @@ Même question, même protocole, cinq tirages par moteur :
 | Moteur | Avant | Après |
 |---|---|---|
 | vLLM | 0/5 lignes prédites, 5 tirages sur 5 | **5/5 lignes prédites, 5 tirages sur 5** |
-| Ollama | 0/5 sur 4 tirages, 5/5 sur 1 | **5/5 lignes prédites, 5 tirages sur 5** |
+| ancien moteur | 0/5 sur 4 tirages, 5/5 sur 1 | **5/5 lignes prédites, 5 tirages sur 5** |
 
 Les probabilités rendues, identiques sur les deux moteurs — le predict est
 déterministe et sans LLM, seul le chemin qui l'alimente changeait :
@@ -2509,7 +2509,7 @@ ce qu'ils couvrent :
 
 Une phrase de la consigne SQL est tenue par un test, et elle vient d'une mesure :
 « le filtre et le nombre de lignes restent ceux de la demande ci-dessus ». Sans
-elle, une consigne de sept lignes recouvrait la demande — sous Ollama, « les
+elle, une consigne de sept lignes recouvrait la demande — sous l'ancien moteur, « les
 cinq premiers passagers » repartait **sans `LIMIT`** et ramenait toute la table,
 coupée à 200 par `retrieval_max_rows`.
 
@@ -2524,9 +2524,9 @@ déplacé, et non pour mesurer autre chose.
 | Moteur | Questions méta | Témoins | Coût |
 |---|---|---|---|
 | vLLM (`google/gemma-4-E4B-it-qat-w4a16-ct`, port 8100) | **36/36** | **4/4** | 78 + 17 appels LLM |
-| Ollama (`gemma4:e4b`, port 11434) | **35/36** | **4/4** | 83 + 17 appels LLM |
+| ancien moteur | **35/36** | **4/4** | 83 + 17 appels LLM |
 
-Le seul écart, `sources-premiere-personne` sous Ollama, est celui que le
+Le seul écart, `sources-premiere-personne` sous l'ancien moteur, est celui que le
 [§18.7](#187-pas-de-régression--la-batterie-complète-sur-les-deux-moteurs) a déjà instruit et rendu à sa
 cause : `agent système écarté (incident 240eef48) : The next request would
 exceed the request_limit of 4`. C'est le `systeme_request_limit = 4` signalé
@@ -2539,7 +2539,7 @@ durci au §18 — celui qui vérifie aussi les colonnes **interdites**. Il n'a p
 
 ### 19.11 Ce qui reste ouvert après le §19
 
-- **`sources-premiere-personne` sous Ollama** — inchangé depuis le §18.7, cause
+- **`sources-premiere-personne` sous l'ancien moteur** — inchangé depuis le §18.7, cause
   identifiée (`systeme_request_limit = 4`), à traiter pour lui-même ;
 - **la déclaration n'est pas vérifiée contre la source.** Rien ne relit le
   schéma de la base pour confirmer que `classes.level` existe. Une déclaration
@@ -2635,7 +2635,7 @@ d'avoir rejoué ne compte pas.
 Huit tours, une conversation, `titanic` en Postgres, les figures réellement
 exécutées en bac à sable.
 
-| # | Tour | Ce qu'on exige | vLLM | Ollama |
+| # | Tour | Ce qu'on exige | moteur en service | ancien moteur |
 |---|---|---|---|---|
 | 1 | *Fais-moi un graphique en barres du nombre de passagers par classe.* | une figure, et son code retenu sous un nom | ✅ `graphique_1` | ✅ `graphique_1` |
 | 2 | *Combien de passagers y a-t-il en tout ?* | requête ordinaire, le rappel décline | ✅ | ✅ |
@@ -2668,7 +2668,7 @@ Tokens **rendus par le serveur** (`input_tokens`), pas estimés — l'estimateur
 surestime de 1 à 17 %, ce qui suffit pour couper au bon moment mais pas pour publier
 un chiffre.
 
-| Tour | artefacts au magasin | prompt du planificateur (vLLM) | (Ollama) | prompt de l'agent de rappel |
+| Tour | artefacts au magasin | prompt du planificateur (moteur en service) | (ancien moteur) | prompt de l'agent de rappel |
 |---|---|---|---|---|
 | 1 | 1 | **1 439** | 1 458 | — |
 | 2 | 2 | 1 601 | 1 620 | 1 055 |
@@ -2778,10 +2778,10 @@ trois il vient de toucher.
 | Moteur | Questions méta | Témoins | Coût |
 |---|---|---|---|
 | vLLM (`google/gemma-4-E4B-it-qat-w4a16-ct`, port 8100) | **36/36** | **4/4** | 78 + 17 appels LLM |
-| Ollama (`gemma4:e4b`, port 11434) | **35/36** | **4/4** | 83 + 17 appels LLM |
+| ancien moteur | **35/36** | **4/4** | 83 + 17 appels LLM |
 
 **Identiques au [§19.10](#1910-la-batterie-rejouée-sur-les-deux-moteurs), appels
-compris.** Le seul écart reste `sources-premiere-personne` sous Ollama, et c'est le
+compris.** Le seul écart reste `sources-premiere-personne` sous l'ancien moteur, et c'est le
 même depuis le [§18.7](#187-pas-de-régression--la-batterie-complète-sur-les-deux-moteurs) :
 `systeme_request_limit = 4`, le *fail-open* joue son rôle. Le témoin
 `temoin-colonnes-a-trous` passe sur les deux moteurs, avec l'oracle durci au §18 —
@@ -2796,7 +2796,7 @@ Suite complète : **922 passés, 99,54 %** (893 et 99,50 % avant le chantier), d
 
 ### 20.9 Une ligne de prompt qui en coûtait deux
 
-Le tour 5 raté sous Ollama a une cause identifiée : le nœud **système** s'empare de
+Le tour 5 raté sous l'ancien moteur a une cause identifiée : le nœud **système** s'empare de
 « Le premier tableau que tu m'as sorti, redis-moi ce qu'il y avait dedans » et répond
 par l'inventaire du catalogue. C'est le défaut du [§12](#12-la-source-de-travail-dune-conversation-mesurée-de-bout-en-bout)
 par une autre porte, entre deux agents cette fois.
@@ -2817,7 +2817,7 @@ l'attention du modèle, y compris là où on ne regardait pas — et on ne l'aur
 sans rejouer la batterie entière pour une frontière de cinq lignes.
 
 La frontière reste donc portée par le seul agent de rappel, et ce qu'on y perd est
-mesuré : 1 tour sur 8, sous Ollama seulement.
+mesuré : 1 tour sur 8, sous l'ancien moteur seulement.
 
 ### 20.10 Ce qui reste ouvert après le §20
 
@@ -2830,7 +2830,7 @@ mesuré : 1 tour sur 8, sous Ollama seulement.
   le nom le plus proche : le modèle ne s'en saisit pas quand le catalogue ne porte
   rien de la même famille. À reprendre autrement — peut-être en déterministe, du côté
   du nœud, plutôt que par le prompt ;
-- **le nœud système capte encore « le tableau que tu m'as sorti » sous Ollama**
+- **le nœud système capte encore « le tableau que tu m'as sorti » sous l'ancien moteur**
   (§20.9). La correction par le prompt est disqualifiée, mesures à l'appui ; la
   frontière reste à poser ailleurs ;
 - **l'éviction n'est pas DITE quand le modèle décline.** L'avis dans le catalogue a
@@ -2842,7 +2842,7 @@ mesuré : 1 tour sur 8, sous Ollama seulement.
   code échoue dans le bac à sable avec un message. C'est un choix — mieux vaut un
   échec lisible qu'un refus prématuré — mais rien ne compare le schéma d'alors à
   celui de maintenant ;
-- **`sources-premiere-personne` sous Ollama**, inchangé depuis le §18.7.
+- **`sources-premiere-personne` sous l'ancien moteur**, inchangé depuis le §18.7.
 
 ## 21. Dire qu'on ne l'a pas fait
 
@@ -2860,7 +2860,7 @@ diagramme en barres ; le second demande un camembert qui n'a jamais existé.
 >
 > **Tour 2.** *Reprends le camembert des ports d'embarquement que tu m'avais fait.*
 
-| | vLLM | Ollama |
+| | moteur en service | ancien moteur |
 |---|---|---|
 | trace du tour 2 | `rappel : aucun outil appelé — passe au planificateur`<br>`plan : analyze sur titanic`<br>`analysis : 1 figure(s), statut ok` | identique |
 | réponse | *« Voici le camembert des ports d'embarquement. Les données montrent que le port de S a accueilli 644 passagers, suivi de C avec 168, puis Q avec 77… »* | *« Voici le camembert des ports d'embarquement **que vous avez demandé**. La visualisation est ci-jointe… »* |
@@ -3018,7 +3018,7 @@ d'avant » ne peut désigner que du vide, donc le seul où l'oracle soit mécani
 L'oracle ne lit qu'un fait : la phrase d'aveu est-elle là où elle doit être, et
 absente là où elle n'a rien à faire ?
 
-| # | tour | aveu | vLLM | Ollama |
+| # | tour | aveu | moteur en service | ancien moteur |
 |---|---|---|---|---|
 | 1 | *Fais-moi un graphique en barres du nombre de passagers par classe.* | interdit | ✅ | ✅ |
 | **2** | ***Reprends le camembert des ports d'embarquement que tu m'avais fait.*** | **exigé** | ✅ **+ figure produite** | ✅ **+ figure produite** |
@@ -3045,7 +3045,7 @@ Même parcours qu'au [§20.4](#204-la-mesure-sur-les-deux-moteurs), mêmes huit 
 même oracle mécanique — seul le tour 8 a changé d'attendu, puisque ce qu'on y exige
 n'est plus un refus mais l'absence **dite**.
 
-| # | Tour | vLLM | Ollama |
+| # | Tour | moteur en service | ancien moteur |
 |---|---|---|---|
 | 1 | une figure | ✅ | ✅ |
 | 2–3 | deux digressions | ✅ | ✅ |
@@ -3084,7 +3084,7 @@ l'aveu comble, avec sa troisième phrase — celle qui ne dit **pas** l'absence 
 | Moteur | Questions méta | Témoins | Coût |
 |---|---|---|---|
 | vLLM (`google/gemma-4-E4B-it-qat-w4a16-ct`, port 8100) | **36/36** | **4/4** | 78 + 17 appels LLM |
-| Ollama (`gemma4:e4b`, port 11434) | **35/36** | **4/4** | 83 + 17 appels LLM |
+| ancien moteur | **35/36** | **4/4** | 83 + 17 appels LLM |
 
 **Identiques au [§20.8](#208-pas-de-régression--la-batterie-sur-les-deux-moteurs),
 appels compris.** C'est la preuve qui compte ici, parce que le [§20.9](#209-une-ligne-de-prompt-qui-en-coûtait-deux)
@@ -3103,7 +3103,7 @@ Deux raisons pour que cette identité tienne, et il fallait les deux :
   que le participe de production a été exigé. Le mot `rappel` n'apparaît dans **aucune**
   trace de la batterie.
 
-Le seul écart reste `sources-premiere-personne` sous Ollama, et c'est le même depuis
+Le seul écart reste `sources-premiere-personne` sous l'ancien moteur, et c'est le même depuis
 le [§18.7](#187-pas-de-régression--la-batterie-complète-sur-les-deux-moteurs) :
 `systeme_request_limit = 4`, le *fail-open* joue son rôle. Il n'est pas traité ici.
 
@@ -3121,7 +3121,7 @@ Le §20.10 laissait cinq points ouverts. Deux sont fermés ici :
 
 Restent :
 
-- **le nœud système capte encore « le tableau que tu m'as sorti » sous Ollama**
+- **le nœud système capte encore « le tableau que tu m'as sorti » sous l'ancien moteur**
   (§20.9), et c'est le seul tour manqué du parcours du §20 sur ce moteur. La
   correction par le prompt est disqualifiée, mesures à l'appui ; la frontière reste à
   poser ailleurs. Il faut noter qu'elle passerait par un détecteur du même genre que
@@ -3138,7 +3138,7 @@ Restent :
   la phrase ne prétend pas que la chose existe — mais c'est une frontière posée là et
   non ailleurs, et elle n'a pas été mesurée sur un corpus de tournures implicites ;
 - **le rejeu ne vérifie pas que le décor est le même** (§20.10), inchangé ;
-- **`sources-premiere-personne` sous Ollama**, inchangé depuis le §18.7.
+- **`sources-premiere-personne` sous l'ancien moteur**, inchangé depuis le §18.7.
 
 ## 22. Un critère de routage, et la phrase de renfort qui a coûté une question
 

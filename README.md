@@ -6,7 +6,7 @@ Agent conversationnel sur données, **on-premise**. À partir d'une source décl
 2. **Analyser** — calculer KPI, statistiques (χ², ANOVA…) et visualisations en exécutant du code dans un bac à sable durci (réseau coupé) ;
 3. **Prédire** — appeler un modèle de ML sur des features validées (Pydantic), en redemandant ce qui manque avant tout predict.
 
-Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM mutualisé, joint par un **endpoint OpenAI-compatible** : le moteur n'est nommé nulle part dans le code, il se change en changeant une URL. En service : **vLLM**, servant `google/gemma-4-E4B-it-qat-w4a16-ct` ([docs/VLLM.md](docs/VLLM.md)). Orchestration explicite et traçable, **composants logiciels** sous licences 100 % permissives (MIT/Apache/BSD) — les poids du modèle relèvent, eux, de la licence de son éditeur.
+Réponse en langage naturel + objets affichables (tableau, figure). Un seul LLM mutualisé, joint par un **endpoint OpenAI-compatible** : le moteur n'est nommé nulle part dans le code, il se change en changeant une URL. En service : **vLLM**, servant `google/gemma-4-E4B-it-qat-w4a16-ct` ([docs/MOTEUR.md](docs/MOTEUR.md)). Orchestration explicite et traçable, **composants logiciels** sous licences 100 % permissives (MIT/Apache/BSD) — les poids du modèle relèvent, eux, de la licence de son éditeur.
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
@@ -95,7 +95,7 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 | [docs/CADRAGE.md](docs/CADRAGE.md) | cahier des charges : contraintes, décisions, stack, roadmap, arborescence, exigences de tests |
 | [docs/AUDIT-2026-09.md](docs/AUDIT-2026-09.md) | état des lieux mesuré et backlog priorisé (multi-utilisateurs, mémoire, moteur LLM, sécurité, qualité) |
 | [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
-| [docs/VLLM.md](docs/VLLM.md) | banc d'essai vLLM : le tool calling mesuré, ce qui casse sans les bonnes options, ce qui reste à vérifier |
+| [docs/MOTEUR.md](docs/MOTEUR.md) | le moteur d'inférence : les options dont le système dépend, ce qui casse sans elles, la mémoire, la fenêtre, et les mesures qui l'établissent |
 | [docs/parcours-de-l-agent.md](docs/parcours-de-l-agent.md) | **comprendre comment il répond** : huit conversations, huit diagrammes de séquence, chacun établi sur une trace relevée — nœuds traversés, outils appelés, coût en appels LLM, et les défauts connus |
 | [docs/surface-conversationnelle.md](docs/surface-conversationnelle.md) | ce que l'agent sait répondre **sur lui-même** : la batterie de mesure, les comptes avant/après, le coût en appels LLM, et les décisions déjà mesurées et retirées |
 | [docs/sources-metier.md](docs/sources-metier.md) | **le catalogue qu'on montre** : un fabricant de vélos, cinq sources, des volumes qui tiennent dans la tête, trois pièges de modélisation de trois familles, et les douze questions de démonstration mesurées |
@@ -107,7 +107,7 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 
 **Pour installer le service**, ce n'est pas ici : c'est **[docs/INSTALLATION.md](docs/INSTALLATION.md)**, qui part d'une machine nue et n'exige que Docker. Ce qui suit est le démarrage d'un poste de **développement**.
 
-Prérequis : [uv](https://docs.astral.sh/uv/) (Python 3.12 géré automatiquement), **Docker** (sandbox d'exécution + tests d'intégration), et un serveur LLM à endpoint OpenAI-compatible pour l'usage réel. En service : [vLLM](https://docs.vllm.ai) sur le port 8100 ([docs/VLLM.md](docs/VLLM.md)) ; [Ollama](https://ollama.com) marche tout aussi bien, l'application ne les distingue pas.
+Prérequis : [uv](https://docs.astral.sh/uv/) (Python 3.12 géré automatiquement), **Docker** (sandbox d'exécution + tests d'intégration), et un serveur LLM à endpoint OpenAI-compatible pour l'usage réel. En service : [vLLM](https://docs.vllm.ai) sur le port 8100 ([docs/MOTEUR.md](docs/MOTEUR.md)). L'application ne nomme pas le serveur : `DAA_LLM_BASE_URL` suffit à en désigner un autre, pourvu qu'il serve `/v1/chat/completions` avec le tool calling.
 
 ```bash
 uv sync                                              # environnement + dépendances
@@ -141,8 +141,8 @@ Tout se règle par variables d'environnement `DAA_*` (ou fichier `.env`). 51 ré
 
 | Réglage | Défaut | Quand y toucher |
 |---|---|---|
-| `DAA_LLM_BASE_URL` | `http://localhost:11434/v1` | pointer le moteur : `http://localhost:8100/v1` pour le vLLM en service |
-| `DAA_LLM_MODEL` | `gemma4:e4b` | le modèle réellement servi : `google/gemma-4-E4B-it-qat-w4a16-ct` sous vLLM |
+| `DAA_LLM_BASE_URL` | `http://localhost:8100/v1` | le moteur en service ; `http://host.docker.internal:8100/v1` depuis un conteneur |
+| `DAA_LLM_MODEL` | `google/gemma-4-E4B-it-qat-w4a16-ct` | le modèle réellement servi par le central |
 | `DAA_SESSION_COOKIE_SECURE` | `true` | `false` pour un développement local en http |
 | `DAA_WORKSPACE_DIR` | `var/workspaces` | pointer un volume dédié en production |
 | `DAA_API_DOCS_ENABLED` | `false` | `true` pour développer contre l'OpenAPI |
@@ -379,11 +379,11 @@ fin ; les deux mémoires ci-dessus ne pèsent rien.
 Réinjecter tous les tableaux à chaque tour n'avait aucune borne : mesuré à
 100 tours, le `docker run` de l'analyse portait 100 arguments `--volume` et le
 prompt du planificateur 13 348 caractères de catalogue d'objets. Au-delà de la
-fenêtre du serveur, le moteur tronque **sans erreur ni message** — mesuré sous
-Ollama : 48 350 tokens envoyés pour 32 768 servis, et l'agent répond « je n'ai
-pas bien compris ». vLLM, lui, refuse en 400 plutôt que de tronquer ; les deux
-plafonds ci-dessous valent donc pour les deux, l'un contre une réponse fausse,
-l'autre contre un refus.
+fenêtre du serveur, le prompt est refusé en 400 — et un serveur mal accordé
+peut aussi le tronquer **sans erreur ni message** : mesuré, 48 350 tokens
+envoyés pour 32 768 servis, et l'agent répond « je n'ai pas bien compris ». Les
+deux plafonds ci-dessous valent contre les deux pannes, l'une par une réponse
+fausse, l'autre par un refus.
 
 Deux plafonds, appliqués **aux trois axes à la fois** (prompt du planificateur,
 montages de la sandbox, catalogue des sources éphémères) — les désaccorder
@@ -429,7 +429,7 @@ Quatre situations sont distinguées, et se cumulent :
    de sortie exploitable et qu'il n'y aurait alors plus rien à mesurer ;
 3. **troncature constatée côté serveur** — `prompt_eval_count` confronté à ce
    qu'on a envoyé. Le compteur de tokens local est approché (3 caractères par
-   token) et **surestime** de 1 à 17 % (mesuré contre `gemma4:e4b`) : il coupe
+   token) et **surestime** de 1 à 17 % (mesuré contre le modèle servi) : il coupe
    donc un peu trop tôt plutôt que trop tard ;
 4. **table matérialisée coupée** — analyser une source SQL matérialise chaque table
    en CSV, plafonnée à `DAA_ANALYSIS_TABLE_MAX_ROWS`. Un CSV coupé reste
@@ -556,6 +556,6 @@ L'arborescence détaillée, fichier par fichier, est dans [docs/CADRAGE.md §10]
 | argon2-cffi | Empreintes de mots de passe (argon2id) | MIT |
 | python-multipart | Lecture du formulaire de connexion | Apache-2.0 |
 | vLLM | Serveur du LLM mutualisé, local (moteur en service) | Apache-2.0 |
-| Ollama | Serveur du LLM mutualisé, local (autre moteur possible, même endpoint) | MIT |
-| `google/gemma-4-E4B-it-qat-w4a16-ct` | Modèle servi par l'instance en place | **non vérifiée ici, et plus lisible depuis l'application.** Ollama déclarait la licence du modèle (`POST /api/show`) ; vLLM n'expose rien d'équivalent — elle se lit désormais sur la fiche du modèle chez son éditeur, et doit y être relue à chaque changement de modèle servi |
+| vLLM | Serveur du LLM mutualisé, local (autre serveur possible, même endpoint) | Apache-2.0 |
+| `google/gemma-4-E4B-it-qat-w4a16-ct` | Modèle servi par l'instance en place | **non vérifiée ici, et non lisible depuis l'application.** vLLM n'expose aucune déclaration de licence du modèle : elle se lit sur la fiche du modèle chez son éditeur, et doit y être relue à chaque changement de modèle servi |
 | **Ce projet** | Code applicatif | MIT annoncé, **mais aucun fichier `LICENSE` n'est présent** et `pyproject.toml` ne déclare rien : l'annonce est donc sans portée juridique en l'état (cf. [axes-amelioration](docs/axes-amelioration.md)) |

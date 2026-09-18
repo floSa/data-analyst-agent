@@ -72,7 +72,7 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 ## 5. Le LLM mutualisé
 
 - **Un seul modèle** pour tout ce qui est langage : router, générer le SQL, générer le code de stats/viz, rédiger la réponse.
-- **Qwen3-Coder** (Apache-2.0), servi par **Ollama**.
+- **Qwen3-Coder** (Apache-2.0), servi par le moteur d'inférence local.
   - *Réalité registry (constatée 2026-07)* : la famille n'existe qu'en **30B-A3B** (MoE, 3B actifs, ~19 Go en Q4_K_M) et 480B. Pas de 14B/32B dense.
   - Dev (4060 Ti 16 Go) : `qwen3-coder:30b` en répartition GPU+RAM (64 Go) — MoE 3B actifs, débit acceptable.
   - Prod (L4 24 Go) : `qwen3-coder:30b` Q4 tient entièrement en VRAM.
@@ -86,14 +86,14 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 > n'a jamais été chargé sur le service central**, et le repli du code qui le désignait
 > échouait en `404 model not found` — le masquage des erreurs ne laissant qu'un « je
 > n'ai pas réussi à interpréter la demande » dans la réponse. Le modèle réellement
-> servi, et le défaut du code depuis, est **`gemma4:e4b`**
-> ([`config.py:52-57`](../src/data_analyst_agent/config.py)) ; le `.env` reste maître.
+> servi, et le défaut du code depuis, est **`google/gemma-4-E4B-it-qat-w4a16-ct`**
+> ([`config.py`](../src/data_analyst_agent/config.py)) ; le `.env` reste maître.
 > Le raisonnement de cette section — *un seul modèle pour tout ce qui est langage* —
 > tient, et c'est lui qu'il faut lire ici ; le nom du modèle, non. Deux conséquences
 > ont suivi et sont documentées ailleurs : le **moteur** n'est plus nommé dans le code
 > (l'application ne parle que `/v1/chat/completions`, `DAA_LLM_BASE_URL` suffit à
-> passer d'Ollama à vLLM — [ARCHITECTURE §4.3](ARCHITECTURE.md#43-llmpy--configpy--llm-mutualisé-et-réglages),
-> [VLLM.md](VLLM.md)), et la licence du modèle servi est **déclarée par le modèle
+> désigner le serveur — [ARCHITECTURE §4.3](ARCHITECTURE.md#43-llmpy--configpy--llm-mutualisé-et-réglages),
+> [MOTEUR.md](MOTEUR.md)), et la licence du modèle servi est **déclarée par le modèle
 > lui-même**, donc à revérifier à chaque changement (voir le tableau des licences du
 > [README](../README.md#licences--composants)).
 
@@ -135,7 +135,7 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 |---|---|---|
 | Orchestration | LangGraph | MIT |
 | Agents (nœuds typés) | PydanticAI + Pydantic v2 | MIT |
-| LLM serving | Ollama + Qwen3-Coder | MIT / Apache-2.0 |
+| LLM serving | moteur d'inférence local + Qwen3-Coder | MIT / Apache-2.0 |
 | Text-to-SQL (socle) | tools maison + SQLAlchemy | MIT / BSD |
 | Text-to-SQL (spike comparatif) | Vanna (MIT, upstream archivé) ; alt. WrenAI (Apache) | MIT / Apache-2.0 |
 | Fichiers → SQL | DuckDB | MIT |
@@ -173,7 +173,7 @@ data-analyst-agent/
 │   ├── CADRAGE.md                # ce document (le pourquoi)
 │   ├── ARCHITECTURE.md           # le comment, service par service + réglages (§7)
 │   ├── AUDIT-2026-09.md          # état des lieux et backlog priorisé
-│   ├── VLLM.md                   # banc d'essai du tool calling sur vLLM
+│   ├── MOTEUR.md                   # banc d'essai du tool calling sur vLLM
 │   └── spike-vanna.md            # comparaison text-to-SQL (verdict : socle maison)
 ├── src/data_analyst_agent/
 │   ├── config.py                 # Settings (pydantic-settings), préfixe DAA_
@@ -213,7 +213,7 @@ porte tout ce qui est propre à un déploiement — comptes, sessions, conversat
 
 0. **Scaffold** — `uv init`, ruff, pre-commit, CI GitHub Actions (lint + tests + couverture), structure, squelette `tests/`.
 1. **Sandbox** — Dockerfile + client kernel Jupyter ; valider exécution de code + retour MIME. *(fondation)* — tests d'intégration sur exécution réelle.
-2. **LLM** — client Ollama Qwen3-Coder, ping de bout en bout (tests avec réponse mockée + un test live optionnel).
+2. **LLM** — client Qwen3-Coder sur endpoint OpenAI-compatible, ping de bout en bout (tests avec réponse mockée + un test live optionnel).
 3. **② Analyse** — agent → sandbox sur un CSV (stat + un bar chart).
 4. **① Récupération** — catalogue + tools SQL Postgres (testcontainers) + DuckDB sur Excel.
 5. **③ Inférence** — entraîner les 3 modèles jouets (notebooks/), puis schémas Pydantic + registry + predict.

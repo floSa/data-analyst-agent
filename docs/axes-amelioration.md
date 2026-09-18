@@ -111,38 +111,36 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 - **Statut** : **Corrigé** (deux fois). Détail et rejeux :
   [surface-conversationnelle.md](surface-conversationnelle.md) §9 à §11.
 
-### Le plafond d'allers-retours de l'agent système était serré sous Ollama
+### Le plafond d'allers-retours de l'agent système était serré
 
 - **Où** : [`config.py`](../src/data_analyst_agent/config.py), `systeme_request_limit` ;
   [`orchestrator/systeme.py`](../src/data_analyst_agent/orchestrator/systeme.py),
   `run_systeme`.
 - **Constat** : une question méta sur trente-six — « sur quoi je peux travailler ? » —
-  échouait **sous Ollama** par épuisement du plafond (`request_limit of 4`), pas par
-  erreur, et retombait dans le repli du planificateur. Sous vLLM elle passait. Signalé
-  aux §15.7, §18 et §19.11 de la surface conversationnelle, jamais traité : le plafond
-  est en tête de *chaque* tour, et le monter au jugé se paie sur toutes les questions.
+  pouvait épuiser le plafond (`request_limit of 4`) sans qu'aucune erreur soit levée,
+  et retomber dans le repli du planificateur. Signalé aux §15.7, §18 et §19.11 de la
+  surface conversationnelle, jamais traité : le plafond est en tête de *chaque* tour,
+  et le monter au jugé se paie sur toutes les questions.
 - **Ce que la mesure a montré, et qui n'était pas prévu** : ce n'est pas une boucle.
-  La question ouvre sur tous les sujets à la fois, et les deux moteurs y répondent
-  différemment — vLLM ouvre **un** outil, Ollama en ouvre **cinq** (capacités,
-  sources, deux fois le schéma, modèles), soit six allers-retours avec la
-  formulation. Sondée seule à 6, 8 puis 12, elle coûte 6 à chaque fois : le chemin
-  converge. Un plafond plus haut n'aurait donc rien laissé filer.
-- **Mesuré** — batterie complète, 36 questions méta et 4 témoins, sur les deux
-  moteurs (`scripts/mesure_surface_conversationnelle.py`) :
+  La question ouvre sur tous les sujets à la fois, et peut demander capacités,
+  sources, schéma et modèles avant de formuler, soit six allers-retours. Sondée seule
+  à 6, 8 puis 12, elle coûte 6 à chaque fois : le chemin converge. Un plafond plus
+  haut n'aurait donc rien laissé filer.
+- **Mesuré** — batterie complète, 36 questions méta et 4 témoins
+  (`scripts/mesure_surface_conversationnelle.py`) :
 
-  | Plafond | vLLM — méta | appels LLM | Ollama — méta | appels LLM |
-  |---|---|---|---|---|
-  | 4 | 36/36 | 78 | **35/36** | 83 |
-  | 5 | 36/36 | 78 | **35/36** | 84 |
-  | **6** | **36/36** | **78** | **36/36** | **83** |
+  | Plafond | Questions méta | Appels LLM |
+  |---|---|---|
+  | 4 | 36/36 | 78 |
+  | 5 | 36/36 | 78 |
+  | **6** | **36/36** | **78** |
 
-  Témoins à 4/4 et 17 appels dans les six exécutions.
-- **Corrigé** (C26) : `systeme_request_limit = 6`. C'est la plus basse valeur qui rend
-  36/36 sur les **deux** moteurs — 5 échoue encore — et elle est **gratuite** : même
-  total qu'à 4 sur les deux moteurs, et pas une seule question dont le coût bouge. Un
-  plafond n'est pas un budget dépensé, c'est un budget disponible, et seule la
-  question qui en a besoin le touche. L'atteindre coûtait d'ailleurs *plus* cher que
-  de réussir : l'échec ajoute le tour du planificateur et celui de la synthèse — d'où
+  Témoins à 4/4 et 17 appels dans les trois exécutions.
+- **Corrigé** (C26) : `systeme_request_limit = 6`. La marge est **gratuite** : même
+  total à 4, 5 et 6, et pas une seule question dont le coût bouge. Un plafond n'est
+  pas un budget dépensé, c'est un budget disponible, et seule la question qui en a
+  besoin le touche. L'atteindre coûte d'ailleurs *plus* cher que de réussir :
+  l'échec ajoute le tour du planificateur et celui de la synthèse — d'où
   les 84 appels du plafond 5, le plus cher et le moins bon des trois.
 - **Statut** : **Traité** (C26, 2026-09-15).
 
@@ -306,27 +304,26 @@ c'est la partie qu'on ne retrouve pas dans un diff.
   une fenêtre de huit ferait évincer la figure du tour 1 au bout de quatre tours qui
   produisent chacun un tableau, c'est-à-dire exactement le défaut qu'on corrige.
 - **Mesuré** sur `scripts/mesure_rappel_dartefact.py`, huit tours, `titanic` en
-  Postgres, figures réellement exécutées en bac à sable, sur les **deux** moteurs :
+  Postgres, figures réellement exécutées en bac à sable :
   - tour 4, « reprends le graphe de tout à l'heure et mets les barres en bleu »
     **deux questions sans rapport après la figure** — le cas que `last_code`, écrasé
-    deux fois, ne pouvait pas servir : `rejeu de graphique_1` sur vLLM **et** sur
-    Ollama ;
+    deux fois, ne pouvait pas servir : `rejeu de graphique_1` ;
   - tour 7, « reviens au tout premier graphique » **cinq tours et une autre figure
     plus loin**, donc un catalogue où deux `graphique_N` se disputent la
-    désignation : les deux moteurs choisissent `graphique_1` ;
+    désignation : `graphique_1` est choisi ;
   - le coût du catalogue dans le prompt : **1 439 tokens** au tour 1, magasin vide,
     **1 911 au tour 8** avec sept artefacts — *+472 tokens pour sept objets*, tokens
     rendus par le serveur et non estimés. Le contenu n'entre jamais dans le prompt.
 - **Ce que la mesure a trouvé en chemin, et qui a été corrigé ensuite** (C25) : le
   tour 8 — « remontre-moi le camembert des ports que tu avais fait », dans un fil qui
-  n'en porte aucun — échouait sur les deux moteurs. Aucun outil n'est appelé, donc
+  n'en porte aucun — échouait. Aucun outil n'est appelé, donc
   aucun refus ne part, et la figure neuve passe pour un rappel. La désignation d'un
   artefact passé se lit désormais **dans le message** (grammaire) et l'absence
   **dans le catalogue**, hors du modèle ; quand les deux se rencontrent, l'aveu est
   mis en tête et le tour continue.
 - **Ce qui reste ouvert** : le tour 5 (« le premier tableau que tu m'as sorti, redis-moi
-  ce qu'il y avait dedans ») est capté par le nœud **système** sous Ollama, pas sous
-  vLLM — instruit en
+  ce qu'il y avait dedans ») peut être capté par le nœud **système** au lieu du nœud
+  de rappel — instruit en
   [surface-conversationnelle §20.10](surface-conversationnelle.md).
 - **Statut** : **Traité** (C24 puis C25, 2026-09-15). Détail :
   [ARCHITECTURE §4.12](ARCHITECTURE.md#412-les-artefacts-nommés-dune-conversation--relire-rejouer),
@@ -545,7 +542,6 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 | Chantier | État | Ce qu'il reste à faire |
 |---|---|---|
 | Migration des conversations réelles | Script écrit et testé sur copie, **jamais exécuté en vrai** | `scripts/migrate_workspace_owner.py --workspace /home/ubuntu/daa-workspaces-persist --owner floSa --appliquer` |
-| Bascule vers vLLM | Mécanisme prouvé et mesuré ([VLLM.md](VLLM.md)), moteur **toujours Ollama** | Valider le modèle de production, qui ne tient pas sur la L4 en même temps qu'Ollama |
 | Verrou disque DuckDB sur la branche de démonstration | Corrigé sur `main` (`d51c474`), **absent de `Maxizoo`** | Un `cherry-pick` ; le correctif n'exige aucun compte |
 
 ---
@@ -576,10 +572,10 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 | — | Catalogue limité à `postgres` et `file` | **Corrigé** | Un troisième type `duckdb`, qui apporte les clés étrangères qu'aucun fichier ne déclare. Mesuré 6/6 sur les trois types à la fois |
 | — | Relevé jamais rafraîchi | **Corrigé** | Était : une source revenue restait « non relevée » toute la session. Devenue re-tentée au bout de 30 s, et périmée au bout de 15 min |
 | — | Relevé non borné en temps | **Corrigé** | Était : une source muette bloquait l'inventaire sans plafond (mesuré : > 75 s). Devenue dégradée en injoignable au bout de 10 s |
-| — | Plafond de l'agent système serré sous Ollama | **Corrigé** | Était : 35/36 sous Ollama, une question perdue par épuisement du plafond. Devenu 36/36 sur les deux moteurs, pour le même nombre d'appels |
+| — | Plafond de l'agent système trop serré | **Corrigé** | Était : une question perdue par épuisement du plafond, sans erreur levée. Devenu 36/36, pour le même nombre d'appels |
 | — | Période lue sur la première colonne de date venue | **Corrigé** | La source désigne sa colonne de référence ; une désignation fausse se dit au lieu de retomber en silence |
-| — | Code d'analyse non persisté, reprise impossible au-delà d'un tour | **Corrigé** | Était : « mets les barres en bleu » deux tours plus tard fabriquait une figure neuve présentée comme une reprise. Devenu un magasin d'artefacts nommés — rejeu réussi au tour +2 et au tour +5 sur les deux moteurs, pour +472 tokens de prompt à sept artefacts |
-| — | Un artefact désigné et jamais produit ne se disait pas | **Corrigé** | Était : 0/2 moteurs sur « remontre-moi le camembert que tu avais fait ». L'absence est avouée en tête de réponse, et le tour continue |
+| — | Code d'analyse non persisté, reprise impossible au-delà d'un tour | **Corrigé** | Était : « mets les barres en bleu » deux tours plus tard fabriquait une figure neuve présentée comme une reprise. Devenu un magasin d'artefacts nommés — rejeu réussi au tour +2 et au tour +5, pour +472 tokens de prompt à sept artefacts |
+| — | Un artefact désigné et jamais produit ne se disait pas | **Corrigé** | Était : une figure neuve rendue en silence sur « remontre-moi le camembert que tu avais fait ». L'absence est avouée en tête de réponse, et le tour continue |
 | — | Correspondance déclarée jamais relue contre la source | **Corrigé** | Était : une colonne déclarée inexistante était silencieusement réparée par l'agent SQL (4 tirages sur 4), ou rendait une erreur qui accusait les données. Refusée avant la requête, 2 appels au lieu de 5 |
 | P1 | Migration des conversations réelles jamais exécutée | Ouvert | Les fils existants restent hors de l'arborescence par utilisateur |
 | P1 | Aucun fichier `LICENSE` | Ouvert | L'annonce MIT du README est sans portée |

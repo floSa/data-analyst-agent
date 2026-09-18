@@ -13,7 +13,8 @@ diagrammes de séquence établis sur une trace relevée : [parcours-de-l-agent.m
   de routage est du code, pas du prompt.
 - **Un seul LLM mutualisé** pour tous les rôles langage : planification, SQL, code
   d'analyse, synthèse. Il est joint par un endpoint OpenAI-compatible et n'est pas
-  nommé dans le code (§4.3) ; le service en place sert `gemma4:e4b`. Les modèles ML
+  nommé dans le code (§4.3) ; le service en place sert
+  `google/gemma-4-E4B-it-qat-w4a16-ct`. Les modèles ML
   métier (predict) sont des artefacts scikit-learn séparés — aucun LLM dans le calcul.
 - **Les prompts système vivent hors du code**, dans `prompts/*.txt` : ce dépôt est un
   socle, et le prompt est le premier endroit qu'on ajuste par cas d'usage (§4.9).
@@ -47,7 +48,7 @@ flowchart TB
     end
 
     subgraph infra["Infrastructure locale"]
-        OLLAMA["Ollama<br/>gemma4:e4b"]
+        MOTEUR["vLLM :8100<br/>gemma-4-E4B-it-qat-w4a16-ct"]
         SBX["Sandbox Docker<br/>kernel Jupyter · réseau coupé"]
         PG[("Postgres<br/>multi-tables")]
         FILES[("Fichiers<br/>CSV / Excel via DuckDB")]
@@ -57,7 +58,7 @@ flowchart TB
 
     UI -->|JSON| API --> ORCH
     ORCH --> RET & ANA & INF & SYS & RAP
-    ORCH -.->|prompts| LLM -.-> OLLAMA
+    ORCH -.->|prompts| LLM -.-> MOTEUR
     RET --> PG & FILES
     ANA -->|code Python| SBX
     INF --> REG
@@ -331,11 +332,11 @@ déploiement changeait de catalogue.
 ### 4.3 `llm.py` + `config.py` — LLM mutualisé et réglages
 
 `build_model()` fabrique l'unique modèle PydanticAI, pointé sur un endpoint
-**OpenAI-compatible**, température 0 par défaut. Le moteur n'est pas nommé :
-`/v1/chat/completions` est servi aussi bien par Ollama (en service) que par vLLM
-(la cible, [VLLM.md](VLLM.md)) — passer de l'un à l'autre ne change que
-`DAA_LLM_BASE_URL`. Le client HTTP est construit explicitement pour porter la
-clé d'API (`DAA_LLM_API_KEY`, exigée par un vLLM lancé avec `--api-key`), le
+**OpenAI-compatible**, température 0 par défaut. Le serveur n'est pas nommé
+dans le code : il expose `/v1/chat/completions` (vLLM, [MOTEUR.md](MOTEUR.md)),
+et en désigner un autre ne change que `DAA_LLM_BASE_URL`. Le client HTTP est
+construit explicitement pour porter la clé d'API (`DAA_LLM_API_KEY`, exigée par
+un serveur lancé avec `--api-key`), le
 délai et le nombre de réessais : laissés aux défauts du SDK OpenAI (600 s,
 2 réessais), un appel bloqué retenait un thread ~30 min. `Settings`
 (pydantic-settings) centralise tous les réglages, surchargeables par variables
@@ -412,9 +413,9 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   calculer un agrégat, et *décrire une table sans la lire ligne à ligne* — compter
   les trous, les distincts, les extrêmes de **chaque** colonne. La troisième
   manquait, et une question qui y tombait partait soit en `SELECT *` (179 lignes
-  rendues au lieu d'une liste de colonnes, sous vLLM), soit en une requête **par
-  colonne** — six requêtes dont quatre en erreur, dix allers-retours, 73,4 s et le
-  plafond épuisé sous Ollama, puis une réponse tirée du schéma au lieu de la mesure.
+  rendues au lieu d'une liste de colonnes), soit en une requête **par colonne** —
+  six requêtes dont quatre en erreur, dix allers-retours, 73,4 s et le plafond
+  épuisé, puis une réponse tirée du schéma au lieu de la mesure.
   La consigne est donc *UNE requête, UNE ligne, TOUTES les colonnes*, avec le rappel
   que le schéma dit ce qui est **possible** quand seule la mesure dit ce qui **est**.
 
@@ -442,11 +443,11 @@ agrégat calculé dessus étant faux sans en avoir l'air. Les figures reviennent
   `champ_inconnu` — plus la question de relance en français. **Pas de predict tant
   que ça ne valide pas.** Deux passes précèdent le schéma : `align_keys()` rapproche
   les noms, et `coerce_values()` convertit les valeurs **textuelles** vers le type
-  attendu. Cette seconde passe répare un écart entre moteurs : sur la même question,
-  Ollama rend `pclass=1` et vLLM `pclass='1'`, et la prédiction aboutissait chez
-  l'un, était refusée chez l'autre. La cause n'est pas que vLLM rendrait ses
-  arguments en chaînes — sur un tool dont le JSON Schema **déclare** un type, les
-  deux serveurs s'accordent (mesuré, [VLLM.md](VLLM.md) §8.4) ; c'est que
+  attendu. Cette seconde passe répare un écart réel : le serveur rend
+  `pclass='1'` là où le schéma attend `pclass=1`, et une extraction pourtant juste
+  était refusée. La cause n'est pas que le serveur rendrait ses arguments en
+  chaînes — sur un tool dont le JSON Schema **déclare** un type, il rend ce type
+  (mesuré, [MOTEUR.md](MOTEUR.md) §8.4) ; c'est que
   `Plan.features` est un `dict[str, Any]`, soit `additionalProperties: true`, **le
   seul argument d'outil du système qui arrive sans type annoncé**. Pydantic rattrape
   déjà `int`/`float` en mode souple, mais pas un `Literal[1, 2, 3]`, qui compare des
@@ -666,28 +667,25 @@ repart au planificateur au lieu d'échouer, parce que ce nœud est en tête de *
 tour et qu'un planificateur qui aurait su répondre ne doit pas être privé de la
 question.
 
-**Le plafond, lui, vaut 6, et c'est mesuré.** Il valait 4, et 4 était serré : une
-question sur trente-six — « sur quoi je peux travailler ? » — l'épuisait **sous
-Ollama** et retombait dans le repli du planificateur, alors qu'elle passait sous
-vLLM. Ce n'était pas une boucle : la question ouvre sur tous les sujets à la fois,
-et les deux moteurs y répondent différemment — vLLM ouvre **un** outil, Ollama en
-ouvre **cinq** (capacités, sources, deux fois le schéma, modèles), soit six
-allers-retours avec la formulation. Sondée seule à 6, 8 et 12, elle coûte 6 à
-chaque fois : le chemin converge, il ne s'emballe pas.
+**Le plafond, lui, vaut 6, et c'est mesuré.** Ce qu'il borne, c'est une question
+sur trente-six — « sur quoi je peux travailler ? » — qui ouvre sur tous les sujets
+à la fois : elle peut demander capacités, sources, schéma et modèles avant de
+formuler. Sondée seule à 6, 8 et 12, elle coûte 6 à chaque fois : le chemin
+converge, il ne s'emballe pas.
 
-| Plafond | vLLM — méta | appels LLM | Ollama — méta | appels LLM |
-|---|---|---|---|---|
-| 4 | 36/36 | 78 | **35/36** | 83 |
-| 5 | 36/36 | 78 | **35/36** | 84 |
-| **6** | **36/36** | **78** | **36/36** | **83** |
+| Plafond | Questions méta | Appels LLM |
+|---|---|---|
+| 4 | 36/36 | 78 |
+| 5 | 36/36 | 78 |
+| **6** | **36/36** | **78** |
 
-Batterie complète des 36 questions méta, témoins à 4/4 et 17 appels dans les six
-exécutions. 6 est la plus basse valeur qui rend 36/36 sur les **deux** moteurs, et
-elle est **gratuite** : même total qu'à 4 sur les deux moteurs, et pas une seule
+Batterie complète des 36 questions méta, témoins à 4/4 et 17 appels dans les trois
+exécutions. **La marge est gratuite** : même total à 4, 5 et 6, et pas une seule
 question dont le coût bouge. Un plafond n'est pas un budget dépensé, c'est un budget
-disponible — seule la question qui en a besoin le touche. L'atteindre coûtait
-d'ailleurs *plus* cher que de réussir : l'échec ajoute le tour du planificateur et
-celui de la synthèse, d'où les 84 appels du plafond 5. Ce qu'un **outil** rate — une source injoignable, un catalogue illisible —
+disponible — seule la question qui en a besoin le touche. L'atteindre coûte
+d'ailleurs *plus* cher que de réussir, puisque l'échec ajoute le tour du
+planificateur et celui de la synthèse : c'est ce qui justifie de garder de la marge
+au-dessus du pire cas observé plutôt que de coller à lui. Ce qu'un **outil** rate — une source injoignable, un catalogue illisible —
 n'est pas rattrapé : c'est un vrai défaut de configuration, il remonte au garde-fou
 et il est dit.
 
@@ -1086,10 +1084,9 @@ devenus trop nombreux pour un tableau plat — celui-ci en avait ignoré seize
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `DAA_LLM_BASE_URL` | `http://localhost:11434/v1` | endpoint OpenAI-compatible du serveur LLM (Ollama ou vLLM) |
-| `DAA_OLLAMA_BASE_URL` | — | **déprécié** : ancien nom du précédent, encore honoré (avertissement au démarrage) |
-| `DAA_LLM_API_KEY` | *(vide)* | clé envoyée en `Authorization` ; exigée par un vLLM lancé avec `--api-key` |
-| `DAA_LLM_MODEL` | `gemma4:e4b` | le modèle mutualisé, tel que le sert le central |
+| `DAA_LLM_BASE_URL` | `http://localhost:8100/v1` | endpoint OpenAI-compatible du serveur LLM |
+| `DAA_LLM_API_KEY` | *(vide)* | clé envoyée en `Authorization` ; exigée par un serveur lancé avec `--api-key` |
+| `DAA_LLM_MODEL` | `google/gemma-4-E4B-it-qat-w4a16-ct` | le modèle mutualisé, tel que le sert le central |
 | `DAA_LLM_TEMPERATURE` | `0.0` | déterminisme des générations |
 | `DAA_LLM_TIMEOUT` | `120.0` s | délai d'un appel LLM |
 | `DAA_LLM_MAX_RETRIES` | `2` | réessais du SDK sur le transitoire (429, 5xx, coupure) |

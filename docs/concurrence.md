@@ -3,13 +3,13 @@
 Mesures du 2026-09-15, machine de développement (NVIDIA L4 23 034 Mio, 22 cœurs,
 86 Gio), contre le service en marche : vLLM `0.28.0` sur le port 8100
 (`google/gemma-4-E4B-it-qat-w4a16-ct`, `--max-model-len 32768`,
-`--gpu-memory-utilization 0.55`) et Ollama `gemma4:e4b` sur le port 11434.
+`--gpu-memory-utilization 0.55`).
 Banc : [`scripts/mesure_concurrence.py`](../scripts/mesure_concurrence.py).
 
 Le produit est multi-utilisateurs depuis les chantiers C4 et C5 — comptes
-argon2id, sessions côté serveur, cloisonnement par dossier — et la bascule sur
-vLLM a été décidée POUR le parallélisme, contre un Ollama qui sert une requête à
-la fois. **Aucune de ces deux choses n'avait été mesurée sous charge.** Les
+argon2id, sessions côté serveur, cloisonnement par dossier — et vLLM a été
+choisi POUR le parallélisme, parce qu'il sert plusieurs requêtes de front.
+**Aucune de ces deux choses n'avait été mesurée sous charge.** Les
 vingt-huit chantiers précédents ont mesuré séquentiellement : une question, une
 réponse, un utilisateur.
 
@@ -26,7 +26,7 @@ est **déduit**, et donne pour chaque affirmation le chiffre qui la porte.
 | **4** | **le défaut que la charge a révélé** : un client HTTP partagé entre boucles d'événements, invisible en séquentiel |
 | 5 | le cloisonnement sous charge : le protocole, et ce qu'il prouve |
 | 6 | les erreurs par nature, et le palier où chacune apparaît |
-| 7 | vLLM contre Ollama : ce que la bascule a réellement apporté |
+| 7 | ce que le parallélisme du moteur apporte, sur le produit et sur le moteur seul |
 | 8 | ce qui n'a pas été mesuré, et ce qu'il faudrait pour le faire |
 
 ---
@@ -56,8 +56,8 @@ sans interprétation à faire.
 ### 1.2 Ce que le banc ne fait pas
 
 Il **n'alloue rien sur la carte**. Il envoie des requêtes HTTP à une instance
-d'uvicorn qu'il lance lui-même, laquelle parle au moteur déjà en service. Ni
-vLLM ni Ollama ne sont relancés, et aucun de leurs réglages n'est touché.
+d'uvicorn qu'il lance lui-même, laquelle parle au moteur déjà en service. Le
+serveur vLLM n'est pas relancé, et aucun de ses réglages n'est touché.
 
 Tout l'état du banc — comptes, sessions, conversations, catalogue — vit sous un
 terrain jetable supprimé en sortie. **Les comptes de test n'existent que là**, et
@@ -98,8 +98,7 @@ uv run python scripts/mesure_concurrence.py --epreuve postgres \
 uv run python scripts/mesure_concurrence.py --epreuve moteurs \
     --paliers-moteurs 1,2,4,8 --tokens-moteurs 200 \
     --llm-base-url http://localhost:8100/v1 \
-    --llm-model google/gemma-4-E4B-it-qat-w4a16-ct \
-    --moteur-b http://localhost:11434/v1 --modele-b gemma4:e4b
+    --llm-model google/gemma-4-E4B-it-qat-w4a16-ct
 ```
 
 Le moteur est **mutualisé** avec d'autres projets de la machine. Le banc relève
@@ -164,8 +163,7 @@ ne plafonnent à seize** — le plafond des deux autres capacités est ailleurs.
 Deux campagnes complètes ont été menées après la correction du §4, à quelques
 dizaines de minutes d'intervalle, avec le même banc et les mêmes paliers. La
 seconde — celle du tableau ci-dessus — a tourné pendant qu'un autre projet de la
-machine sollicitait Ollama sur la même carte ; la première avait la carte pour
-elle.
+machine sollicitait la même carte ; la première avait la carte pour elle.
 
 | capacité | N | 1re campagne | 2e campagne (le tableau) |
 |---|---|---|---|
@@ -531,33 +529,35 @@ avaient dépassé cinq minutes en réessais.
 
 ---
 
-## 7. vLLM contre Ollama : ce que la bascule a apporté
+## 7. Ce que le parallélisme du moteur apporte, mesuré
 
-C'était l'argument central de la migration ([VLLM.md](VLLM.md)) : Ollama sert
-une requête à la fois (`OLLAMA_NUM_PARALLEL=1`, et le runner est bien lancé avec
-`-np 1`). Personne ne l'avait chiffré sur le produit.
+Le parallélisme est la raison d'avoir choisi ce serveur ([MOTEUR.md](MOTEUR.md)).
+Personne ne l'avait chiffré sur le produit : les tableaux ci-dessous le font.
 
 ### 7.1 Sur le produit, à code identique
 
-Seule l'URL du moteur change — c'est tout ce que la bascule touche
-([`llm.py`](../src/data_analyst_agent/llm.py) ne nomme aucun moteur). Même
-question, même banc, deux tours par utilisateur, un tour de chauffe jeté :
+Même question, même banc, deux tours par utilisateur, un tour de chauffe jeté.
+L'application ne nomme aucun moteur ([`llm.py`](../src/data_analyst_agent/llm.py)) :
+seule l'URL désigne le serveur, et rien d'autre ne change entre les paliers.
 
-| N utilisateurs | vLLM p50 | vLLM débit | Ollama p50 | Ollama débit | rapport de débit |
-|---|---|---|---|---|---|
-| 1 | 4,3 s | 13,1 req/min | 85,2 s | 0,6 req/min | **×22** |
-| 4 | 3,9 s | 42,6 req/min | 58,3 s | 3,4 req/min | **×12,5** |
+| N utilisateurs | p50 | débit |
+|---|---|---|
+| 1 | 4,3 s | 13,1 req/min |
+| 4 | 3,9 s | 42,6 req/min |
 
-Quatre analystes qui travaillent ensemble obtiennent **42,6 réponses par minute
-sur vLLM contre 3,4 sur Ollama**. Une question qui revient en quatre secondes
-revient en une minute.
+**Quatre analystes qui travaillent ensemble obtiennent 42,6 réponses par minute,
+et leur p50 ne se dégrade pas** — 3,9 s à quatre contre 4,3 s tout seul. Le
+débit est multiplié par 3,25 pour un quadruplement des demandeurs : c'est ce
+qu'on attend d'un serveur qui traite les requêtes de front plutôt qu'en file.
+Une mise en file, elle, aurait rendu le p50 à quatre utilisateurs quatre fois
+plus grand.
 
-La ventilation par nœud dit où va la différence — partout, et proportionnellement :
+La ventilation par nœud dit que le gain est réparti, et non concentré sur un
+nœud rapide qui masquerait le reste :
 
-| moteur | N | `plan` | `rappel` | `retrieval` | `system` |
-|---|---|---|---|---|---|
-| vLLM | 4 | 1,2 s | 0,7 s | 2,4 s | 0,2 s |
-| Ollama | 4 | 14,7 s | 20,1 s | 21,7 s | 16,7 s |
+| N | `plan` | `rappel` | `retrieval` | `system` |
+|---|---|---|---|---|
+| 4 | 1,2 s | 0,7 s | 2,4 s | 0,2 s |
 
 ### 7.2 Sur le moteur seul
 
@@ -565,26 +565,24 @@ K requêtes simultanées de **prompts distincts** — un prompt répété serait
 par le cache de préfixe et gonflerait le parallélisme apparent — 200 jetons
 chacune, un tir de chauffe jeté :
 
-| K simultanées | vLLM : temps total | vLLM : débit | Ollama : temps total | Ollama : débit |
-|---|---|---|---|---|
-| 1 | 3,8 s | 0,26 req/s | 17,7 s | 0,06 req/s |
-| 2 | 3,4 s | 0,59 req/s | 24,8 s | 0,08 req/s |
-| 4 | 5,2 s | 0,78 req/s | 27,4 s | 0,15 req/s |
-| 8 | **5,6 s** | **1,44 req/s** | **43,0 s** | **0,19 req/s** |
+| K simultanées | temps total | débit |
+|---|---|---|
+| 1 | 3,8 s | 0,26 req/s |
+| 2 | 3,4 s | 0,59 req/s |
+| 4 | 5,2 s | 0,78 req/s |
+| 8 | **5,6 s** | **1,44 req/s** |
 
 Huit requêtes rendues en 5,6 s là où une seule en prend 3,8 : **+47 % de temps
-pour huit fois le travail**. Ollama met 43,0 s pour les mêmes huit, contre 17,7 s
-pour une seule — **×2,4**. Le débit de vLLM est multiplié par 5,5 entre K=1 et
-K=8 ; celui d'Ollama par 3,2.
+pour huit fois le travail**, et un débit multiplié par 5,5 entre K=1 et K=8.
+C'est le *continuous batching* qu'on voit ici, et c'est la propriété sur
+laquelle repose le dimensionnement du §2.
 
-**Ce que cette comparaison ne prouve pas.** Les deux moteurs ne servent pas le
-même artefact — `gemma4:e4b` en Q4\_K\_M via llama.cpp d'un côté, une version
-quantifiée w4a16 de l'autre. Une part de l'écart par requête tient au runtime et
-à la quantification, pas au parallélisme. Et la latence d'une requête isolée sur
-Ollama est instable sur cette machine : elle a été mesurée **plus lente à N=1
-qu'à N=4**, deux fois, ce qui n'a pas de sens sous une simple mise en file.
-Le rapport par requête est donc à lire comme un ordre de grandeur. Le rapport de
-**débit à plusieurs utilisateurs**, lui, est net et c'est celui qui décide.
+**Ce que ces chiffres ne disent pas.** Ils valent pour ce modèle, cette
+quantification et cette carte. Un changement de `--max-model-len` déplace le
+nombre de requêtes que le cache KV tient
+([MOTEUR.md §7.6](MOTEUR.md#76-la-fenêtre-tenable-et-daa_context_model_window)),
+donc le palier où ce débit s'effondre — qui n'est pas atteint ici. À refaire
+après tout redimensionnement du serveur.
 
 ---
 

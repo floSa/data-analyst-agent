@@ -308,13 +308,13 @@ disparaissait d'un classement.
 sur `http://localhost:8100/v1`. Tout ce qui est chiffré ici a été joué contre
 lui, depuis un message utilisateur passé à l'orchestrateur complet,
 planificateur compris. L'avant et l'après d'un même défaut sont toujours du même
-côté : une comparaison qui enjamberait deux moteurs ne vaudrait rien.
+côté : une comparaison qui enjamberait deux serveurs ne vaudrait rien.
 
-> **Chiffres Ollama — trace historique, plus rejouée.** Une partie de ce
-> chantier a d'abord été mesurée contre Ollama (`gemma4:e4b`, port 11434). Ces
-> relevés sont datés du **15 septembre 2026** et conservés plus bas à titre de
-> trace : ils ne sont **plus rejoués**, ne servent d'oracle à rien, et aucun
-> chiffre courant ne s'y compare. Ils sont signalés là où ils apparaissent.
+> **Traces historiques, plus rejouées.** Une partie de ce chantier a d'abord été
+> mesurée contre l'ancien moteur. Ces relevés sont datés du **15 septembre 2026**
+> et conservés plus bas à titre de trace : ils ne sont **plus rejoués**, ne
+> servent d'oracle à rien, et aucun chiffre courant ne s'y compare. Ils sont
+> signalés là où ils apparaissent.
 
 ### 1. Le dictionnaire ne descendait pas jusqu'à l'agent de récupération
 
@@ -342,7 +342,7 @@ SQL à chaque fois :
 |---|---|---|---|
 | 5/5 | `WHERE statut = 'E' AND EXTRACT(YEAR FROM debut_session) = 2025` | **1 405** ✘ | 42 281 |
 
-*(Trace historique du 15 septembre 2026, plus rejouée : Ollama `gemma4:e4b`
+*(Trace historique du 15 septembre 2026, plus rejouée : l'ancien moteur
 reproduisait le même défaut, 5/5, avec le même `statut = 'E'`.)*
 
 #### Le correctif : le dictionnaire entre dans le prompt de l'agent SQL
@@ -457,9 +457,9 @@ couvrir les classements réparait Q4 et cassait Q3. Le modèle y cherchait la
 ligne qui ressemble le plus à sa question. « Une règle, une exception » ne se
 prête pas à cette lecture, et c'est elle qui tient.
 
-*(La première de ces trois régressions, Q1, avait été vue sur Ollama le
+*(La première de ces trois régressions, Q1, avait été vue sur l'ancien moteur le
 15 septembre 2026 ; les deux autres et toutes les vérifications d'après sont sur
-vLLM. Rien d'Ollama n'est rejoué ni comparé ici.)*
+le moteur en service. Rien d'historique n'est rejoué ni comparé ici.)*
 
 Après quoi les quatre questions qui se disputent cette colonne sont justes,
 trois tirages chacune sur vLLM :
@@ -516,9 +516,9 @@ tout ? ». Il reste intermittent côté utilisateur : une autre formulation pass
 plus pénible qu'une panne franche.
 
 *(Trace historique du 15 septembre 2026, plus rejouée : le même modèle servi par
-Ollama ne reproduisait PAS ce défaut — 0 fois sur 19 tirages, l'appel partant
-toujours avec `{}`. Le déclencheur tenait donc au gabarit d'appel d'outil du
-moteur et non au modèle. Ce constat n'est plus vérifié et ne sert plus de
+l'ancien moteur ne reproduisait PAS ce défaut — 0 fois sur 19 tirages, l'appel
+partant toujours avec `{}`. Le déclencheur tenait donc au gabarit d'appel
+d'outil et non au modèle. Ce constat n'est plus vérifié et ne sert plus de
 référence ; il reste noté parce qu'il a pesé dans l'arbitrage ci-dessous.)*
 
 #### Le déclencheur disparaît de lui-même — et c'est la raison de ne pas s'y fier

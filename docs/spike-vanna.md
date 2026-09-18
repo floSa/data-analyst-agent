@@ -7,9 +7,10 @@
 
 ## 1. Ce que le spike a réellement mesuré
 
-Date : 2026-07-09. LLM identique des deux côtés : `qwen3-coder:30b` via Ollama,
-température 0. Schéma identique aux tests : Titanic multi-tables (`passengers` +
-`classes`, clé étrangère). Vanna **0.7.9** + ChromaDB local + connecteur Ollama.
+Date : 2026-07-09. LLM identique des deux côtés : `qwen3-coder:30b` servi par
+l'ancien moteur, température 0. Schéma identique aux tests : Titanic
+multi-tables (`passengers` + `classes`, clé étrangère). Vanna **0.7.9** +
+ChromaDB local + le connecteur de ce moteur.
 Entraînement minimal : les 2 DDL + une phrase de documentation.
 
 | Question | SQL | Valeur | Verdict |
@@ -70,11 +71,11 @@ Dépôt archivé cloné et lu le 2026-09-08 (36 000 lignes Python, licence MIT).
 |---|---|
 | ChromaDB obligatoire, ~80 Mo d'embedding ONNX au 1ᵉʳ lancement | **Non.** `integrations/local/agent_memory/in_memory.py` calcule la similarité par Jaccard + `difflib`, sans aucun embedding ni base vectorielle. |
 | `chroma-hnswlib` à compiler en C++ sous Windows | **Non.** ChromaDB est un extra parmi neuf backends, tous optionnels. |
-| Connecteurs `vanna.chromadb` / `vanna.ollama` disparus | **Inexact.** Ils sont devenus `vanna.integrations.chromadb` et `vanna.integrations.ollama`, et `legacy/adapter.py` (463 lignes) existe précisément pour envelopper une instance 0.x. |
+| Connecteurs de premier niveau (`vanna.chromadb`, celui du moteur) disparus | **Inexact.** Ils sont passés sous `vanna.integrations.*`, et `legacy/adapter.py` (463 lignes) existe précisément pour envelopper une instance 0.x. |
 | Dépendances lourdes | **Non.** Le cœur ne demande que pydantic, pandas, httpx, SQLAlchemy, sqlparse, plotly, click, PyYAML. |
 
-À noter au passage : `vllm` est un extra déclaré du paquet. Notre cible de migration
-moteur y était supportée nativement.
+À noter au passage : `vllm` est un extra déclaré du paquet — notre moteur y est
+supporté nativement.
 
 ### 3.2 Griefs qui restent vrais
 
