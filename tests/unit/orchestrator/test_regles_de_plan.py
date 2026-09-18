@@ -122,6 +122,11 @@ def test_l_ordre_des_regles_est_explicite_et_verrouille():
     une capacité qui vient de la perdre) ; le chaînage sur le dernier tableau
     doit venir après le choix du modèle et la reprise des features (il se
     déclenche sur leur absence).
+
+    Une cinquième depuis : la lecture de « sans famille à bord » vient après le
+    choix du modèle — elle a besoin du dataset résolu pour savoir quel schéma
+    interroger — et avant le chaînage sur le dernier tableau, qui ne se
+    déclenche que sur des features vides.
     """
     assert [regle.__name__ for regle in Orchestrator._REGLES_DU_PLAN] == [
         "_regle_source_imposee",
@@ -131,6 +136,7 @@ def test_l_ordre_des_regles_est_explicite_et_verrouille():
         "_regle_normaliser_le_nom_de_source",
         "_regle_choisir_la_source",
         "_regle_choisir_le_modele",
+        "_regle_lire_labsence_daccompagnants",
         "_regle_chainer_sur_le_dernier_tableau",
     ]
 
@@ -555,3 +561,74 @@ def test_sans_tableau_memorise_le_chainage_ne_s_applique_pas(
     orchestrateur._regle_chainer_sur_le_dernier_tableau(plan, contexte(workspace=workspace))
 
     assert plan.capability == "predict"
+
+
+# --- 9. « sans famille à bord » : l'absence d'accompagnants ----------------------
+
+
+def test_sans_famille_a_bord_fixe_les_deux_compteurs(orchestrateur: Orchestrator):
+    """Le défaut, à l'endroit exact où il se jouait.
+
+    Le planificateur rend ce qu'il rendait en mesure — `parch` seul — et la
+    règle complète `sibsp`. Sans elle, la prédiction ressort `invalid` sur une
+    valeur que la phrase donnait.
+    """
+    plan = Plan(capability="predict", dataset="titanic", features={"parch": 0, "age": 28})
+
+    orchestrateur._regle_lire_labsence_daccompagnants(
+        plan,
+        contexte(
+            question=(
+                "prédis la survie d'une passagère de 1re classe de 28 ans, "
+                "tarif 80 livres, embarquée à Southampton, sans famille à bord"
+            )
+        ),
+    )
+
+    assert plan.features["sibsp"] == 0
+    assert plan.features["parch"] == 0
+
+
+def test_ce_que_l_utilisateur_a_donne_prime_sur_l_absence(orchestrateur: Orchestrator):
+    """La règle ne peut qu'AJOUTER. « Seule à bord avec ses deux enfants » est
+    contradictoire, et c'est la valeur explicite qui gagne — jamais la nôtre."""
+    plan = Plan(capability="predict", dataset="titanic", features={"parch": 2})
+
+    orchestrateur._regle_lire_labsence_daccompagnants(
+        plan, contexte(question="une passagère seule à bord avec ses deux enfants")
+    )
+
+    assert plan.features["parch"] == 2
+    assert plan.features["sibsp"] == 0
+
+
+def test_sans_la_construction_rien_n_est_ajoute(orchestrateur: Orchestrator):
+    plan = Plan(capability="predict", dataset="titanic", features={"age": 28})
+
+    orchestrateur._regle_lire_labsence_daccompagnants(
+        plan, contexte(question="prédis la survie d'une passagère de 28 ans")
+    )
+
+    assert "sibsp" not in plan.features
+    assert "parch" not in plan.features
+
+
+def test_un_dataset_sans_compteur_d_accompagnants_n_est_pas_touche(orchestrateur: Orchestrator):
+    """`iris` mesure des pétales : « sans famille » n'y met aucun zéro."""
+    plan = Plan(capability="predict", dataset="iris", features={})
+
+    orchestrateur._regle_lire_labsence_daccompagnants(
+        plan, contexte(question="une fleur sans famille à bord")
+    )
+
+    assert plan.features == {}
+
+
+def test_la_regle_ne_s_applique_qu_aux_capacites_de_prediction(orchestrateur: Orchestrator):
+    plan = Plan(capability="query", dataset="titanic", features={})
+
+    orchestrateur._regle_lire_labsence_daccompagnants(
+        plan, contexte(question="combien de passagers sans famille à bord ?")
+    )
+
+    assert plan.features == {}
