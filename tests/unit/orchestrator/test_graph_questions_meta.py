@@ -1373,3 +1373,59 @@ def test_aucune_fiche_d_outil_n_a_bouge_au_caractere_pres():
     empreintes = {nom: _empreinte(outil.description or "") for nom, outil in toolset.tools.items()}
 
     assert empreintes == EMPREINTES_DES_FICHES_D_OUTIL
+
+
+# --- le plancher du repli : ce que le schéma dit quand le planificateur renonce
+
+
+def test_le_repli_du_planificateur_sert_ce_que_le_schema_DIT_du_terme_nomme(
+    tmp_path: Path, registre: Registry
+):
+    """W3, mesuré 0/3 : « pourquoi class_id et pas directement la classe ? »
+
+    Le fil brut, trois tirages sur trois : `system → plan → synthesize`, l'agent
+    système n'appelle aucun outil, le planificateur ne sait pas classer la
+    demande, et l'utilisateur reçoit « Je n'ai pas bien compris ta demande »
+    suivi de l'inventaire des sources. `titanic` ne déclare AUCUN dictionnaire,
+    donc le plancher de C47 ne peut rien pour elle.
+
+    Le schéma, lui, en dit quelque chose — `class_id` est une clé étrangère vers
+    `classes` — et l'agent système sait déjà l'écrire : c'est ce que rend
+    ``schema_d_une_source``, vert sur la surface. Ce qui manquait n'était ni le
+    fait ni la phrase, c'était qu'on les serve au tour qui renonce.
+    """
+    csv = tmp_path / "passengers.csv"
+    csv.write_text("passenger_id,class_id\n1,3\n2,1\n", encoding="utf-8")
+    catalogue = Catalog(sources=[FileSource(name="titanic", path=csv)])
+    # l'agent système décline (par défaut), et le planificateur n'aboutit pas
+    llm = ScriptedLLM().script(PLANNER, [text("je ne sais pas")] * 4)
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "pourquoi class_id et pas directement la classe ?",
+        conversation_id="fil",
+        source_de_travail="titanic",
+    )
+
+    assert reponse.error is None
+    assert "Je n'ai pas bien compris" not in reponse.answer
+    assert "`class_id`" in reponse.answer
+    # une source sans dictionnaire n'en fait citer aucun : c'est le témoin
+    assert "dictionnaire" not in reponse.answer.lower()
+
+
+def test_un_repli_sans_terme_declare_reste_le_repli(tmp_path: Path, registre: Registry):
+    """Le plancher ne parle QUE là où l'installation déclare le terme nommé.
+
+    Sans cela il remplacerait une demande de précision par un tour d'horizon des
+    sources — c'est-à-dire par ce que le repli énumère déjà.
+    """
+    csv = tmp_path / "passengers.csv"
+    csv.write_text("passenger_id,class_id\n1,3\n", encoding="utf-8")
+    catalogue = Catalog(sources=[FileSource(name="titanic", path=csv)])
+    llm = ScriptedLLM().script(PLANNER, [text("je ne sais pas")] * 4)
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "fais-moi un truc sympa", conversation_id="fil", source_de_travail="titanic"
+    )
+
+    assert "Je n'ai pas bien compris" in reponse.answer

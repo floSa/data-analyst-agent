@@ -615,6 +615,70 @@ def test_sans_aucune_ontologie_on_le_dit():
     assert "aucune source" in introspection.decrire_le_schema("quelles tables ?", [])
 
 
+# --- une colonne des deux côtés d'une relation ---------------------------------
+
+
+def test_une_colonne_des_deux_cotes_se_dit_du_cote_qui_REFERENCE(ontologie_titanic):
+    """`class_id` est la clé primaire de `classes` ET la clé étrangère de `passengers`.
+
+    Les deux fiches sont vraies et ne disent pas la même chose : « c'est la clé
+    primaire de cette table » ferme la question, « elle référence
+    `classes(class_id)`, le sens de la valeur se lit là-bas » l'ouvre sur la
+    réponse. C'est ce dernier côté qui explique un choix de modélisation, et
+    c'est ce qu'on demande quand on demande pourquoi une colonne porte un
+    identifiant plutôt qu'un libellé.
+
+    L'ordre des tables du schéma décidait avant, et il met `classes` en premier.
+    """
+    reponse = introspection.decrire_le_schema("pourquoi class_id ?", [ontologie_titanic])
+
+    assert "Dans la table `passengers`" in reponse
+    assert "clé étrangère" in reponse
+    assert "le sens de la valeur se lit dans la table `classes`" in reponse
+
+
+# --- le plancher du repli : ce que le schéma dit quand on renonce --------------
+
+
+def test_le_schema_dit_quelque_chose_du_terme_que_le_message_nomme(ontologie_titanic):
+    """W3, mesuré 0/3 : « pourquoi class_id et pas directement la classe ? »
+
+    Sur `titanic`, qui ne déclare AUCUN dictionnaire : `system → plan →
+    synthesize`, et l'utilisateur recevait le repli du planificateur. Le schéma,
+    lui, déclare que `class_id` est une clé étrangère vers `classes` — le
+    plancher le sert.
+    """
+    dit = introspection.ce_que_le_schema_en_dit(
+        "pourquoi class_id et pas directement la classe ?", [ontologie_titanic], "titanic"
+    )
+
+    assert "`class_id`" in dit
+    assert "`classes`" in dit
+    # une source sans dictionnaire n'en fait citer aucun : c'est le témoin
+    assert "dictionnaire" not in dit.lower()
+
+
+def test_un_message_qui_ne_nomme_ni_colonne_ni_table_ne_declenche_pas_le_plancher(
+    ontologie_titanic,
+):
+    """Sans terme nommé, ``decrire_le_schema`` rend le tour d'horizon des sources.
+
+    C'est déjà, à peu de chose près, ce que le repli du planificateur énumère :
+    le servir à sa place ne dirait rien de plus à qui n'a pas été compris.
+    """
+    assert introspection.ce_que_le_schema_en_dit("fais-moi un truc", [ontologie_titanic]) == ""
+    assert introspection.ce_que_le_schema_en_dit("pourquoi class_id ?", []) == ""
+
+
+def test_le_plancher_rend_le_MEME_texte_que_l_outil_de_l_agent_systeme(ontologie_titanic):
+    """Deux textes pour la même fiche, ce seraient deux textes qui divergent."""
+    question = "que signifie la colonne class_id ?"
+
+    assert introspection.ce_que_le_schema_en_dit(
+        question, [ontologie_titanic], "titanic"
+    ) == introspection.decrire_le_schema(question, [ontologie_titanic], "titanic")
+
+
 # --- le dictionnaire : ce que le DDL ne dit pas --------------------------------
 
 

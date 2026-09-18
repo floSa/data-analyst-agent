@@ -82,6 +82,7 @@ from data_analyst_agent.orchestrator.rappel import (
 )
 from data_analyst_agent.orchestrator.systeme import (
     ResultatSysteme,
+    ontologies_visees,
     run_systeme,
     servir_la_reponse,
 )
@@ -1213,6 +1214,51 @@ class Orchestrator:
                 return question
         return None
 
+    def _ce_que_le_schema_en_dit(self, state: OrchestratorState) -> str:
+        """Le PLANCHER du repli : ce que le schéma dit du terme nommé — "" sinon.
+
+        C'est le pendant, pour les sources sans dictionnaire, du pied que C47 a
+        posé sur le chemin des données. Il ne s'agit pas de mieux classer la
+        demande : il s'agit de ne pas jeter un fait qu'on a sous la main au
+        moment précis où l'on renonce.
+
+        **Mesuré le 2026-09-18, trois tirages sur trois, 0/3.** « pourquoi
+        class_id et pas directement la classe ? », `titanic` liée au fil :
+        `system → plan → synthesize`, et l'utilisateur reçoit « Je n'ai pas bien
+        compris ta demande » suivi de l'inventaire des sources. `titanic` ne
+        déclare aucun dictionnaire, donc le plancher de C47 ne peut rien pour
+        elle — mais `class_id` est une clé étrangère vers `classes`, le schéma
+        le déclare, et l'agent système sait déjà l'écrire : ``sens-colonne`` est
+        verte sur la surface. Le défaut n'était pas le fait, c'était qu'il ne
+        soit pas saisi.
+
+        **Ni prompt, ni lexique.** Cinq formulations ont été écrites puis
+        retirées du prompt du planificateur sur ce projet, chacune au prix d'une
+        question de la surface ; les deux empreintes SHA-256 des prompts ne
+        bougent pas d'une ligne. Ce qui décide ici est le SCHÉMA lui-même :
+        le message nomme une colonne ou une table que l'installation déclare, ou
+        il n'en nomme pas.
+
+        **Et il ne parle QUE là où l'on se taisait.** Ce chemin est celui du
+        planificateur qui rend ``None`` — la demande n'a été classée ni en
+        `query`, ni en `analyze`, ni en `predict`. Un tour qui aboutit ne passe
+        jamais ici, et une question de calcul qui ressemble à une question de
+        sens reste donc traitée comme un calcul.
+
+        Le prix est une ouverture de source sur un tour qui, lui, n'en ouvrait
+        aucune. Il est payé sur un renoncement, c'est-à-dire sur le tour le
+        moins fréquent et le moins utile du graphe.
+        """
+        question = state["question"]
+        try:
+            ontologies = ontologies_visees(question, self._effective_catalog(state))
+        except Exception as exc:  # une source injoignable ne vaut pas un tour perdu
+            logger.warning("plancher du repli écarté : %s", exc)
+            return ""
+        return introspection.ce_que_le_schema_en_dit(
+            question, ontologies, state.get("source_in") or ""
+        )
+
     def _repli_du_planificateur(self, state: OrchestratorState) -> str:
         """Ce qu'on répond quand le planificateur n'a pas su classer la demande.
 
@@ -1337,7 +1383,7 @@ class Orchestrator:
         if plan is None:
             return self._clarify(
                 Plan(capability="query"),
-                self._repli_du_planificateur(state),
+                self._ce_que_le_schema_en_dit(state) or self._repli_du_planificateur(state),
                 start,
                 **mesures,
             )

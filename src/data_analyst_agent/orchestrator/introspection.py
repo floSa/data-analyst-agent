@@ -792,6 +792,50 @@ def ce_qu_en_dit_le_dictionnaire(question: str, dictionnaire: str | None, source
     return bloc_du_dictionnaire(source, "\n".join(lignes))
 
 
+def ce_que_le_schema_en_dit(
+    question: str, ontologies: list[Ontologie], source_de_travail: str = ""
+) -> str:
+    """La fiche de la COLONNE ou de la TABLE que ce message nomme — "" sinon.
+
+    Le pendant de ``ce_qu_en_dit_le_dictionnaire`` pour les sources qui n'en
+    déclarent aucun. Une question de sens n'a pas besoin d'un dictionnaire pour
+    recevoir une réponse : le SCHÉMA en dit déjà quelque chose, et sur une clé
+    étrangère il dit l'essentiel.
+
+    **Le défaut, mesuré le 2026-09-18, trois tirages sur trois.** « pourquoi
+    class_id et pas directement la classe ? », sur `titanic`, source de travail
+    liée : `system → plan → synthesize`, l'agent système n'appelle aucun outil,
+    le planificateur ne sait pas classer, et l'utilisateur reçoit « Je n'ai pas
+    bien compris ta demande » suivi de l'inventaire. Or `class_id` est une clé
+    étrangère vers `classes`, le schéma le déclare, et ``_decrire_la_colonne``
+    sait déjà l'écrire — c'est ce que sert l'outil ``schema_d_une_source``, vert
+    sur la surface. Ce qui manquait n'était ni le fait ni la phrase : c'était
+    qu'on les serve au tour qui renonce.
+
+    **Rien n'est reformulé, rien n'est ajouté.** Ce qui est rendu est le texte
+    de ``decrire_le_schema``, au caractère près — deux textes pour la même fiche
+    seraient deux textes qui divergent, et celui-là est mesuré.
+
+    **Et seulement une colonne ou une table.** Quand le message ne nomme ni
+    l'une ni l'autre, ``decrire_le_schema`` rend le tour d'horizon des sources :
+    c'est déjà, à peu de chose près, ce que le repli du planificateur énumère,
+    et le servir deux fois ne dirait rien de plus à qui n'a pas été compris.
+    """
+    cible = _cible(question, ontologies, source_de_travail)
+    if cible is None:
+        return ""
+    table_visee = _nomme_dans(question, cible.schema.table_names())
+    tables = (
+        [t for t in cible.schema.tables if t.name == table_visee]
+        if table_visee
+        else cible.schema.tables
+    )
+    colonne = _nomme_dans(question, _dedoublonne(c.name for t in tables for c in t.columns))
+    if not (colonne or table_visee):
+        return ""
+    return decrire_le_schema(question, ontologies, source_de_travail)
+
+
 @dataclass(frozen=True)
 class Ontologie:
     """Ce qu'une source dit d'elle-même, déjà lu par le nœud qui l'a ouverte."""
@@ -883,6 +927,27 @@ def _dedoublonne(noms) -> list[str]:
     return list(vus)
 
 
+def _porteuse(tables: list[TableInfo], colonne: str) -> TableInfo:
+    """Laquelle des tables qui portent cette colonne raconte ce qu'elle VEUT DIRE.
+
+    Celle où la colonne est une **clé étrangère**, quand il y en a une. Un même
+    nom vit des deux côtés d'une relation — `class_id` est la clé primaire de
+    `classes` et la clé étrangère de `passengers` — et les deux fiches ne disent
+    pas la même chose : « c'est la clé primaire de cette table » ferme la
+    question, « elle référence `classes(class_id)`, le sens de la valeur se lit
+    là-bas » l'ouvre sur la réponse. C'est le côté référençant qui explique le
+    choix de modélisation, et c'est ce qu'on demande quand on demande pourquoi
+    une colonne porte un identifiant plutôt qu'un libellé.
+
+    À défaut, la première qui la porte : c'est ce que faisait cette ligne avant,
+    et sur une colonne qui n'est d'aucune relation il n'y a rien à départager.
+    """
+    referencante = next(
+        (t for t in tables if any(fk.column == colonne for fk in t.foreign_keys)), None
+    )
+    return referencante or next(t for t in tables if any(c.name == colonne for c in t.columns))
+
+
 def decrire_le_schema(
     question: str,
     ontologies: list[Ontologie],
@@ -962,8 +1027,7 @@ def decrire_le_schema(
     colonne_visee = _nomme_dans(question, _dedoublonne(c.name for t in tables for c in t.columns))
 
     if colonne_visee:
-        porteuse = next(t for t in tables if any(c.name == colonne_visee for c in t.columns))
-        lignes = _decrire_la_colonne(porteuse, colonne_visee)
+        lignes = _decrire_la_colonne(_porteuse(tables, colonne_visee), colonne_visee)
         terme = colonne_visee
     elif table_visee:
         lignes = [f"La table `{table_visee}` de la source `{cible.source.name}` :", ""]

@@ -455,7 +455,10 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         return ctx.deps.retenir(
             "schema_d_une_source",
             introspection.decrire_le_schema(
-                precision, _ontologies(precision, ctx.deps), ctx.deps.source_de_travail, cible
+                precision,
+                ontologies_visees(precision, ctx.deps.catalogue_effectif),
+                ctx.deps.source_de_travail,
+                cible,
             ),
         )
 
@@ -555,15 +558,19 @@ def _le_tour_precedent_en_messages(echange: tuple[str, str] | None) -> list[Mode
     return messages
 
 
-def _ontologies(precision: str, deps: SystemeDeps) -> list[introspection.Ontologie]:
+def ontologies_visees(precision: str, catalogue: Catalog) -> list[introspection.Ontologie]:
     """Ce que les sources disent d'elles-mêmes — celle qui est visée, ou toutes.
 
     Quand ``precision`` désigne une source, une seule connexion est ouverte. Sinon
     on les ouvre toutes : « quelles colonnes dans la table passengers ? » ne
     nomme aucune source et n'est pourtant pas ambiguë, et le catalogue compte
     une poignée d'entrées par construction.
+
+    Publique parce que le NŒUD DU PLAN en a besoin aussi : son plancher sert ce
+    que le schéma dit du terme nommé quand il renonce à classer la demande
+    (``introspection.ce_que_le_schema_en_dit``). Deux copies de cette ouverture
+    seraient deux décors qui divergent.
     """
-    catalogue = deps.catalogue_effectif
     visee = introspection.source_visee(precision, catalogue)
     sources = [visee] if visee is not None else list(catalogue.sources)
     ontologies = []
