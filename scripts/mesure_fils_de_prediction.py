@@ -76,9 +76,29 @@ def _outils(releve: Releve) -> list[str]:
 
 
 def _un_rappel_a_servi(releve: Releve) -> bool:
-    """Un outil de rappel a été appelé ET le nœud a rendu quelque chose."""
+    """Le nœud de rappel a retrouvé l'artefact ET en a fait quelque chose.
+
+    Trois signatures, et la troisième est venue avec le calcul sur un tableau.
+    Les deux premières sont le NOM de l'outil, écrit dans la trace quand le nœud
+    sert lui-même — une lecture, un refus, une formulation. La troisième est le
+    REJEU : quand le code tourne, le tour est rendu comme une analyse, et le
+    détail du nœud devient « rejeu de resultat_1 — 1 essai(s), statut ok ». Le
+    nom de l'outil n'y est plus.
+
+    Lire les trois n'est pas desserrer l'oracle, c'est le recentrer sur ce qu'il
+    mesure : « le rappel reste ARMÉ et sert l'artefact ». Un rejeu en est une
+    preuve plus forte qu'un appel d'outil — il dit que l'artefact a été
+    retrouvé, ET qu'on s'en est servi jusqu'à l'exécution. Ne chercher que le
+    nom de l'outil mesurait la façon dont le nœud écrit sa trace, pas ce qu'il
+    a fait ; `a` et `f` sont tombés à 0/3 sur cette signature-là, sur des tours
+    qui aboutissaient.
+    """
     detail = _noeud(releve, "rappel")
-    return bool(detail) and ("lire_un_artefact" in detail or "rejouer_un_code" in detail)
+    return bool(detail) and (
+        "lire_un_artefact" in detail
+        or "rejouer_un_code" in detail
+        or detail.startswith("rejeu de")
+    )
 
 
 # La contradiction du défaut 3, telle qu'elle se lit dans la réponse SERVIE :
