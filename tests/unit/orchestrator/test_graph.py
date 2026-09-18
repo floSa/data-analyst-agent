@@ -263,7 +263,21 @@ def test_relance_puis_complement_multi_tours(registry: Registry):
 
 
 def test_pending_ignore_si_changement_de_sujet(mini_csv: Path, registry: Registry):
-    """L'utilisateur digresse : le contexte en attente n'est pas appliqué de force."""
+    """L'utilisateur digresse : le contexte en attente n'est pas appliqué de force.
+
+    Et il n'est pas SOLDÉ non plus, ce qui est le changement. Ce test exigeait
+    l'inverse — une digression effaçait la prédiction en attente — et c'était
+    l'autre moitié de la confiscation du fil : après « combien de commandes par
+    canal ? », plus rien n'attendait, et « une femme » ne complétait plus rien.
+    L'utilisateur devait retaper sa prédiction entière pour avoir posé une
+    question au milieu.
+
+    Ce que ce test protégeait vraiment — que la digression ne soit pas traitée
+    COMME un complément de la prédiction — est tenu par les deux assertions qui
+    précèdent : le plan est une requête, et la réponse est celle de la requête.
+    Un tour qui ne s'est pas prononcé sur la prédiction ne la défait pas
+    (``Orchestrator._pending_retenu``).
+    """
     from data_analyst_agent.orchestrator.graph import PendingInference
 
     llm = (
@@ -285,7 +299,10 @@ def test_pending_ignore_si_changement_de_sujet(mini_csv: Path, registry: Registr
     )
     assert answer.error is None
     assert answer.answer == "4 lignes."
-    assert answer.pending is None  # la digression solde le contexte
+    assert answer.plan is not None
+    assert answer.plan.capability == "query"
+    # la prédiction attend toujours : la digression ne l'a ni faite ni jetée
+    assert answer.pending == PendingInference(dataset="titanic", features={"sex": "female"})
 
 
 def test_fetch_then_predict_degrade_en_predict_sans_source(registry: Registry):
@@ -1636,3 +1653,150 @@ def test_logs_structures_par_noeud(registry: Registry, caplog):
     assert any("nœud plan : terminé" in m for m in messages)
     assert any("nœud inference : terminé" in m for m in messages)
     assert any("nœud synthesize : terminé" in m for m in messages)
+
+
+# --- la seconde lecture, sans la clause qu'on sait lire --------------------------
+
+
+def test_la_clause_d_absence_est_retiree_pour_une_seconde_lecture(registry: Registry):
+    """Le défaut mesuré : la clause fait PERDRE au modèle un attribut qu'il avait.
+
+    Première lecture, telle que le planificateur la rend sur ce moteur (mesuré
+    4 tirages sur 5) : `sibsp` est extrait, `age` est tombé. La clause est
+    retirée, la question reposée, `age` revient — et la prédiction aboutit au
+    lieu de réclamer une valeur que la phrase donnait.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            # la clause coûte `age` au modèle
+            plan_response(
+                Plan(
+                    capability="predict",
+                    dataset="titanic",
+                    features={
+                        "sex": "female",
+                        "pclass": 1,
+                        "fare": 80.0,
+                        "embarked": "S",
+                        "sibsp": 0,
+                    },
+                )
+            ),
+            # relu sans elle, il le rend
+            plan_response(
+                Plan(
+                    capability="predict",
+                    dataset="titanic",
+                    features={
+                        "sex": "female",
+                        "pclass": 1,
+                        "age": 28.0,
+                        "fare": 80.0,
+                        "embarked": "S",
+                    },
+                )
+            ),
+        ],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)
+
+    answer = orchestrator.ask(
+        "prédis la survie d'une passagère de 1re classe de 28 ans, "
+        "tarif 80 livres, embarquée à Southampton, sans famille à bord"
+    )
+
+    assert answer.error is None
+    assert "survécu" in answer.answer
+    assert answer.pending is None
+    # les deux lectures ont eu lieu, et la trace le dit
+    assert len(llm.prompts_for(PLANNER)) == 2
+    assert "sans famille à bord" not in llm.prompts_for(PLANNER)[1]
+    plan_trace = next(s for s in answer.trace if s.node == "plan")
+    assert "seconde lecture" in plan_trace.detail
+
+
+def test_une_premiere_lecture_complete_ne_paie_pas_de_seconde(registry: Registry):
+    """Le coût est borné au chemin qui, sans lui, ne rendait rien."""
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [plan_response(Plan(capability="predict", dataset="titanic", features=TITANIC_OK))],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)
+
+    answer = orchestrator.ask("prédis la survie de cette passagère, sans famille à bord")
+
+    assert answer.error is None
+    assert len(llm.prompts_for(PLANNER)) == 1
+
+
+def test_une_requete_qui_filtre_sur_l_absence_n_est_jamais_relue(
+    mini_csv: Path, registry: Registry
+):
+    """« Combien de passagers sans famille à bord ? » : la clause EST le filtre.
+
+    La première lecture voit le message entier, c'est elle qui décide de la
+    capacité, et une requête n'arrive jamais à la seconde.
+    """
+    llm = (
+        ScriptedLLM()
+        .script(PLANNER, [plan_response(Plan(capability="query", source="mini"))])
+        .script(
+            RETRIEVAL,
+            [tool_call("run_sql", {"query": "SELECT count(*) AS n FROM mini"}), text("4 lignes.")],
+        )
+    )
+    catalog = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+    orchestrator = orchestrator_with(llm, catalog=catalog, registry=registry)
+
+    answer = orchestrator.ask("combien de passagers sans famille à bord ?")
+
+    assert answer.error is None
+    assert len(llm.prompts_for(PLANNER)) == 1
+
+
+def test_une_seconde_lecture_qui_change_d_avis_ne_compte_pas(registry: Registry):
+    """La relecture ne peut qu'AJOUTER — jamais faire dérailler le tour.
+
+    Si elle ne rend plus une prédiction, on garde la première lecture et sa
+    relance : c'est elle qui a vu la phrase entière.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(
+                Plan(capability="predict", dataset="titanic", features={"sex": "female"})
+            ),
+            plan_response(Plan(capability="query", source="mini")),
+        ],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)
+
+    answer = orchestrator.ask(
+        "prédis la survie d'une passagère, sans famille à bord",
+    )
+
+    assert answer.error is None
+    # la relance de la PREMIÈRE lecture, complétée des deux compteurs
+    assert answer.pending is not None
+    assert answer.pending.features["sibsp"] == 0
+    assert answer.pending.features["parch"] == 0
+    plan_trace = next(s for s in answer.trace if s.node == "plan")
+    assert "seconde lecture" not in plan_trace.detail
+
+
+def test_une_clause_non_isolable_ne_declenche_pas_de_seconde_lecture(registry: Registry):
+    """« Qui voyageait seule » est enchâssé : on ne réécrit pas la phrase."""
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [plan_response(Plan(capability="predict", dataset="titanic", features={"sex": "female"}))],
+    )
+    orchestrator = orchestrator_with(llm, registry=registry)
+
+    answer = orchestrator.ask("prédis la survie d'une passagère de 28 ans qui voyageait seule")
+
+    assert answer.error is None
+    assert len(llm.prompts_for(PLANNER)) == 1
+    # les compteurs sont tout de même lus : c'est l'autre moitié de la réparation
+    assert answer.pending is not None
+    assert answer.pending.features["sibsp"] == 0

@@ -27,6 +27,11 @@ from pydantic_ai.models import Model
 
 from data_analyst_agent import prompts
 from data_analyst_agent.agents.analysis.agent import AnalysisResult, SandboxLike, run_analysis
+from data_analyst_agent.agents.inference.accompagnants import (
+    absence_daccompagnants,
+    champs_daccompagnants,
+    sans_la_clause_dabsence,
+)
 from data_analyst_agent.agents.inference.correspondance import (
     Correspondance,
     CorrespondanceIndisponible,
@@ -403,7 +408,7 @@ class Orchestrator:
             plan=state.get("plan"),
             error=state.get("error"),
             trace=state.get("trace", []),
-            pending=state.get("pending_out"),
+            pending=self._pending_retenu(state, pending),
             source_de_travail=self._source_retenue(state, source_de_travail),
         )
 
@@ -449,6 +454,37 @@ class Orchestrator:
         """
         retenue = state.get("source_out")
         return retenue if retenue is not None else entree
+
+    @staticmethod
+    def _pending_retenu(
+        state: OrchestratorState, entree: PendingInference | None
+    ) -> PendingInference | None:
+        """Ce que la conversation garde de ce tour à propos de sa prédiction.
+
+        Même règle que pour la source, et pour la même raison : **un tour qui ne
+        s'est pas prononcé ne défait rien**. Un rappel d'artefact, une question
+        de données sans rapport, une clarification, un nœud en échec — aucun de
+        ces tours n'a touché à la prédiction, et aucun ne doit donc l'effacer.
+
+        Sans cette ligne, borner le court-circuit du rappel ne faisait que
+        déplacer la confiscation : le tableau redevenait atteignable, et c'est
+        la prédiction qui se perdait en silence — on ne pouvait plus la
+        compléter par « une femme », puisque plus rien n'attendait. Mesuré par
+        le test qui suit cette méthode dans l'ordre de lecture, et sur les fils
+        `a` et `c` de `scripts/mesure_fils_de_prediction.py`.
+
+        Un tour qui S'EST prononcé, lui, tranche : une prédiction relancée
+        renseigne ``pending_out`` (l'acquis, fusionné), une prédiction aboutie
+        ne le renseigne pas — et son absence vaut alors effacement, parce qu'il
+        n'y a plus rien à attendre. C'est ce que dit ``a_touche_la_prediction``.
+        """
+        retenu = state.get("pending_out")
+        if retenu is not None:
+            return retenu
+        a_touche_la_prediction = (
+            state.get("inference") is not None or state.get("batch") is not None
+        )
+        return None if a_touche_la_prediction else entree
 
     @staticmethod
     def _with_context_notices(answer: str, trace: list[TraceStep]) -> str:
@@ -1105,6 +1141,42 @@ class Orchestrator:
             plan.data_question = plan.data_question or f"toutes les lignes de {latest.name}"
         return None
 
+    def _regle_lire_labsence_daccompagnants(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """« Sans famille à bord » fixe TOUS les compteurs d'accompagnants, pas un seul.
+
+        Le défaut, mesuré 3 tirages sur 3 sur la phrase d'origine : le
+        planificateur rend `parch=0` et omet `sibsp`. Il a bien lu l'absence de
+        famille — il l'a portée sur un des deux compteurs. La prédiction
+        ressortait `invalid` sur « sibsp : valeur manquante », et le tour
+        suivant n'ayant plus la phrase sous la main, aucune réponse ne pouvait
+        en sortir : le fil était fermé (fils `d` et `g` de
+        `scripts/mesure_fils_de_prediction.py`).
+
+        La cause est l'EXTRACTION, et elle seule : la fusion de l'acquis fait
+        son travail, les fils témoins `b` et `e` le montrent 3 tirages sur 3.
+        C'est pourquoi on ne répare ni dans le prompt ni dans la fusion, mais
+        ici, avec deux moitiés qui se déclarent : le schéma dit quels champs
+        comptent des accompagnants, le message dit qu'il n'y en a aucun (cf.
+        `agents/inference/accompagnants`).
+
+        **Ce que l'utilisateur a donné prime toujours** : un champ déjà présent
+        dans `features` n'est pas touché. La règle ne peut donc qu'AJOUTER une
+        valeur que la phrase portait, jamais en écraser une.
+
+        Après ``_regle_choisir_le_modele``, qui résout le dataset : sans lui, on
+        ne saurait pas quel schéma interroger. Avant
+        ``_regle_chainer_sur_le_dernier_tableau``, qui ne se déclenche que sur
+        des features VIDES — l'ordre inverse ferait chaîner sur un tableau une
+        prédiction dont la phrase donnait déjà deux valeurs.
+        """
+        if plan.capability not in self._PREDICT_CAPABILITIES or plan.dataset not in SCHEMAS:
+            return None
+        if not absence_daccompagnants(ctx.question):
+            return None
+        for champ in champs_daccompagnants(get_schema(plan.dataset)):
+            plan.features.setdefault(champ, 0)
+        return None
+
     # L'ORDRE EST SIGNIFICATIF. Il l'a toujours été — il était simplement
     # implicite, réparti sur cent cinquante lignes d'un seul bloc où rien ne
     # distinguait une règle de la suivante ni ne disait pourquoi celle-ci
@@ -1119,6 +1191,7 @@ class Orchestrator:
         _regle_normaliser_le_nom_de_source,
         _regle_choisir_la_source,
         _regle_choisir_le_modele,
+        _regle_lire_labsence_daccompagnants,
         _regle_chainer_sur_le_dernier_tableau,
     )
 
@@ -1273,16 +1346,87 @@ class Orchestrator:
             source_de_travail=state.get("source_in"),
         )
         question = self._appliquer_les_regles(plan, ctx)
+        relue = self._relire_sans_la_clause_dabsence(plan, ctx, system_prompt, state, mesures)
+        if relue:
+            question = self._appliquer_les_regles(plan, ctx)
         retenue, avis = self._lier_la_source(plan, ctx)
         if question is not None:
             return self._clarify(plan, question, start, **mesures) | {"source_out": retenue}
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
+        if relue:
+            detail += f" — seconde lecture sans « {relue} »"
         return {
             "plan": plan,
             "source_out": retenue,
             "avis_de_source": avis,
             "trace": [self._step("plan", detail, start, **mesures)],
         }
+
+    def _relire_sans_la_clause_dabsence(
+        self,
+        plan: Plan,
+        ctx: PlanContext,
+        system_prompt: str,
+        state: OrchestratorState,
+        mesures: dict,
+    ) -> str:
+        """Repose la MÊME question sans la clause qu'on sait lire — une fois, et sous conditions.
+
+        **Ce que la clause coûte.** Mesuré sur le planificateur, 5 tirages par
+        variante, la même phrase à une clause près :
+
+            sans « sans famille à bord » -> ['age', 'embarked', 'fare', 'pclass', 'sex']   5/5
+            avec                         -> ['embarked', 'fare', 'pclass', 'sex', 'sibsp'] 4/5
+
+        La clause ne se contente pas de ne remplir qu'un des deux compteurs :
+        elle fait PERDRE `age`, que le modèle extrayait sans faillir. Le tour
+        ressort `invalid` de toute façon — sur `age` au lieu de `sibsp` — et le
+        fil se referme exactement comme avant. Remplir les deux compteurs
+        (``_regle_lire_labsence_daccompagnants``) ne suffit donc pas : il faut
+        aussi rendre au modèle l'attention que la clause lui prenait.
+
+        Or cette clause, on la lit sans lui. La lui laisser porter, c'est la
+        payer deux fois.
+
+        **Quatre conditions, et il les faut toutes** — c'est ce qui borne le
+        coût à un appel LLM sur un chemin qui, sans lui, ne rendait rien :
+
+        1. le plan est une prédiction sur un dataset dont on a le schéma ;
+        2. il lui manque encore des features — une prédiction complète n'a rien
+           à relire ;
+        3. le message porte la construction d'absence ;
+        4. cette construction s'isole proprement du reste (cf.
+           ``sans_la_clause_dabsence``) — sinon on réécrirait la phrase de
+           quelqu'un pour la lui reposer, et on ne fait pas ça.
+
+        **La première lecture voit le message ENTIER**, et c'est ce qui rend
+        cette seconde sûre : c'est elle qui a décidé de la capacité, sur tout ce
+        que la phrase disait. « Combien de passagers sans famille à bord ? » est
+        une requête, sa clause est son filtre, et elle n'arrive jamais ici.
+
+        **Ce que la seconde lecture peut faire : AJOUTER.** Les features de la
+        première priment — elle a vu la phrase entière. La relecture ne sert
+        qu'à récupérer ce que la clause avait fait tomber.
+
+        Rend la clause retirée, pour la trace ; ``""`` quand il n'y a pas eu de
+        seconde lecture.
+        """
+        if plan.capability != "predict" or plan.dataset not in SCHEMAS:
+            return ""
+        manquantes = set(get_schema(plan.dataset).model_fields) - set(plan.features)
+        if not manquantes:
+            return ""
+        clause = absence_daccompagnants(ctx.question)
+        if not clause:
+            return ""
+        allege = sans_la_clause_dabsence(ctx.question)
+        if allege == ctx.question:
+            return ""
+        second = self._demander_un_plan(system_prompt, {**state, "question": allege}, dict(mesures))
+        if second is None or second.capability != "predict":
+            return ""
+        plan.features = {**second.features, **plan.features}
+        return clause
 
     # -- le nœud système : « est-ce une question sur moi ? » -------------------
 
@@ -1515,10 +1659,35 @@ class Orchestrator:
         laisser passer donnerait à ce nœud l'occasion de s'emparer d'un message
         qui ne lui est pas adressé — c'est le défaut mesuré au §12 de
         `docs/surface-conversationnelle.md`, par une autre porte.
+
+        **Et ce retrait-là est BORNÉ**, parce que sans borne il confisquait le
+        fil. Mesuré, 3 tirages sur 3 (fil `a` de
+        `scripts/mesure_fils_de_prediction.py`) : un fil produit un tableau,
+        une prédiction y reste en attente d'une feature, et « reprends le
+        tableau précédent » ne trouve plus rien — ce nœud s'était retiré, le
+        planificateur partait en `query` sur un objet qu'il n'interroge pas, la
+        récupération ne rendait aucune ligne et l'utilisateur lisait « je n'ai
+        pas interrogé la source ». Le tableau était là, le fil l'avait produit,
+        et il était devenu inatteignable : il fallait ouvrir une conversation.
+
+        La borne n'est pas un lexique de plus, c'est celui que ce nœud emploie
+        DÉJÀ pour décider s'il doit avouer une absence :
+        ``designation_dun_artefact_passe``. Un message qui désigne un artefact
+        déjà produit — un marqueur d'antériorité ET une cible — ne complète pas
+        une prédiction : aucune feature d'aucun schéma n'est un tableau, une
+        figure ou un « précédent ». Le retrait vaut donc pour ce qui complète,
+        et pour cela seulement.
+
+        Le témoin qui dit que la borne n'a pas débordé est le fil `e` : une
+        prédiction en attente, « une femme », et elle aboutit toujours. Ce
+        message-là ne désigne rien et ne vise rien — le retrait le couvre
+        encore.
         """
-        if state.get("pending_in") is not None:
-            return "prédiction en attente de features"
-        return ""
+        if state.get("pending_in") is None:
+            return ""
+        if designation_dun_artefact_passe(state["question"]):
+            return ""
+        return "prédiction en attente de features"
 
     def _rejouer_un_code(
         self, state: OrchestratorState, artefact: WorkspaceArtifact, modification: str
