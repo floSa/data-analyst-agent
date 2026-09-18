@@ -692,6 +692,12 @@ Deux tours sont **exemptés**, parce que le message y répond à une question d�
 posée et n'est donc pas à interpréter : une prédiction en attente de features, et
 un choix de source (§12).
 
+L'exemption liée à la prédiction est **bornée** au nœud `rappel` : un message qui
+désigne un artefact déjà produit ne complète pas une prédiction, et ce nœud reste
+armé pour lui. Sans cette borne, une prédiction restée en attente rendait
+inatteignable un tableau que le fil avait pourtant produit
+(`docs/parcours-de-l-agent.md`).
+
 
 ## 11. Mesure du 2026-09-07, après le routage par le modèle
 

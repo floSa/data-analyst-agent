@@ -344,37 +344,46 @@ sequenceDiagram
     participant W as Registre de modeles (scikit-learn)
     participant Y as Noeud synthesize
 
-    U->>S: predis la survie d une passagere de 1re classe de 28 ans...
+    U->>S: predis la survie d une passagere... sans famille a bord...
     S->>M: question + fiches d outil
     M-->>S: AUCUN appel
     S->>R: passe au rappel
     R->>P: rien a rappeler, passe au planificateur
     P->>M: quelle capacite ?
     M-->>P: capability='predict', dataset='titanic', features={age, embarked, fare, parch, pclass, sex}
+    Note over P: regle deterministe : « sans famille a bord » est<br/>une valeur pour LES DEUX compteurs d accompagnants,<br/>et le schema dit lesquels -> sibsp=0
     P->>I: predict
     I->>W: valide les features contre le schema du modele
-    W-->>I: statut invalid : sibsp manquant
-    Note over I,W: le MODELE DE PREDICTION n est pas appele :<br/>la validation a echoue avant
-    I->>Y: statut invalid + prediction en attente
-    Y-->>U: 149 car., relance deterministe
+    W-->>I: les sept y sont
+    W-->>I: a survecu, probabilite 95.6%
+    I->>Y: statut ok
+    Y-->>U: 105 car., rendu deterministe
 ```
 
 **Trace relevée.** `system` → `rappel` → `plan` → `inference` → `synthesize`.
-**3 appels LLM.** Le nœud `inference` relève « statut invalid » ; le tour rend
-une **prédiction en attente** : `titanic`, features
-`['age', 'embarked', 'fare', 'parch', 'pclass', 'sex']` — six des sept.
+**3 appels LLM.** Le nœud `inference` relève « statut ok ». Rien n'est en
+attente après le tour.
 
-> Je ne peux pas encore lancer la prédiction titanic :
-> - sibsp (Frères/sœurs + conjoint à bord) : valeur manquante
-> Peux-tu me donner ces informations ?
+> Prédiction (titanic) : a survécu (probabilité 95.6%) — détail : n'a pas
+> survécu : 4.4%, a survécu : 95.6%
+
+**« Sans famille à bord » est lu, et ce n'est pas le modèle qui le lit.** Le
+planificateur en tire `parch=0` et laisse `sibsp` de côté — c'est ce que le
+relevé montre, et c'est ce qu'il montrait avant. Ce qui a changé est en aval :
+le schéma
+([`titanic.py`](../src/data_analyst_agent/agents/inference/schemas/titanic.py))
+DÉCLARE que `sibsp` et `parch` comptent tous deux des accompagnants, une
+construction fermée reconnaît dans le message qu'il n'y en a aucun
+([`accompagnants.py`](../src/data_analyst_agent/agents/inference/accompagnants.py)),
+et une règle du plan remplit ce que l'utilisateur n'a pas donné autrement. Ce
+que l'utilisateur a donné explicitement prime toujours : la règle ne peut
+qu'ajouter.
 
 **Le modèle de prédiction n'est pas le moteur de langage.** C'est un modèle
 scikit-learn du registre
 [`src/data_analyst_agent/agents/inference/registry.py`](../src/data_analyst_agent/agents/inference/registry.py),
-chargé depuis le disque, avec un schéma de features déclaré
-([`titanic.py`](../src/data_analyst_agent/agents/inference/schemas/titanic.py)).
-Le moteur de langage lit la phrase et en extrait les features ; c'est tout ce
-qu'il fait ici. Sur ce tour, il n'est même pas allé jusqu'à la prédiction.
+chargé depuis le disque, avec un schéma de features déclaré. Le moteur de
+langage lit la phrase et en extrait les features ; c'est tout ce qu'il fait ici.
 
 ## 8 — « reprends le tableau précédent et donne-moi les pourcentages »
 
@@ -384,42 +393,50 @@ sequenceDiagram
     actor U as Utilisateur
     participant S as Noeud system
     participant R as Noeud rappel
-    participant P as Noeud plan
-    participant Q as Noeud retrieval
+    participant W as Espace de travail du fil
     participant M as Moteur
     participant Y as Noeud synthesize
 
     U->>S: reprends le tableau precedent et donne-moi les pourcentages
-    Note over S,R: une prediction est EN ATTENTE depuis le tour 7 :<br/>system et rappel se retirent sans appeler le modele
-    S->>R: prediction en attente de features
-    R->>P: prediction en attente de features
-    P->>M: quelle capacite ?
-    M-->>P: capability='query', source='resultat_1'
-    P->>Q: query sur ventes
-    Q->>M: ecris le SQL
-    M-->>Q: aucune requete aboutie
-    Q->>Y: 0 requete(s)
-    Y-->>U: repli deterministe, 199 car.
+    S->>M: question + fiches d outil
+    M-->>S: AUCUN appel
+    S->>R: passe au rappel
+    R->>M: question + catalogue des artefacts du fil
+    M-->>R: rejouer_un_code(nom='resultat_1', modification='donne-moi les pourcentages')
+    R->>W: resultat_1 est-il du code ?
+    W-->>R: non, c est un tableau
+    Note over R,W: rien n est execute — et l artefact EXISTE,<br/>donc son contenu est rendu plutot qu un refus
+    R->>M: ce n est pas du code, voici son contenu
+    M-->>R: la sentinelle AUTRE
+    Note over R: la formulation est disqualifiee :<br/>ce sont les FAITS qui partent
+    R->>Y: le tableau
+    Y-->>U: 318 car., le tableau servi
 ```
 
-**Trace relevée.** `system` → `rappel` → `plan` → `retrieval` → `synthesize`.
-**2 appels LLM.** Un seul appel d'outil : le plan. Le nœud `retrieval` relève
-« 0 requête(s), aucune n'a abouti », et `synthesize` « réponse non fondée,
-écartée (déterministe) ».
+**Trace relevée.** `system` → `rappel` → `synthesize`. **4 appels LLM.** Le
+nœud `rappel` relève « rejouer_un_code — faits servis (sentinelle rendue alors
+qu'un outil a été appelé) ». Le tour ne va pas jusqu'au planificateur : le
+rappel a servi.
 
-> Je n'ai pas interrogé la source pour cette question, je ne peux donc rien en
-> affirmer. Reformule en précisant ce que tu veux en savoir […]
+> resultat_1 (tableau de 5 ligne(s) ; colonnes : raison_sociale,
+> chiffre_affaires) — ce n'est pas du code : rien n'a été exécuté, et voici son
+> contenu :
+> raison_sociale,chiffre_affaires
+> Vélocité Bordeaux,170149.0 […]
 
-**Ce que ce tour apprend, et qui n'était pas attendu.** Les nœuds `system` et
-`rappel` ne se sont pas retirés parce qu'ils n'avaient rien à dire : ils se sont
-retirés **parce qu'une prédiction était en attente depuis le tour 7**. Le détail
-de la trace le dit mot pour mot. Sur un fil où le tour 7 n'aurait pas laissé de
-prédiction en attente, le nœud `rappel` aurait vu le tableau `resultat_1`. Ici,
-il n'a jamais été consulté, et la demande est partie au planificateur, qui l'a
-classée `query` sur une source qui n'en est pas une.
+**Le modèle demande à REJOUER un tableau.** C'est une erreur de sa part — on ne
+réexécute pas un CSV — et l'outil ne l'exécute pas. Ce qu'il fait à la place :
+il rend le contenu. Un artefact qui existe ne se cache pas derrière un refus ;
+la demande porte sur ce que le tableau contient, et ce contenu part.
 
-Autrement dit : **une prédiction restée en attente désarme le rappel d'artefact
-pour les tours suivants du fil.** C'est relevé, pas déduit.
+**Puis le modèle renonce**, et rend la sentinelle. La ceinture
+(``defaut_de_formulation``) la disqualifie — un tour où un outil a répondu
+n'est plus « pas pour moi » — et ce sont les faits qui sont servis. C'est ce
+qu'on voit ici : le tableau, sans les pourcentages. Sur un tableau plus court,
+le même tour formule et les calcule ; sur celui-ci, mesuré 5 tirages sur 5, le
+modèle rend d'abord une réponse vide, puis la sentinelle. Ce qui est garanti
+est que **le tableau est retrouvé et servi** — ce qui l'est moins est que le
+modèle sache en tirer un pourcentage.
 
 ---
 
@@ -431,9 +448,12 @@ pour les tours suivants du fil.** C'est relevé, pas déduit.
   lire la structure, et ne ramène aucune ligne.
 - Le nœud `rappel` **n'appelle pas le modèle** quand le fil n'a rien produit.
   Au tour 5, il n'apparaît même pas dans la trace.
-- Le nœud `synthesize` **n'appelle pas le modèle** dans sept tours sur huit. La
-  phrase vient de `system` (tours 1 à 4), d'un résumé déterministe (tour 5), ou
-  d'un repli (tours 7 et 8).
+- Le nœud `synthesize` **n'appelle pas le modèle** dans les huit tours. La
+  phrase vient de `system` (tours 1 à 4), d'un résumé déterministe (tour 5), du
+  rendu du modèle de prédiction (tour 7) ou des faits d'un outil de rappel
+  (tour 8).
+- Le tour 8 **n'atteint pas le planificateur** : le rappel a servi, et le
+  graphe va directement à la synthèse.
 - **Un seul service d'inférence est appelé, et il est sur cette machine** :
   celui que `DAA_LLM_BASE_URL` désigne, port 8100. Il n'y en a pas d'autre. Le
   relevé le nomme en tête de chaque exécution.
@@ -447,33 +467,73 @@ pour les tours suivants du fil.** C'est relevé, pas déduit.
 | 3 | et plus de détails sur ventes ? | `system` → `synthesize` | 2 |
 | 4 | parle-moi un peu de stocks et de titanic | `system` → `synthesize` | 2 |
 | 5 | quel est le chiffre d'affaires par revendeur ? | `system` → `plan` → `retrieval` → `synthesize` | 5 |
-| 6 | fais-moi un graphique de ça | `system` → `rappel` → `plan` → `analysis` → `synthesize` | 5 |
+| 6 | fais-moi un graphique de ça | `system` → `rappel` → `plan` → `analysis` → `synthesize` | 7 |
 | 7 | prédis la survie d'une passagère… | `system` → `rappel` → `plan` → `inference` → `synthesize` | 3 |
-| 8 | reprends le tableau précédent… | `system` → `rappel` → `plan` → `retrieval` → `synthesize` | 2 |
+| 8 | reprends le tableau précédent… | `system` → `rappel` → `synthesize` | 4 |
 
-**23 appels LLM pour huit tours.** Le nœud `system` en coûte un en tête de
+**27 appels LLM pour huit tours.** Le nœud `system` en coûte un en tête de
 chaque question, y compris celles qui ne le concernent pas : c'est le prix de ne
 pas reconnaître les questions méta par un lexique, et il est assumé
 ([`docs/surface-conversationnelle.md`](surface-conversationnelle.md)).
 
 ---
 
-# Deux défauts connus
+# Trois défauts corrigés, et ce qui reste
 
-Ils sont dans le relevé. Les taire ferait démentir ce document par le premier
-qui essaie. Ils font l'objet d'une tâche à part et ne sont pas corrigés ici.
+Ce document décrivait trois défauts relevés ici même. Ils sont corrigés, et le
+relevé ci-dessus est celui d'APRÈS. Ce qui suit dit ce qui a changé, et ce qui
+n'a pas changé.
 
-**La prédiction boucle.** Tour 7 : « sans famille à bord » devrait fixer `sibsp`
-à 0 comme il fixe `parch` à 0 — le relevé montre que `parch` a bien été extrait
-et que `sibsp` ne l'a pas été. L'agent réclame `sibsp`, on répond, et il le
-réclame à l'identique. La prédiction n'aboutit pas.
+**Une prédiction en attente ne confisque plus le fil.** Les nœuds `system` et
+`rappel` se retirent quand une prédiction attend des features : c'est
+délibéré — un « oui » ou « une femme » doit aller compléter la prédiction, et
+non se faire attraper par un autre agent. Ce retrait n'était pas borné, et il
+emportait tout : sur un fil qui avait produit un tableau, « reprends le tableau
+précédent » ne trouvait plus rien, le planificateur partait en `query` sur un
+objet qu'il n'interroge pas, et l'utilisateur lisait « je n'ai pas interrogé la
+source ». Le retrait du nœud `rappel` est maintenant borné par
+``designation_dun_artefact_passe`` — la construction que ce nœud emploie déjà :
+un message qui désigne un artefact déjà produit ne complète pas une prédiction.
+Et un tour qui ne s'est pas prononcé sur la prédiction ne l'efface plus
+(``Orchestrator._pending_retenu``) : sans cela, borner le retrait n'aurait fait
+que déplacer la confiscation — le tableau redevenait atteignable et c'est la
+prédiction qui se perdait.
 
-**Le rappel d'un tableau existant commence par nier son existence.** Sur un fil
-où le rappel est consulté, il répond « Aucun artefact ne s'appelle
-« resultat_1 (ce n'est pas du code) » … Artefacts disponibles : resultat_1 »,
-puis sert le tableau, et ne calcule pas les pourcentages demandés. Sur le fil
-relevé ici, il ne va même pas jusque-là : la prédiction laissée en attente au
-tour 7 le désarme, et le tour 8 part au planificateur (voir plus haut).
+**La prédiction aboutit.** « Sans famille à bord » fixe les deux compteurs
+d'accompagnants, et non un seul (tour 7). La clause est en outre retirée d'une
+SECONDE lecture quand la première laisse la prédiction incomplète : mesuré, sa
+seule présence faisait perdre au planificateur `age`, qu'il extrayait 5 tirages
+sur 5 sans elle. Le coût est d'un appel LLM, et seulement sur le chemin qui,
+sans lui, ne rendait rien.
+
+**Le rappel d'un tableau ne nie plus ce qu'il sert.** L'outil de rejeu passait
+au refus des noms inconnus un nom qu'il venait de décorer — « resultat_1 (ce
+n'est pas du code) » — et la phrase rendue niait l'artefact qu'elle énumérait
+dans la même haleine. Deux choses ont changé : la contradiction est devenue
+impossible quelle que soit la main qui appelle (``refus_dartefact`` lit la
+désignation, pas le nom nu), et un artefact qui existe ne se cache plus derrière
+un refus — rien n'est exécuté, et son contenu est rendu.
+
+**Comment ces trois-là se mesurent.** Pas ici : ce document relève UN fil de
+huit messages, et ces défauts demandent des fils construits pour eux — un
+tableau, puis une prédiction incomplète, puis un rappel.
+[`scripts/mesure_fils_de_prediction.py`](../scripts/mesure_fils_de_prediction.py)
+joue huit fils, dont trois témoins, en reportant d'un tour à l'autre ce que la
+route `/chat` reporte.
+
+    DAA_CATALOG_PATH=sources/metier/catalogue.yaml \
+      uv run python scripts/mesure_fils_de_prediction.py --tirages 3
+
+Avant : `a` 0/3, `d` 0/3, `f` 0/3, `g` 0/3. Après : **8 fils sur 8, 3 tirages
+chacun**.
+
+**Ce qui reste, et qui n'est pas de la mécanique du fil.** Au tour 8, le modèle
+rend la sentinelle au lieu de formuler ; la ceinture sert alors les faits, donc
+le tableau, mais sans les pourcentages. C'est une limite du moteur sur ce
+tableau-là — 5 tirages sur 5 — et non du chemin : le tableau est retrouvé et
+servi à chaque fois.
+
+---
 
 ---
 

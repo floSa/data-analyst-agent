@@ -286,14 +286,23 @@ néanmoins, parce que le message y répond à une question déjà posée et n'es
 proposée. Le second se tranche entièrement dans `plan`, **sans appel LLM** : le nom
 d'une source du catalogue cité dans le message la lie à la conversation (§4.11).
 
+Le premier est **borné**, et il le faut : sans borne, il confisquait la suite du
+fil. Un message qui DÉSIGNE un artefact déjà produit — « reprends le tableau
+précédent » — ne complète pas une prédiction, et le nœud `rappel` reste donc armé
+pour lui (`designation_dun_artefact_passe`). Symétriquement, un tour qui ne s'est
+pas prononcé sur la prédiction ne l'efface plus : sans quoi borner le
+court-circuit n'aurait fait que déplacer la confiscation — le tableau redevenait
+atteignable et la prédiction se perdait (`Orchestrator._pending_retenu`).
+
 **Puis le nœud `plan` est une suite de règles nommées**, et l'ordre en est explicite. Le
 plan que rend le LLM est rarement utilisable tel quel : il faut y imposer la source
 choisie par l'appelant, dégrader un chaînage faute de source, y reposer la source de
 travail de la conversation, y refusionner les features déjà obtenues, normaliser un
 nom de source décoré, proposer les sources quand aucune n'est désignée, demander de
-préciser quand le modèle est ambigu, promouvoir un `predict` sans features en
-chaînage sur le dernier tableau affiché. Chacune de ces règles répare un incident
-réel, chacune porte son nom et sa docstring, et `_REGLES_DU_PLAN` — huit lignes —
+préciser quand le modèle est ambigu, lire une absence d'accompagnants que le schéma
+sait nommer, promouvoir un `predict` sans features en chaînage sur le dernier
+tableau affiché. Chacune de ces règles répare un incident
+réel, chacune porte son nom et sa docstring, et `_REGLES_DU_PLAN` — neuf lignes —
 est la seule chose à lire pour connaître leur ordre, qui est significatif. Une règle
 rend soit rien (le plan continue), soit la question à poser, qui court-circuite les
 suivantes.
