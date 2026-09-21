@@ -574,6 +574,22 @@ def build_rappel_agent() -> Agent[RappelDeps, str]:
     return agent
 
 
+# La marque qui, dans le catalogue, dit d'un artefact qu'il vient d'être
+# produit. Elle porte le FAIT dont la démarche du prompt a besoin pour sa
+# seconde porte : sans elle, le modèle ne peut pas distinguer le tableau du
+# tour d'avant de celui de six tours plus tôt — les lignes du catalogue se
+# ressemblent toutes, et rien dans « et ça fait combien en pourcentage ? » ne
+# le lui dirait.
+MARQUE_DU_TOUR_PRECEDENT = "  ← PRODUIT AU TOUR PRÉCÉDENT"
+
+# Ce qu'on dit sous le catalogue quand le tour d'avant a produit quelque chose.
+# Une phrase, et elle énonce un fait daté — pas une consigne de vocabulaire.
+AVIS_DU_TOUR_PRECEDENT = (
+    "Le tour précédent vient de produire : {noms}. C'est ce que l'utilisateur a "
+    "sous les yeux au moment où il écrit."
+)
+
+
 def catalogue_pour_le_prompt(workspace: ConversationWorkspace) -> str:
     """Le catalogue des artefacts RETENUS — une ligne chacun, et l'éviction dite.
 
@@ -581,11 +597,29 @@ def catalogue_pour_le_prompt(workspace: ConversationWorkspace) -> str:
     l'ÉVICTION y est, et ce n'est pas un ornement : un catalogue qui montre ce
     qui reste sans dire ce qui est sorti fait croire au modèle qu'il voit tout.
     Mesuré — cf. ``ContextTrim.rappel_notice``.
+
+    **Et la DATE du dernier tour y est aussi**, pour la même raison qu'y est
+    l'éviction : un catalogue qui montre dix artefacts équivalents cache le
+    seul fait dont la démarche a besoin — lequel vient d'être produit. Mesuré :
+    « donne-moi les pourcentages » après un tableau partait au planificateur,
+    qui repartait en `query`, ne rendait aucune ligne, et l'utilisateur lisait
+    « je n'ai pas interrogé la source ». Le tableau était là, à un tour de
+    distance, et le modèle ne pouvait pas le savoir.
     """
-    lignes = [a.ligne_de_catalogue() for a in workspace.catalogue()]
+    recents = {a.name for a in workspace.produits_au_tour_precedent()}
+    lignes = [
+        a.ligne_de_catalogue() + (MARQUE_DU_TOUR_PRECEDENT if a.name in recents else "")
+        for a in workspace.catalogue()
+    ]
     catalogue = "\n".join(lignes) or "(aucun artefact produit pour l'instant)"
+    blocs = [catalogue]
+    if recents:
+        noms = ", ".join(a.name for a in workspace.produits_au_tour_precedent())
+        blocs.append(AVIS_DU_TOUR_PRECEDENT.format(noms=noms))
     avis = workspace.trim.rappel_notice()
-    return f"{catalogue}\n\n{avis}" if avis else catalogue
+    if avis:
+        blocs.append(avis)
+    return "\n\n".join(blocs)
 
 
 def run_rappel(

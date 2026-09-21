@@ -776,6 +776,31 @@ class ConversationWorkspace:
         """Tout ce qui est RETENU ce tour-ci, tableaux et code, dans l'ordre."""
         return list(self.retenus)
 
+    def produits_au_tour_precedent(self) -> list[WorkspaceArtifact]:
+        """Les artefacts retenus que la question du tour PRÉCÉDENT a produits.
+
+        Un FAIT, et c'est tout son intérêt : « un objet vient d'être produit »
+        se lit dans le magasin — la question qui a produit chaque artefact, et
+        celle du tour d'avant — sans rien demander au vocabulaire du message
+        courant. C'est ce qui manquait à l'agent de rappel pour traiter « et ça
+        fait combien en pourcentage ? » : sa démarche ne connaissait que des
+        tournures de reprise, et ce message-là n'en porte aucune.
+
+        La comparaison passe par ``question`` et ``context.last_question``,
+        c'est-à-dire par la même chaîne écrite à deux endroits au même tour
+        (``record_turn`` s'exécute après le graphe, donc ce qu'on lit ici est
+        bien le tour d'AVANT, jamais celui qui est en train de se jouer).
+
+        Rend une liste, pas un artefact : un tour peut en produire plusieurs —
+        un tableau et sa figure — et c'est au prompt de les montrer tous.
+        Vide quand le tour précédent n'a rien produit, quand ce qu'il a produit
+        est sorti de la fenêtre, ou au premier tour d'un fil.
+        """
+        derniere = self.context.last_question
+        if not derniere:
+            return []
+        return [a for a in self.retenus if a.question == derniere]
+
     # -- désigner un artefact par son nom --------------------------------------
 
     def sur_le_disque(self, name: str) -> WorkspaceArtifact | None:

@@ -1104,3 +1104,75 @@ def test_une_designation_qui_nomme_deux_artefacts_n_en_designe_aucun(tmp_path: P
     porte = nom_dartefact_porte("resultat_2 (ce n'est pas du code)", workspace)
     assert porte is not None
     assert porte.name == "resultat_2"
+
+
+# --- ce qui vient d'être produit : un FAIT, pas une tournure -----------------
+
+
+def test_le_tour_precedent_est_un_fait_lu_dans_le_magasin(tmp_path: Path):
+    """« Un objet vient d'être produit » se lit sans toucher au message courant.
+
+    C'est la propriété sur laquelle repose la seconde porte de la démarche de
+    l'agent de rappel. Elle est fondée sur deux écritures du même tour — la
+    question qui a produit l'artefact, et celle que ``record_turn`` retient —
+    et sur rien d'autre : aucun vocabulaire, aucune liste de tournures.
+    """
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_table(["canal", "n"], [["magasin", 25]], "combien de commandes par canal ?")
+
+    # avant tout `record_turn`, il n'y a pas de « tour précédent » du tout
+    assert ws.produits_au_tour_precedent() == []
+
+    ws.record_turn("combien de commandes par canal ?", "query", "ventes")
+    assert [a.name for a in ws.produits_au_tour_precedent()] == ["resultat_1"]
+
+    # un tour de plus, qui ne produit rien : l'artefact n'est plus du tour d'avant
+    ws.record_turn("et le chiffre d'affaires ?", "query", "ventes")
+    assert ws.produits_au_tour_precedent() == []
+
+
+def test_le_catalogue_du_rappel_MARQUE_ce_qui_vient_d_etre_produit(tmp_path: Path):
+    """Mesuré sur vLLM, catalogue métier : « donne-moi les pourcentages » après un
+    tableau partait au planificateur, qui repartait en `query`, ne rendait aucune
+    ligne, et l'utilisateur lisait « je n'ai pas interrogé la source ».
+
+    Le fil brut disait où : l'agent de rappel ÉTAIT appelé, ses deux outils lui
+    étaient offerts, et il répondait `AUTRE` — sa démarche ne connaissait que
+    des tournures de reprise, et ce message-là n'en porte aucune. Ce qui lui
+    manquait n'était pas un mot de plus dans une liste, c'était de savoir
+    lequel des artefacts du catalogue venait d'être produit.
+    """
+    from data_analyst_agent.orchestrator.rappel import catalogue_pour_le_prompt
+
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_table(["port", "n"], [["S", 644]], "combien par port ?")
+    ws.save_table(["canal", "n"], [["magasin", 25]], "combien de commandes par canal ?")
+    ws.record_turn("combien de commandes par canal ?", "query", "ventes")
+
+    catalogue = catalogue_pour_le_prompt(ws)
+
+    ligne_recente = next(l for l in catalogue.splitlines() if l.startswith("- resultat_2"))
+    ligne_ancienne = next(l for l in catalogue.splitlines() if l.startswith("- resultat_1"))
+    assert "PRODUIT AU TOUR PRÉCÉDENT" in ligne_recente
+    assert "PRODUIT AU TOUR PRÉCÉDENT" not in ligne_ancienne
+    assert "Le tour précédent vient de produire : resultat_2." in catalogue
+
+
+def test_un_catalogue_sans_tour_precedent_ne_porte_aucune_marque(tmp_path: Path):
+    """Le témoin : la marque ne s'invente pas là où le fait n'est pas.
+
+    Sans lui, un catalogue qui marquerait tout dirait la même chose que s'il ne
+    marquait rien — et la seconde porte de la démarche s'ouvrirait sur des
+    tours où rien ne vient d'être produit.
+    """
+    from data_analyst_agent.orchestrator.rappel import catalogue_pour_le_prompt
+
+    ws = ConversationWorkspace(tmp_path, "fil")
+    ws.save_table(["port", "n"], [["S", 644]], "combien par port ?")
+    ws.record_turn("une question qui n'a rien produit", "query", "ventes")
+
+    catalogue = catalogue_pour_le_prompt(ws)
+
+    assert "resultat_1" in catalogue
+    assert "PRODUIT AU TOUR PRÉCÉDENT" not in catalogue
+    assert "Le tour précédent vient de produire" not in catalogue
