@@ -343,6 +343,32 @@ vrai avant et ne l'est plus. Le relevé le porte sur une ligne à part.
 
 ---
 
+### 3.4. La réparation ne tient pas sur le catalogue MÉTIER (mesuré à C55, 2/2)
+
+Cette campagne RELÈVE et ne juge pas : rien n'y rougit si la réponse cesse de
+nommer ce que le fil a produit. C'est ce qui est arrivé, et il a fallu inscrire
+la question dans une batterie pour le voir — fil `i-inventaire-du-fil` de
+[`scripts/mesure_fils_de_prediction.py`](../scripts/mesure_fils_de_prediction.py),
+deux campagnes le 2026-09-22.
+
+| tour | catalogue | chemin | verdict |
+|---|---|---|---|
+| « qu'est-ce que tu as en mémoire dans cette conversation ? » | `sources/metier/` | `system → rappel → plan → retrieval → synthesize`, `query · source=ventes` | **0/2** |
+| « quelles données as-tu à ta disposition maintenant ? » | `sources/metier/` | `system → synthesize` | 2/2 |
+
+Le fil est celui du §2 : une source liée (`ventes`) et un tableau produit
+(`resultat_1`). La seconde question passe par l'agent système et rend
+l'inventaire complet, `resultat_1` et le type de ses colonnes compris — c'est
+la réparation de C51, et elle tient. La PREMIÈRE part au planificateur, qui la
+classe `query` sur la source liée ; l'agent SQL n'interroge rien, et
+l'utilisateur lit le garde-fou : « je n'ai pas interrogé la source pour cette
+question ».
+
+Le relevé de C51 montre la même question répondue par `system → synthesize`,
+trois tirages sur trois — mais sur le catalogue de DÉMONSTRATION. Ce qui change
+ici est le catalogue et la source liée, pas le code. La question n'est pas
+réparée ; elle est désormais comptée.
+
 ## 4. Les chiffres
 
 ### Les chemins

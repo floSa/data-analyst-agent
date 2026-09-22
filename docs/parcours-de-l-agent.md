@@ -542,14 +542,18 @@ un refus — rien n'est exécuté, et son contenu est rendu.
 huit messages, et ces défauts demandent des fils construits pour eux — un
 tableau, puis une prédiction incomplète, puis un rappel.
 [`scripts/mesure_fils_de_prediction.py`](../scripts/mesure_fils_de_prediction.py)
-joue huit fils, dont trois témoins, en reportant d'un tour à l'autre ce que la
-route `/chat` reporte.
+joue quatorze fils, dont trois témoins, en reportant d'un tour à l'autre ce que
+la route `/chat` reporte.
 
     DAA_CATALOG_PATH=sources/metier/catalogue.yaml \
       uv run python scripts/mesure_fils_de_prediction.py --tirages 3
 
 Avant : `a` 0/3, `d` 0/3, `f` 0/3, `g` 0/3. Après : **8 fils sur 8, 3 tirages
-chacun**.
+chacun**. Six fils s'y sont ajoutés depuis (C55) : ils inscrivent dans la
+batterie les formulations que C45, C48, C49 et C51 avaient réparées et mesurées
+juste à leur tâche — la prédiction qui aboutit après « c'est une femme », les
+quatre reprises d'un tableau et les deux questions sur ce que le fil a en
+mémoire.
 
 **Un chiffre dérivé n'a plus besoin qu'on désigne le tableau.** Le tour 8 le
 montre avec la désignation — « reprends le tableau précédent » — mais le défaut
@@ -573,7 +577,11 @@ demande : ce qu'on ne comprend pas sans le tour précédent porte sur ce qui
 vient d'être montré ; ce qui se tient debout tout seul reste au planificateur.
 
 Avant : 0/4 des formulations sans désignation atteignaient le rappel. Après :
-4/4, rejeu du tableau, pourcentages justes. La borne est mesurée par ses
+4/4, rejeu du tableau, pourcentages justes. Ces quatre-là ne vivaient nulle part
+ailleurs que dans cette phrase : elles sont depuis les fils `h-designe`, `h-nu`,
+`h-part-du-total` et `h-colonne-de-part`, dont l'oracle exige les trois parts
+LUES DANS LA BASE — le tableau retrouvé ne prouvait pas que le calcul dessus soit
+juste. La borne est mesurée par ses
 témoins — « combien de clients au total ? », « quelles sources as-tu ? »,
 « fais-moi un histogramme des montants de commande », « quel est le montant
 moyen d'une commande ? » restent au planificateur, 4/4, avec un tableau tout
@@ -582,6 +590,15 @@ frais au catalogue.
 Et le garde-fou n'a pas bougé : « je n'ai pas interrogé la source pour cette
 question » reste ce que dit un tour qui n'a rien interrogé. C'est le chemin qui
 a changé, pas ce qu'on s'autorise à affirmer.
+
+**Le repère de la campagne, à C55 : 13 fils sur 14, deux campagnes.** Le seul
+qui manque est `i-inventaire-du-fil`, et il a été écrit pour ça : « qu'est-ce
+que tu as en mémoire dans cette conversation ? », posée sur le catalogue métier
+après un tableau, part au planificateur et rend le garde-fou ci-dessus
+(`docs/memoire-de-conversation.md` §3.4). La question suivante — « quelles
+données as-tu à ta disposition maintenant ? » — passe, 2/2. La réparation de C51
+tient d'un côté et pas de l'autre ; elle n'est pas refaite ici, elle est
+comptée.
 
 ---
 

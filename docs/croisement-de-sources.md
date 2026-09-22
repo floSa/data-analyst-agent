@@ -238,6 +238,17 @@ données d'abord.
 | provenance du sens | le sien | 30/30 | **30/30** |
 | fils de prédiction | `sources/metier/` | 8/8 | **8/8** |
 
+**Deux de ces repères ont bougé depuis, et pas parce que le système a changé.**
+C55 a inscrit dans les batteries des formulations réparées et jamais mesurées,
+et durci quatre oracles de la surface. Les attendus d'une prochaine campagne
+sont donc **37/38 méta + 6/6 témoins** pour la surface conversationnelle
+(44 questions, `docs/surface-conversationnelle.md` §27.5) et **13/14** pour les
+fils de prédiction (14 fils, `docs/parcours-de-l-agent.md`). Les deux manques
+sont nommés et non réparés : `choix-entre-deux-sources` (§26) et
+`i-inventaire-du-fil` (`docs/memoire-de-conversation.md` §3.4). Lire 40/40 ou
+8/8 comme la cible ferait passer pour une régression un oracle devenu plus
+strict.
+
 `sources-nommees` porte la justification de n'avoir PAS touché à l'agent
 système : « Qu'est-ce que t'appelles source vente, production, stock ? » y fait
 3/3 et reçoit bien ses trois fiches. C'est exactement la question qu'un

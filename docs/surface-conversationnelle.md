@@ -3845,3 +3845,224 @@ a servi.
 
 **Aucun prompt, aucune fiche d'outil n'a bougé** — les sept empreintes SHA-256
 sont inchangées.
+
+---
+
+## 26. Une régression qui n'en était pas, et ce que ça dit de l'instrument
+
+Le 2026-09-22, le pilote relève ceci sur le catalogue métier, sur une question
+qu'aucune campagne ne pose — « ventes ou production ? », posée dans une
+conversation neuve, aucune source liée :
+
+| | réponse | longueur |
+|---|---|---|
+| après C48 | `Sur quelle source veux-tu travailler : ventes, production, stocks, iris, titanic ?` | 82 car. |
+| « aujourd'hui » | les cinq fiches complètes, volumes et périodes compris | 2 136 car. |
+
+Deux textes incomparables, une question réparée à C48, et rien entre les deux
+qui rougisse. La conclusion allait de soi : quelque chose a glissé entre C48
+(`0e1f192`) et C53 (`e126e56`). **Elle est fausse, et ce qui la rend fausse vaut
+plus que la réparation qu'elle appelait.**
+
+### 26.1 La bissection : les deux mesures portent sur le même code
+
+Chaque commit candidat a été extrait dans un arbre propre — `git archive`, plus
+les sources non suivies par git recopiées, plus le `.env` — et la question posée
+telle quelle, catalogue métier, conversation neuve.
+
+| commit | tâche | tirages | 82 car. | 2 136 / 2 276 car. |
+|---|---|---|---|---|
+| `0e1f192` | C48 | 30 | 28 | **2** |
+| `72fe851` | C50 | 10 | 10 | 0 |
+| `ec79d79` | C51 | 12 | 12 | 0 |
+| `c184e3c` | C51 | 2 | 2 | 0 |
+| `970f199` | C52 | 2 | 2 | 0 |
+| `e126e56` | C53 | 2 | 2 | 0 |
+| `97389aa` | C54 | 3 | 3 | 0 |
+| `de660f8` | C54 (tête) | 43 | 41 | **2** |
+
+Les deux extrêmes ont été tirés **en alternance**, vingt fois chacun, un
+processus par tirage, pour que la dérive du moteur frappe les deux également :
+**20/20 à 82 caractères des deux côtés**. C48 et la tête de `main` sont
+indiscernables sur cette question.
+
+### 26.2 Le mécanisme : un plan bistable, pas une régression
+
+Le tour se joue en deux temps, et c'est le premier qui bascule.
+
+1. l'agent système ne trouve rien à appeler et passe la main
+   (`system : aucun outil appelé — passe au planificateur`) ;
+2. le planificateur rend `capability=query` et **soit** `source='ventes,
+   production'` — les deux noms qu'il a lus, empaquetés dans un champ qui en
+   attend un —, **soit** `source=''`.
+
+Les deux valeurs prennent deux chemins différents dans les règles du plan, et
+les deux chemins sont justes :
+
+- `source='ventes, production'` → `_regle_normaliser_le_nom_de_source` voit une
+  désignation qui nomme PLUSIEURS sources déclarées, laisse tomber la phrase
+  « la source est introuvable » et rend la question du choix : **82 caractères** ;
+- `source=''` → `_regle_choisir_la_source` propose l'inventaire, fiches et faits
+  compris : **2 136 caractères**.
+
+La température est à 0. Le prompt est identique : `planner.txt` n'a pas bougé
+depuis C48, `Catalog.describe()` non plus, et une conversation neuve n'ajoute ni
+contexte de source, ni historique, ni prédiction en attente. Ce qui change d'un
+processus à l'autre est **l'état du moteur** — composition des lots, cache de
+préfixe — et il suffit à faire basculer un champ qui est, sur cette
+formulation-là, exactement à la frontière.
+
+### 26.3 Le fait qui tranche, et qui ne demande aucun modèle
+
+Le texte de l'inventaire est déterministe. Il se mesure sans poser la moindre
+question :
+
+| commit | `introspection.proposer_les_sources` sur le catalogue métier |
+|---|---|
+| `0e1f192` (C48) | **2 136** caractères |
+| `c184e3c` (C51) | **2 136** caractères |
+| `970f199` (C52) | 2 276 caractères |
+| `e126e56` (C53) | 2 276 caractères |
+| `de660f8` (tête) | 2 276 caractères |
+
+C52 a allongé chaque fiche de la phrase « aucune période couverte : la source ne
+porte aucune colonne de date » (§24.3) : deux sources sans date, cent quarante
+caractères de plus. **Les 2 136 caractères relevés « aujourd'hui » ne peuvent pas
+sortir de `main` d'aujourd'hui.** Ils sortent d'un arbre à C51 ou avant,
+c'est-à-dire du même code que les 82 caractères relevés « après C48 ».
+
+Les deux observations du pilote sont deux tirages d'une même pièce, sur le même
+arbre, séparés par un fait qu'aucun des deux ne portait : la pièce a deux faces.
+
+### 26.4 Ce qui a été réparé, et ce qui ne l'a pas été
+
+Rien dans `src/`. Il n'y a pas de régression à défaire, et le comportement
+majoritaire — la question qui fait choisir, en une ligne — est le bon.
+
+Ce qui a été réparé est **l'instrument** : la formulation entre dans la batterie
+sous la clé `choix-entre-deux-sources`, construite sur les deux premiers noms du
+catalogue mesuré pour qu'elle se rejoue ailleurs sans être réécrite. Son oracle
+a deux bords — nommer les deux sources, et ne porter AUCUN des comptes de lignes
+lus dans les sources, qui sont la signature des fiches déroulées. Aucun seuil de
+longueur : un seuil réglé mesure la main qui l'a posé.
+
+**Et elle rougit.** Deux campagnes sur le catalogue par défaut, `titanic ou
+iris ?`, 0/2 : le plan sort à `source=''` les deux fois et l'inventaire est
+servi. C'est le même bord de la pièce, sur une autre formulation, et il est
+désormais compté au lieu d'être découvert par hasard six semaines plus tard.
+
+### 26.5 Le coût de la leçon
+
+Trois relevés de ce document portent un chiffre tiré d'**une** campagne, et
+`periode-indirecte` (§25) a tenu deux campagnes à 40/40 sur une réponse fausse.
+Ce §26 ajoute le pendant : **un comportement bistable tiré une fois de chaque
+côté d'une série de commits ressemble exactement à une régression**, et rien
+dans le relevé ne le dit. Ce qui l'a dit ici est un fait déterministe — la
+longueur d'un texte que le code compose sans modèle — trouvé en cherchant
+pourquoi les deux nombres ne se ressemblaient pas assez.
+
+La règle qui en sort, et elle est la même que pour les campagnes concurrentes :
+**un tirage n'est pas une mesure, et deux tirages pris à deux dates ne sont pas
+une comparaison.** Ce qui compare, c'est l'alternance — les deux arbres, tour à
+tour, dans la même fenêtre de temps.
+
+---
+
+## 27. Les quatre oracles faibles de la surface, et trois formulations de plus
+
+Le §25 a durci l'oracle de la PÉRIODE et en a déclaré quatre autres faibles,
+sans y toucher. Les voici jugés sur le FAIT, et non plus sur la présence d'un
+mot.
+
+### 27.1 Ce que chacun acceptait
+
+| clé | ce qu'exigeait l'oracle | ce qu'il acceptait donc |
+|---|---|---|
+| `volumetrie-globale` | un compte de lignes **en sous-chaîne** — `"3"`, `"891"`, `"150"` | `342`, `8915`, n'importe quel nombre d'un chiffre |
+| `features-nue` | **un** nom de modèle | `titanic` et `iris` sont aussi des noms de SOURCES, et le catalogue est dans tous les prompts |
+| `features-indirecte` | idem | idem |
+| `sens-colonne` | la chaîne `"classes"` | « la colonne `class_id` donne les classes des passagers » — la lecture du NOM de la colonne, sans une ligne de schéma |
+
+### 27.2 Ce qu'ils exigent maintenant
+
+Chacun juge un fait, lu là où il est vrai.
+
+- **`volumetrie-globale`** — un compte de lignes parmi ceux que le relevé a
+  LUS, reconnu comme un NOMBRE (`nombres`) et non comme une suite de
+  caractères. 342 n'est pas 3.
+- **`features-nue`, `features-indirecte`** — ou bien les attributs d'un modèle,
+  **tous**, ou bien le choix entre **tous** les modèles. Deux réponses justes à
+  cette question, et la même exigence sur les deux : être complète. Un nom de
+  modèle cité au passage ne l'est ni l'une ni l'autre.
+- **`sens-colonne`** — le RENVOI à la table pointée : son nom, et dans la même
+  phrase un mot qui dit la clé étrangère. Quatre radicaux (`etrang`, `referen`,
+  `renvoi`, `joint`), qui sont les quatre façons de nommer une clé étrangère en
+  français, et la table est lue dans l'ontologie de la source
+  (`TableInfo.foreign_keys`) — jamais écrite à la main.
+
+Une cinquième marche a bougé avec eux, dans `classer` : **une clarification
+ADMISE n'est plus dispensée de l'oracle.** `clarification_admise` autorise à
+renvoyer la question ; elle n'autorisait, en fait, à ne rien porter du tout —
+sur les trois questions concernées, tout ce qui énumérait les choix comptait
+juste sans qu'on lise la réponse.
+
+### 27.3 Les deux oracles sur les mêmes réponses
+
+Les scores d'avant et d'après sont calculés sur **le même texte** : les réponses
+des deux campagnes du 2026-09-22 sont rejouées contre les deux oracles. Deux
+campagnes rendraient deux jeux de réponses, et l'écart mesurerait autant le
+moteur que l'oracle.
+
+| clé | campagne 1 (ancien → nouveau) | campagne 2 (ancien → nouveau) |
+|---|---|---|
+| `volumetrie-globale` | correct → correct | correct → correct |
+| `features-nue` | correct → correct | correct → correct |
+| `features-indirecte` | correct → correct | correct → correct |
+| `sens-colonne` | correct → correct | correct → correct |
+
+**Aucun ne tombe, et c'est un résultat, pas une absence de résultat** : sur ces
+quatre questions-là, le système rendait déjà la réponse fondée — les quatre
+réponses portent le compte de lignes, la liste complète, le renvoi à `classes`.
+Ce que les anciens oracles bénissaient n'est pas ce que le système a rendu ce
+jour-là ; c'est ce qu'il aurait pu rendre sans que rien ne bouge. La preuve que
+les nouveaux le refusent ne vient donc pas d'une campagne mais de
+`tests/unit/test_mesure_surface_conversationnelle.py`, où les quatre réponses
+fausses sont figées et refusées une à une.
+
+### 27.4 Trois formulations qui n'étaient nulle part
+
+| clé | question | pourquoi elle est là | verdict, 2 campagnes |
+|---|---|---|---|
+| `temoin-dataset-iris` | décris le dataset iris | TÉMOIN du plancher des dates (§25.5) : le mot « dataset » a déjà failli l'y envoyer | 2/2 |
+| `temoin-quand-je-te-donne-un-age` | quand je te donne un âge, tu prédis quoi ? | TÉMOIN : « quand » ouvre une hypothèse, pas une période | 2/2 |
+| `periode-paraphrase-annee` | tes données, elles sont de quelle année ? | la paraphrase non mesurée, **non réparée** | 2/2 |
+
+Les deux témoins forment une famille à part, `témoin (plancher des dates)` :
+celle du §20 protège le chemin des DONNÉES d'un routeur de questions méta,
+celle-ci protège deux questions ordinaires d'un plancher. Leur oracle est le
+même et il est dérivé : une réponse qui nomme **toutes** les sources du
+catalogue est l'inventaire, donc le plancher a parlé.
+
+**Et la paraphrase reste rouge de l'autre côté, là où l'oracle ne regarde pas.**
+Elle compte juste — « les données ne contiennent pas d'information explicite sur
+l'année de collecte » EST le constat d'absence dû — mais la colonne « Capacité »
+du tableau dit `query` et le coût est de **5 appels LLM** contre 2 pour ses deux
+sœurs de la famille : elle part au planificateur, l'agent SQL reçoit une
+question de dates sur un schéma qui n'en porte aucune, et la phrase qui suit le
+constat — « cependant l'âge maximal enregistré est de 80 ans » — est le
+comblement que le plancher de C53 existe pour éviter. Elle n'est pas réparée ici,
+et elle a maintenant un chiffre.
+
+### 27.5 Le repère de la campagne
+
+Quarante-quatre questions : trente-huit méta et six témoins. Deux campagnes le
+2026-09-22, avec les oracles durcis :
+
+| campagne | méta | témoins | appels LLM |
+|---|---|---|---|
+| 1ʳᵉ | **37/38** | 6/6 | 87 + 22 |
+| 2ᵉ | **37/38** | 6/6 | 87 + 22 |
+
+La seule qui manque, les deux fois, est `choix-entre-deux-sources` (§26.4) : le
+plan sort à `source=''` et l'inventaire est servi à qui hésitait entre deux
+noms. C'est le bord bistable du §26, compté.
