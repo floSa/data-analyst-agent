@@ -442,6 +442,32 @@ def test_l_inventaire_dit_les_sources_transformees_SOUS_LEUR_NOM(
     assert "TRANSFORMÉES" in reponse.answer  # et il est dit qu'elle ne vient pas du catalogue
 
 
+def test_une_source_LIEE_ne_fait_pas_oublier_les_transformees(
+    tmp_path: Path, mini_csv: Path, registre: Registry
+):
+    """« Quelles données as-tu à ta disposition MAINTENANT ? », source liée.
+
+    Le mot « maintenant » ne changeait rien : une source liée fait servir sa
+    fiche seule — c'est ce qui répond à « et elle, elle contient quoi ? » — et
+    le tableau que le fil venait de produire n'apparaissait nulle part. Le
+    plancher parle partout où l'on ÉNUMÈRE, pas seulement là où le catalogue
+    entier part.
+    """
+    ConversationWorkspace(tmp_path, "fil").save_table(["a"], [[1]], "un tour précédent")
+    llm = agent_systeme("sources_de_donnees", {}, "Je travaille sur `mini`.")
+    catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "quelles données as-tu à ta disposition maintenant ?",
+        conversation_id="fil",
+        workspace_root=tmp_path,
+        source_de_travail="mini",
+    )
+
+    assert "mini" in reponse.answer
+    assert "resultat_1" in reponse.answer
+
+
 def test_une_recherche_par_sujet_ne_deballe_pas_les_transformees(
     tmp_path: Path, mini_csv: Path, registre: Registry
 ):

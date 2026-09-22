@@ -280,20 +280,31 @@ class SystemeDeps:
         if a_enumerer and self.source_de_travail:
             liee = _trouver_la_source(self.catalogue_declare, self.source_de_travail)
             if liee is not None:
-                return self.retenir(outil, self._fiche(liee), fiches=(liee.name,))
+                return self.retenir(
+                    outil, self._avec_les_transformees(self._fiche(liee)), fiches=(liee.name,)
+                )
         inventaire = introspection.decrire_les_sources(self.catalogue_declare, faits)
-        # Le PLANCHER des sources transformées. Un inventaire servi dans un fil
-        # qui a fabriqué des tableaux les dit, sous leur propre en-tête. C'est
-        # la réponse au mot « maintenant » : « quelles données as-tu à ta
-        # disposition maintenant ? » recevait le catalogue du YAML, identique au
-        # premier tour comme au dixième, et le tableau qu'on venait de produire
-        # n'y apparaissait pas (§3.4). Il ne parle qu'où le catalogue ENTIER
-        # part : une fiche unique répond à une question sur une source, une
-        # recherche par sujet est une matière à choisir, et ni l'une ni l'autre
-        # n'est un inventaire.
-        if a_enumerer and self.transformees:
-            inventaire = f"{inventaire}\n\n{self.transformees}"
-        return self.retenir(outil, inventaire, a_enumerer=a_enumerer)
+        return self.retenir(
+            outil,
+            self._avec_les_transformees(inventaire) if a_enumerer else inventaire,
+            a_enumerer=a_enumerer,
+        )
+
+    def _avec_les_transformees(self, texte: str) -> str:
+        """Le PLANCHER des sources transformées, ajouté sous son propre en-tête.
+
+        Un état des données servi dans un fil qui a fabriqué des tableaux les
+        dit. C'est la réponse au mot « maintenant » : « quelles données as-tu à
+        ta disposition MAINTENANT ? » recevait le catalogue du YAML, identique
+        au premier tour comme au dixième, et le tableau qu'on venait de produire
+        n'y apparaissait nulle part (`docs/memoire-de-conversation.md` §3.4).
+
+        Il ne parle qu'où l'on ÉNUMÈRE — le catalogue entier, ou la source liée
+        quand le message ne nomme personne. Une fiche demandée par son nom
+        répond à une question sur une source, une recherche par sujet est une
+        matière à choisir, et ni l'une ni l'autre n'est un état des données.
+        """
+        return f"{texte}\n\n{self.transformees}" if self.transformees else texte
 
     def _fiche(self, source: Source) -> str:
         """La fiche d'une source, avec ce qu'on a LU dedans quand on l'a lu."""
