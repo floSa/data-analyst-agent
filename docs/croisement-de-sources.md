@@ -258,3 +258,266 @@ aurait cassée. Une question gagnée contre soixante tours mis en risque.
 `memoire-de-conversation` montre `analyze · source=resultat_1` : le chaînage sur
 un tableau du fil est intact, et le montage ciblé qu'il exige n'a pas été
 élargi.
+
+---
+
+# Les deux verrous, et ce qu'ils cachaient
+
+Le relevé ci-dessus s'arrête sur deux obstacles nommés — l'agent système
+intercepte, le planificateur n'empaquette pas toujours — et sur un arbitrage :
+ne pas y toucher, parce que le départage naïf coûterait une campagne de
+soixante tours. **L'arbitrage était juste sur ce qu'on savait alors. Ce qu'on
+savait était incomplet**, et trois mesures l'ont montré.
+
+## Verrou nº 1 — ce n'est pas le modèle qui intercepte
+
+`run_systeme` seul, catalogue métier, trois tirages par message, moteur vLLM
+`google/gemma-4-E4B-it-qat-w4a16-ct` sur `http://localhost:8100/v1`.
+
+| famille | message | retenu par |
+|---|---|---|
+| fiches | « Qu'est-ce que t'appelles source vente, production, stock ? » | `chercher_une_source` — 3/3 |
+| fiches | « Ça contient quoi, ventes et stocks ? » | `chercher_une_source` — 3/3 |
+| fiches | « Entre ventes et production, qu'y a-t-il dans chacune ? » | `chercher_une_source` ×2 — 3/3 |
+| fiches | « resume moi vite fait ventes, stocks, iris » | `chercher_une_source` ×3 — 3/3 |
+| fiches | « dis-moi vite ce que je trouve dans production et dans ventes » | `sources_de_donnees` ×2 — 3/3 |
+| fiches | « c'est quoi le contenu de production et de stocks ? » | `chercher_une_source` — 3/3 |
+| fiches | « titanic et iris, c'est quoi au juste ? » | **le plancher** — 3/3 |
+| fiches | « quelle est la différence entre iris et titanic ? » | **le plancher** — 3/3 |
+| croisement | « compare la production et les ventes du VEL-04 » | **le plancher** — 3/3 |
+| croisement | « compare les quantités de production et de ventes par produit » | **le plancher** — 3/3 |
+| croisement | « pour le VEL-04, combien en stocks par rapport aux ventes ? » | **le plancher** — 3/3 |
+| témoin | « ventes ou production ? » | rien — 0/3 |
+
+Le plancher ne se déclenche qu'`outils_appeles` VIDE. Les trois questions de
+croisement y passent donc **sans que le modèle ait appelé quoi que ce soit** :
+il a jugé qu'elles ne portaient pas sur les sources, et un décompte de mots l'a
+contredit. À l'inverse, **six des huit messages de fiches sont retenus par le
+MODÈLE**, et « Qu'est-ce que t'appelles source vente, production, stock ? » —
+la question dont C54 fait la raison de ne pas toucher à ce chemin — est de
+ceux-là : elle **n'atteint jamais ce plancher**. La famille réellement en jeu
+n'était pas soixante tours, c'était deux questions.
+
+### Le départage ne se lit pas dans le message
+
+« quelle est la différence entre iris et titanic ? » et « compare la production
+et les ventes du VEL-04 » nomment chacune deux sources et disent chacune plus
+que leurs noms. Elles ne se séparent ni par le décompte des mots, ni par le
+vocabulaire du schéma — **aucune des deux ne nomme une table ou une colonne** —
+ni par la comparaison, que les deux demandent.
+
+Il se lit dans ce que la question **réclame**, et le composant dont c'est le
+métier de le dire est le planificateur.
+
+## Verrou nº 2 — un champ de plus, et son prix mesuré avant d'être payé
+
+`Plan.sources` s'ajoute au contrat de sortie. C'est un **champ**, pas une
+cinquième valeur de `Capability` : une valeur de plus élargit ce que le modèle a
+le droit de choisir, et c'est cet élargissement-là que `orchestrator/plan.py`
+documente comme payant.
+
+Planificateur SEUL, catalogue métier, trois tirages, l'ancien contrat contre le
+nouveau :
+
+| message | ancien contrat | avec le champ |
+|---|---|---|
+| « Combien de commandes avons-nous reçues en 2025 ? » | query · `ventes` | query · `ventes` |
+| « Quel chiffre d'affaires avons-nous réalisé en 2025 ? » | query · `ventes` | query · `ventes` |
+| « Quel produit s'est le plus vendu en 2025 ? » | query · `ventes` | query · `ventes` |
+| « Fais-moi un graphique du CA 2025 par canal de vente. » | analyze · `ventes` | analyze · `ventes` |
+| « Quelle est la durée moyenne d'un arrêt machine ? » | query · `production` | query · `production` |
+| « Combien de fleurs y a-t-il par espèce ? » | query · `iris` | query · `iris` |
+| prédiction titanic, sept features | predict | predict |
+| « ventes ou production ? » | `''` 2/3, `ventes, production` 1/3 | `''` **3/3** |
+
+Aucune dégradation, et le témoin du choix devient même plus stable.
+
+### L'union, et pas l'un OU l'autre
+
+`_perimetre_croise` lit `plan.sources` **et** les noms empaquetés dans
+`plan.source`. Chaque forme prise seule rend deux ou trois questions sur cinq ;
+ensemble, cinq sur cinq. `produites-vs-vendues` le justifie à lui seul :
+`source='production'` et `sources=['ventes']` — un nom dans chaque champ, aucun
+des deux ne portant le périmètre.
+
+## Ce que le champ n'a PAS fait, et pourquoi
+
+**Premier relevé après le correctif : 9/42, contre 10/42 avant.** Le champ était
+inerte : dans le graphe, le planificateur laissait `sources` vide, là où la sonde
+qui avait chiffré son prix le voyait rempli 3 tirages sur 3.
+
+Deux mesures justes, deux contrats différents. **La sonde avait défini sa classe
+de sortie à la main, donc sans docstring.** Pydantic promeut silencieusement
+`__doc__` en `description` du JSON Schema : la docstring de `Plan` — « Décision
+de routage + paramètres extraits de la question. », écrite pour qui lit le code —
+était lue par le modèle, et elle énonce le champ au **singulier**. Le modèle la
+suivait contre la description du champ `sources`, qui dit l'inverse deux lignes
+plus bas.
+
+Six tirages par variante, deux contrats identiques au mot près sauf cette
+phrase, sur « compare la production et les ventes du VEL-04 » :
+
+| description du modèle | ce que rend le plan |
+|---|---|
+| la docstring de `Plan` | `source='production'`, `sources=[]` — **6/6** |
+| (aucune) | `source=None`, `sources=['production','ventes']` — **6/6** |
+
+Le **titre** du schéma, lui, ne change rien : `Plan` et `PlanB` se comportent
+pareil à description égale, ce qui isole la cause sur la docstring seule.
+
+**On retire plutôt qu'on réécrit.** Une troisième rédaction — « une source, ou un
+périmètre qui en croise plusieurs » — a été mesurée : elle rend deux questions
+sur trois et en perd une que le retrait garde. Réécrire, c'est chercher la phrase
+qui plaît au modèle du jour ; retirer, c'est lui rendre le champ tel qu'il est
+déclaré. La description du **champ** reste, et elle est mesurée comme payante :
+sans elle, trois questions de croisement sur huit perdent leur périmètre.
+
+C'est le seul endroit du dépôt où une documentation est explicitement coupée du
+schéma, et `Plan.__get_pydantic_json_schema__` le dit.
+
+## Le troisième obstacle, que les deux premiers cachaient
+
+Le deuxième relevé rend **9/42** lui aussi — et pourtant quelque chose a changé
+que le total ne montre pas : le **genre** de l'échec.
+
+| | avant | après les deux verrous |
+|---|---|---|
+| « aucune donnée regardée » | 7 questions | 3 |
+| « chiffre absent ou faux » | 3 questions | 8 |
+
+Les questions **atteignent** désormais le croisement. C'est la **jointure** qui
+échoue : « compare la production et les ventes du VEL-04 » rend « 27 626 unités
+produites, 2 751 vendues » là où les oracles disent 727 et 125. Un produit
+cartésien — qui ne lève aucune erreur et rend une phrase parfaitement lisible.
+
+La cause est structurelle, et c'est la moitié de ce que `prefixer` avait réparé.
+C54 a rendu au modèle les clés **internes** de chaque source. Restait la seule
+qui compte dans un croisement : **celle qui relie les deux**. Aucun schéma ne la
+porte — deux sources séparées ne déclarent pas de contrainte l'une vers l'autre
+— et le dictionnaire qui l'écrit en prose (« le seul identifiant partagé est
+`code_produit` ») ne suffit pas : C54 l'avait déjà constaté.
+
+### Trois conditions, et les trois se lisent dans les données
+
+`relier_les_sources` déclare une clé qui traverse le périmètre quand, et
+seulement quand :
+
+1. la colonne porte le **même nom** des deux côtés — candidate, rien de plus ;
+2. elle est une **clé naturelle d'UN côté et d'un seul**, sans NULL ni doublon.
+   Deux côtés uniques, ou aucun, et l'on ne sait pas qui référence qui : on se
+   tait plutôt que de choisir ;
+3. **toutes ses valeurs se retrouvent en face.** C'est ce qui sépare une clé
+   d'une homonymie — `libelle` est unique dans `ventes_produits` et existe aussi
+   dans `production_ateliers`, et « Assemblage final » n'est pas un produit.
+
+Jamais à l'intérieur d'une source : ses clés sont déjà déclarées, et en inventer
+là où le schéma s'est tu serait le contredire.
+
+Sur le catalogue métier, le périmètre `ventes` + `production` gagne **exactement
+une** clé — `production_ordres_fabrication.code_produit` vers
+`ventes_produits(code_produit)` — et `quantite`, `libelle`, `code_of` n'en
+gagnent aucune. À trois sources, `stocks_mouvements` et `stocks_inventaire`
+pointent vers la même table, et `code_entrepot`, interne à `stocks`, reste muet.
+
+# Le relevé, avec le banc étendu
+
+Le banc passe de 9 à 14 questions, et le dénominateur de 27 à 42. Deux ajouts
+comptent autant que le reste :
+
+- **les deux phrases du pilote dans LEUR condition.** Elles étaient au banc, mais
+  sur un fil VIERGE ; le pilote les a posées sur un fil lié à `ventes`.
+  `ca-produit-vs-fabrique` est vert sur fil vierge dans le relevé de C54, et le
+  pilote la voit répondre « la quantité fabriquée est de 8 unités » sur fil lié.
+  Les deux relevés sont justes — ils ne parlent pas du même tour ;
+- **trois formulations neuves**, écrites avant de savoir ce qu'elles rendent, dont
+  un croisement par DIFFÉRENCE (« quels produits vendons-nous sans les fabriquer
+  nous-mêmes ? »), que rien au banc ne préfigurait.
+
+```
+DAA_CATALOG_PATH=sources/metier/catalogue.yaml \
+  uv run python scripts/mesure_croisement_de_sources.py --tirages 3
+```
+
+Moteur : vLLM, `google/gemma-4-E4B-it-qat-w4a16-ct`, `http://localhost:8100/v1`.
+Catalogue : `sources/metier/catalogue.yaml`.
+
+| question | fil | avant (`de660f8`) | après | ce qui décide |
+|---|---|---|---|---|
+| `produites-vs-vendues` | vierge | 0/3 | **0/3** | atteinte ; chiffres faux |
+| `vend-plus-quon-produit` | vierge | 0/3 | **3/3** | **la phrase du pilote, réparée** |
+| `ca-produit-vs-fabrique` | vierge | 1/3 | **0/3** | atteinte ; 461 absent |
+| `vel04-production-ventes` | vierge | 0/3 | **0/3** | atteinte ; chiffres faux |
+| `fabrique-vendu-stock` (3 sources) | vierge | 0/3 | **0/3** | atteinte ; piège des annulées |
+| `produites-vs-vendues-fil-lie` | `ventes` | 0/3 | **0/3** | atteinte ; chiffres faux |
+| `ca-produit-vs-fabrique-fil-lie` | `ventes` | 0/3 | **0/3** | atteinte ; 461 absent |
+| `vend-plus-quon-produit-fil-lie` | `ventes` | 0/3 | **0/3** | atteinte ; 4 413 absent |
+| `vel01-fabrique-vendu` (neuve) | vierge | 0/3 | **0/3** | le plan ne désigne pas |
+| `vendus-sans-fabriquer` (neuve) | vierge | 0/3 | **0/3** | le plan ne désigne pas |
+| `total-fabrique-vs-total-vendu` (neuve) | vierge | 0/3 | **0/3** | le plan ne désigne pas |
+| **témoin** — une seule source | `ventes` | 3/3 | **3/3** | 1 496 743,00 €, `ventes` seule |
+| **témoin** — question de sens | `ventes` | 3/3 | **3/3** | reste une question de sens |
+| **témoin** — faire choisir | vierge | 3/3 | **3/3** | fait toujours choisir |
+
+**10/42 → 12/42.** Le total dit moins que le déplacement qu'il cache :
+
+| | avant | après |
+|---|---|---|
+| jamais atteinte (« aucune donnée regardée ») | 7 questions | **3** |
+| atteinte, chiffre faux ou absent | 3 questions | **8** |
+| conforme | 1 | **2** |
+
+**Ce qui est réparé.** « est-ce qu'on vend plus que ce qu'on produit ? » — l'une
+des deux phrases du relevé d'origine — passe de 0/3 à **3/3** : le croisement est
+monté, la clé traversante déclarée, le filtre des annulées appliqué, et le
+verdict est fondé sur 4 413 unités fabriquées.
+
+**Ce qui ne l'est pas, et il faut le dire.** Huit questions atteignent désormais
+le croisement et rendent un chiffre faux. Le verrou n'est plus le chemin, c'est
+la **qualité de la requête** — et c'est un troisième obstacle, distinct des deux
+qu'on a levés. Trois questions neuves n'atteignent toujours pas le croisement
+parce que le planificateur ne désigne pas de périmètre sur ce tirage-là : le
+champ le rend plus fréquent, pas certain.
+
+**La capacité reste donc partielle, et le relevé le dit plutôt que de le taire.**
+
+# Ce qui n'a pas bougé
+
+Campagnes **séquentielles**, jamais de front — et le moteur d'inférence est
+unique, ce qui est vérifié avant chaque lancement. Une précision qui a coûté un
+relevé : `pgrep -f "scripts/mesure_"` **se compte lui-même**, le motif étant dans
+sa propre ligne de commande, et rend « occupé » sur un moteur libre.
+
+| campagne | catalogue | attendu | obtenu |
+|---|---|---|---|
+| questions métier | `sources/metier/` | 36/36 | **35/36** |
+| sources nommées | `sources/metier/` | 60/60 | **60/60** |
+| fils de prédiction | `sources/metier/` | 8/8 | **8/8** |
+| ouverture de source | `sources/demonstration/` | 48/51 | **48/51** |
+| mémoire de conversation | `sources/demonstration/` | le relevé de C51 | **`analyze · source=resultat_1` 3/3** |
+| parcours de démonstration | `sources/demonstration/` | 144/144 | **144/144** |
+| question de sens | `sources/demonstration/` | 36/36 | **36/36** |
+| provenance du sens | le sien | 30/30 | **30/30** |
+| surface conversationnelle | par défaut | 40/40 | **40/40** |
+| surface conversationnelle (2e passe) | par défaut | 40/40 | **40/40** |
+
+**`sources-nommees` est la campagne qui portait l'arbitrage de C54**, et c'est
+elle qu'il fallait regarder : 60/60. Les deux seules questions qui passent par le
+plancher — `difference-deux` et `deux-mots-brefs` — y restent à 3/3, servies par
+la voie de réparation comme avant. Le plancher a bien consulté le plan, celui-ci
+n'a désigné aucun périmètre, et les fiches sont parties.
+
+**La surface conversationnelle est verte deux fois**, et c'est elle qui mesure le
+prix d'un contrat de sortie élargi. Une cinquième valeur de `Capability` l'avait
+cassée ; un champ facultatif ne lui coûte rien.
+
+**L'écart de `questions-metier` est un tirage sur 36**, et il est hors du
+périmètre touché : `ca-par-canal` est une analyse mono-source, dont le code n'a
+pas abouti en 59 secondes. Elle ne passe ni par le plan multi-source, ni par le
+croisement, ni par le plancher.
+
+**Un mot sur la variance, parce qu'elle s'est vue deux fois.** Le relevé de C54
+annonce `ca-produit-vs-fabrique` à 3/3 sur fil vierge ; le même socle, rejoué ici
+avant tout changement, en rend 1/3. Un score de banc à trois tirages n'est pas
+une constante, et une ligne qui bouge d'un tirage ne prouve rien à elle seule.
+C'est pourquoi ce relevé dit le **genre** de l'échec, qui lui a bougé de sept
+questions à trois.
