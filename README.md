@@ -370,9 +370,15 @@ mieux savoir laquelle répond :
   d'un tour ne savait pas faire — le code d'analyse vivait dans un unique champ
   écrasé à chaque tour, et seulement réutilisable si la source n'avait pas changé.
 
-Ce qui remonte au modèle, à chaque tour, c'est donc **le catalogue du magasin** —
-une ligne par artefact, jamais son contenu — et c'est lui qui grossissait sans
-fin ; les deux mémoires ci-dessus ne pèsent rien.
+Ce qui remonte au modèle, c'est **le catalogue du magasin** — une ligne par
+artefact, jamais son contenu — et c'est lui qui grossissait sans fin ; les deux
+mémoires ci-dessus ne pèsent rien. Il ne remonte pas à *chaque tour* et pas à
+tous les nœuds, et c'est mesuré : sur les huit nœuds du graphe, trois en
+reçoivent un texte — le planificateur, le rappel, et le nœud d'analyse pour les
+tableaux qu'il monte. Les autres voient ces tableaux comme des sources
+*interrogeables*, sans qu'aucune ligne de catalogue n'entre dans leur prompt.
+Le détail, nœud par nœud et en caractères, est dans
+[docs/memoire-de-conversation.md](docs/memoire-de-conversation.md).
 
 ### Ce qui entre dans le contexte est plafonné
 

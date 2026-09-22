@@ -17,12 +17,21 @@ import pytest
 from data_analyst_agent import prompts
 from data_analyst_agent.orchestrator.plan import planner_system_prompt, planner_template
 
+# Les SEPT prompts du paquet, et non cinq. `rappel.txt` et `reparation.txt`
+# manquaient : la doublure de test dérivait pourtant déjà leurs marqueurs, et
+# c'est par cet écart qu'un prompt échappait à la couverture de ce fichier — il
+# n'était ni lu, ni rendu, ni confronté aux autres pour l'unicité de son
+# marqueur. `test_le_helper_de_test_derive_ses_marqueurs_des_fichiers` compare
+# ce tuple TERME À TERME, ce qui est la raison pour laquelle le compléter
+# demandait de compléter les deux listes en même temps.
 TOUS = (
     prompts.PLANNER,
     prompts.RETRIEVAL,
     prompts.ANALYSIS,
     prompts.SYNTHESIS,
     prompts.SYSTEME,
+    prompts.RAPPEL,
+    prompts.REPARATION,
 )
 
 
@@ -160,6 +169,8 @@ def test_le_helper_de_test_derive_ses_marqueurs_des_fichiers():
         scripted_llm.ANALYSIS,
         scripted_llm.SYNTHESIS,
         scripted_llm.SYSTEME,
+        scripted_llm.RAPPEL,
+        scripted_llm.REPARATION,
     )
     assert derives == tuple(prompts.marqueur(nom) for nom in TOUS)
 
