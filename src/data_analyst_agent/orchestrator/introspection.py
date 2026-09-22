@@ -261,6 +261,59 @@ def choix_de_source(question: str, catalogue: Catalog) -> str | None:
     return nom if len(reste) <= MOTS_EN_PLUS_D_UN_CHOIX else None
 
 
+# Ce par quoi le français désigne le TEMPS, en RADICAUX. `date` dit « dates »,
+# « datent » et « datée » ; `period` dit « période » et « périodicité ».
+#
+# **`date` et non `dat`**, et ce n'est pas de la prudence : `dat` reconnaît
+# « dataset », qui est un mot de ce dépôt — quatre tests l'ont dit avant qu'on
+# le voie, dont « décris le dataset iris » et « donne-moi les attributs du
+# dataset iris ». Un radical trop court prend le vocabulaire du domaine pour
+# celui du temps. Le prix est « datation », que `date` ne reconnaît pas ; aucune
+# question mesurée ne l'emploie.
+#
+# Ce n'est pas le lexique qu'on a retiré, et la différence tient en une phrase :
+# celui-là listait des TOURNURES — « quelles données as-tu ? », « tu bosses sur
+# quoi ? » —, et la famille des façons de poser une question est ouverte, donc
+# une liste y est toujours en retard d'une formulation. La famille des mots par
+# lesquels une langue désigne le temps, elle, est close : `dat`, `period`,
+# `temporel`, `chronolog` couvrent ce qui se dit, et un mot de plus se verrait.
+# C'est la même nature que les types SQL qui portent une date, du côté du
+# schéma — un vocabulaire de CONCEPT, pas un catalogue de phrases.
+#
+# **`quand` n'y est pas**, et c'est la seule exclusion délibérée : il ouvre
+# aussi bien une question de temps qu'une subordonnée de condition — « quand je
+# te donne un âge, tu prédis quoi ? » n'interroge aucune période. La question
+# mesurée porte « datent » de toute façon.
+RADICAUX_DU_TEMPS = (
+    "date",
+    "period",
+    "temporel",
+    "chronolog",
+    "horodat",
+    "epoque",
+    "anciennete",
+    "millesim",
+)
+
+# La ponctuation colle au mot qu'elle suit — « de quelle période ? » —, et
+# « periode ? » n'est pas « periode ».
+_PONCTUATION = ",;:.!?()[]«»\"'"
+
+
+def demande_une_periode(question: str) -> bool:
+    """Le message demande-t-il QUAND — de quand datent les données, sur quelle période ?
+
+    Lu sur les mots et non sur des tournures (cf. ``RADICAUX_DU_TEMPS``). Sert
+    au plancher de ``orchestrator/systeme`` : il ne s'en saisit que là où la
+    réponse est une ABSENCE, donc là où aucun calcul ne peut la trouver.
+    """
+    return any(
+        mot.strip(_PONCTUATION).startswith(radical)
+        for mot in replie(question).split()
+        for radical in RADICAUX_DU_TEMPS
+    )
+
+
 def dataset_vise(question: str, registre: Registry) -> str | None:
     """Le modèle que la question nomme, ou l'unique modèle du registre."""
     nom = _nomme_dans(question, registre.datasets)

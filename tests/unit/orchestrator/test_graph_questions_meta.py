@@ -23,6 +23,7 @@ from pydantic_ai import UnexpectedModelBehavior
 from data_analyst_agent import prompts
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import Catalog, FileSource
+from data_analyst_agent.agents.retrieval.faits import RelevesDuCatalogue
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator import introspection
 from data_analyst_agent.orchestrator.graph import Orchestrator
@@ -1159,6 +1160,142 @@ def test_le_plancher_ne_double_pas_un_outil_deja_appele(registre: Registry):
         catalogue_declare=catalogue,
         catalogue_effectif=catalogue,
         registre=registre,
+        request_limit=3,
+    )
+
+    assert resultat.outils_appeles == ("sources_de_donnees",)
+
+
+# --- le troisième plancher : on demande QUAND, et rien n'a de date à donner ---
+
+
+def _catalogue_date(tmp_path: Path, *, datee: bool) -> Catalog:
+    """Deux sources de fichier, dont la seconde porte — ou non — une colonne de date."""
+    sans = tmp_path / "sans.csv"
+    sans.write_text("sexe,survie\nf,1\nm,0\n", encoding="utf-8")
+    autre = tmp_path / "autre.csv"
+    autre.write_text(
+        "jour,montant\n2025-01-02,10\n2025-03-04,20\n" if datee else "taille,poids\n1,2\n3,4\n",
+        encoding="utf-8",
+    )
+    return Catalog(
+        sources=[
+            FileSource(name="titanic", path=sans, description="Les passagers."),
+            FileSource(name="autre", path=autre, description="Le reste."),
+        ]
+    )
+
+
+def test_une_question_de_date_sans_aucune_date_atteint_l_agent_systeme(
+    tmp_path: Path, registre: Registry
+):
+    """« De quand datent les données que tu as ? », mesurée le 2026-09-22.
+
+    Trois tirages sur trois : l'agent système répond ``AUTRE`` sans appeler le
+    moindre outil, le tour repart au planificateur, et l'agent SQL — à qui l'on
+    demande des dates sur un schéma qui n'en porte aucune — rend des ÂGES. Le
+    plancher sert l'inventaire, où chaque source porte déjà son constat.
+    """
+    catalogue = _catalogue_date(tmp_path, datee=False)
+
+    resultat = run_systeme(
+        "De quand datent les données que tu as ?",
+        model=_sans_aucun_outil().model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        releves=RelevesDuCatalogue(catalogue),
+        request_limit=3,
+    )
+
+    assert resultat.concerne_le_systeme
+    assert resultat.outils_appeles == ("plancher_de_la_periode",)
+    assert "aucune colonne de date" in resultat.faits
+
+
+def test_une_source_datee_referme_le_plancher(tmp_path: Path, registre: Registry):
+    """La garde, et c'est elle qui rend ce plancher inoffensif partout ailleurs.
+
+    Dès qu'UNE source porte une période, la question a une réponse à calculer :
+    le plancher se retire et le tour repart au planificateur, comme avant. C'est
+    ce qui laisse les catalogues de démonstration et métier — dont les sources
+    principales sont toutes datées — exactement où ils étaient.
+    """
+    catalogue = _catalogue_date(tmp_path, datee=True)
+
+    resultat = run_systeme(
+        "De quand datent les données que tu as ?",
+        model=_sans_aucun_outil().model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        releves=RelevesDuCatalogue(catalogue),
+        request_limit=3,
+    )
+
+    assert not resultat.concerne_le_systeme
+
+
+def test_une_question_sans_rapport_avec_le_temps_ne_declenche_rien(
+    tmp_path: Path, registre: Registry
+):
+    """L'autre bord : le plancher ne parle qu'aux questions qui demandent QUAND.
+
+    « Combien de passagers ont survécu ? » se compte sur les lignes, et aucune
+    colonne de date n'y change quoi que ce soit.
+    """
+    catalogue = _catalogue_date(tmp_path, datee=False)
+
+    resultat = run_systeme(
+        "Combien de passagers ont survécu ?",
+        model=_sans_aucun_outil().model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        releves=RelevesDuCatalogue(catalogue),
+        request_limit=3,
+    )
+
+    assert not resultat.concerne_le_systeme
+
+
+def test_sans_releve_le_plancher_de_periode_se_tait(tmp_path: Path, registre: Registry):
+    """Rien n'a été lu dans les sources : on ne SAIT pas qu'il n'y a pas de date.
+
+    Un plancher qui parlerait quand même affirmerait une absence qu'il n'a pas
+    constatée — exactement ce que ce module refuse de faire partout ailleurs.
+    """
+    catalogue = _catalogue_date(tmp_path, datee=False)
+
+    resultat = run_systeme(
+        "De quand datent les données que tu as ?",
+        model=_sans_aucun_outil().model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        request_limit=3,
+    )
+
+    assert not resultat.concerne_le_systeme
+
+
+def test_le_plancher_de_periode_ne_double_pas_un_outil_deja_appele(
+    tmp_path: Path, registre: Registry
+):
+    """Le modèle a appelé l'outil : c'est lui qui a servi, et la trace le dit."""
+    catalogue = _catalogue_date(tmp_path, datee=False)
+    llm = ScriptedLLM().script(
+        SYSTEME,
+        [tool_call("sources_de_donnees", {}), text("Aucune de mes sources n'a de date.")],
+    )
+
+    resultat = run_systeme(
+        "De quand datent les données que tu as ?",
+        model=llm.model(),
+        catalogue_declare=catalogue,
+        catalogue_effectif=catalogue,
+        registre=registre,
+        releves=RelevesDuCatalogue(catalogue),
         request_limit=3,
     )
 

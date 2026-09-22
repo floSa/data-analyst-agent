@@ -1359,3 +1359,52 @@ def test_le_constat_d_absence_de_periode_n_exige_rien_de_la_reponse():
         )
         == ""
     )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "De quand datent les données que tu as ?",
+        "Sur quelle période portent les données de la source titanic ?",
+        "tes données, elles sont de quelle époque ?",
+        "il y a une colonne temporelle là-dedans ?",
+        "c'est daté comment, tout ça ?",
+    ],
+)
+def test_une_question_de_temps_est_reconnue_a_ses_mots(question: str):
+    """Reconnue sur les MOTS du temps, pas sur des tournures.
+
+    C'est ce qui la distingue du lexique retiré en C42 : celui-là listait des
+    façons de poser une question — famille ouverte, toujours en retard d'une
+    formulation — quand celui-ci liste les mots par lesquels le français désigne
+    le temps, famille close. Aucune des cinq tournures ci-dessus n'est écrite
+    nulle part.
+    """
+    assert introspection.demande_une_periode(question)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Combien de passagers ont survécu ?",
+        "Quelles colonnes y a-t-il dans la table passengers ?",
+        "Que sais-tu faire ?",
+        "quand je te donne un âge, tu prédis quoi ?",
+        "quelles sources de données possèdes-tu ?",
+        "décris le dataset iris",
+        "Donne-moi les attributs du dataset iris",
+    ],
+)
+def test_une_question_qui_ne_demande_pas_quand_n_est_pas_reconnue(question: str):
+    """L'autre bord, et deux des six sont des cas que des tests ont trouvés.
+
+    « quand » a été retiré du vocabulaire : le mot ouvre en français une question
+    de temps ET une subordonnée de condition, et le garder aurait fait passer
+    « quand je te donne un âge, tu prédis quoi ? » pour une question de période.
+    La question mesurée porte « datent » de toute façon.
+
+    Et le radical est `date`, pas `dat` : le plus court reconnaît **dataset**,
+    qui est un mot de ce dépôt. Quatre tests l'ont dit avant qu'on le voie. Un
+    radical trop court prend le vocabulaire du domaine pour celui du temps.
+    """
+    assert not introspection.demande_une_periode(question)

@@ -51,6 +51,7 @@ import re
 import sys
 import time
 import unicodedata
+from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -78,21 +79,58 @@ MARQUEUR_DE_REPLI = "je n'ai pas bien compris"
 # bonne réponse est « il n'y a aucune colonne de date ».
 TYPES_TEMPORELS = ("DATE", "TIME", "TIMESTAMP", "DATETIME")
 
-# Les tournures qui disent honnêtement l'absence de colonne temporelle. Ce
-# n'est pas de l'indulgence : quand la source n'a pas de date, c'est LA bonne
-# réponse, et exiger un nom de colonne compterait faux une réponse juste.
-AVEUX_D_ABSENCE_DE_DATE = (
-    "aucune colonne de date",
-    "pas de colonne de date",
-    "aucune colonne temporelle",
-    "aucune date",
-    "pas de date",
-    "aucune information de date",
-    "aucune information temporelle",
-    "aucune donnee temporelle",
-    "ne contient pas de date",
-    "ne comporte aucune date",
-)
+# --- ce qu'une réponse sur la PÉRIODE doit porter ----------------------------
+#
+# Deux formes, et aucune liste de tournures. Une liste de tournures a déjà été
+# écrite ici, et c'est elle qu'on retire : elle disait l'absence de date en dix
+# phrases entières, donc en dix sous-chaînes, donc elle refusait la onzième
+# façon de le dire — le défaut réparé en C51, dans l'autre sens. Ce qui est
+# exigé est un FAIT ; ce qu'on reconnaît est sa forme.
+
+# Un MILLÉSIME, et c'est toute la définition d'une date ici. « 1912 »,
+# « 1912-04-10 », « 10/04/1912 » et « avril 1912 » le portent tous, et une
+# période qui n'en porte aucun ne dit pas QUAND : c'est une borne sans année.
+# La garde de chaque côté tient les décimales à l'écart — ni « 0.42 » ni
+# « 80.0 » ne portent d'année, et c'est exactement la réponse qu'un oracle a
+# bénie (cf. ``VeriteTerrain.exigence_de_periode``).
+MILLESIME = re.compile(r"(?<!\d)(?:1\d{3}|2[01]\d{2})(?!\d)")
+
+# Ce qui, dans une phrase, NIE l'existence — en mots entiers. Ce sont des mots
+# outils, courts et invariables, et les comparer en préfixe ferait reconnaître
+# « pas » dans « passagers » : le contre-exemple est dans la source.
+MOTS_D_ABSENCE = ("pas", "ni", "sans", "rien", "non")
+
+# Les deux qui se conjuguent, donc pris par leur radical : « aucun », « aucune »,
+# « aucunes », « dépourvu », « dépourvue ».
+RADICAUX_D_ABSENCE = ("aucun", "depourvu")
+
+# Ce qui désigne le TEMPS, par le radical et non par le mot : `date` dit
+# « dates », « datée » et « datent » sans qu'on les énumère.
+#
+# `date` et non `dat` : le radical plus court reconnaît « dataset », qui est un
+# mot de ce dépôt, et « je n'ai pas de dataset » compterait alors pour un constat
+# d'absence de date.
+#
+# Déclaré ICI et non importé d'`introspection`, qui en tient un du même genre
+# pour savoir quand un message demande QUAND. Ce n'est pas un oubli : un oracle
+# qui partagerait son vocabulaire avec le code qu'il juge ne pourrait plus
+# prendre ce code en défaut sur ce vocabulaire — les deux se tromperaient
+# ensemble, et la campagne rendrait vert. Les deux listes servent d'ailleurs
+# deux questions différentes : celle-ci lit une RÉPONSE, l'autre lit une
+# QUESTION.
+RADICAUX_DU_TEMPS = ("date", "period", "temporel", "chronolog", "horodat", "annee", "millesim")
+
+# Ce qu'on retire d'un mot avant de le comparer. La ponctuation colle au mot
+# qu'elle suit — « aucune colonne de date, elle ne couvre… » — et « date, » n'est
+# pas « date ».
+PONCTUATION = ",;:.!?()[]«»\"'"
+
+# Où s'arrête une phrase. C'est la portée de la négation, et rien de plus
+# étroit : elle nie ce qui la suit DANS SA PHRASE. Un comptage de mots l'aurait
+# fait, mais les distances mesurées vont de un — « aucune période » — à six
+# — « aucune de mes sources ne contient de colonne temporelle » —, et un seuil
+# posé entre les deux refuserait la seconde, qui est une réponse juste.
+FIN_DE_PHRASE = re.compile(r"[.;!?\n]")
 
 VERDICTS = ("correct", "a_cote", "repli", "erreur")
 LIBELLES = {
@@ -131,6 +169,27 @@ def _nomme(plat: str, nom: str) -> bool:
 
 
 @dataclass(frozen=True)
+class Exigence:
+    """Ce qu'une réponse doit PORTER, jugé par une fonction et non par des mots.
+
+    Le troisième bord de l'oracle, à côté de ``attendus_tous`` et de
+    ``interdits``, et il existe parce que les deux premiers ne savent exprimer
+    qu'une chose : « cette chaîne-ci est là ». Certaines questions n'attendent
+    aucune chaîne en particulier — « de quand datent tes données ? » attend une
+    DATE, quelle qu'elle soit, ou le constat qu'il n'y en a pas. Énumérer les
+    écritures d'une date ou les façons de dire une absence ferait une liste, et
+    une liste refuse la première tournure qu'elle n'a pas prévue.
+
+    ``manque`` est ce que le relevé imprime quand le juge dit non : ce qui
+    MANQUE à la réponse, dans les mots de la question, et non le nom de la
+    fonction qui l'a refusée.
+    """
+
+    manque: str
+    juge: Callable[[str], bool]
+
+
+@dataclass(frozen=True)
 class QuestionMeta:
     """Une question et l'oracle qui décide de son verdict.
 
@@ -152,6 +211,9 @@ class QuestionMeta:
     Renseignée sur les témoins : c'est ce qui prouve qu'un routeur de
     questions méta ne s'est pas emparé d'une question sur les données.
 
+    ``exigence`` : ce qui ne se dit pas en chaînes attendues — un FAIT que la
+    réponse doit porter, jugé par une fonction (cf. ``Exigence``).
+
     ``interdits`` : les chaînes qu'une réponse juste ne PEUT pas contenir.
     Ajouté parce que l'oracle a compté juste une réponse fausse : à « quelles
     colonnes contiennent des valeurs manquantes ? », le modèle répondait
@@ -169,6 +231,7 @@ class QuestionMeta:
     attendus_tous: tuple[str, ...] = ()
     attendus_parmi: tuple[str, ...] = ()
     interdits: tuple[str, ...] = ()
+    exigence: Exigence | None = None
     clarification_admise: tuple[str, ...] = ()
     capacite_attendue: str | None = None
 
@@ -178,6 +241,8 @@ class QuestionMeta:
         manquants = [a for a in self.attendus_tous if replie(a) not in plat]
         if self.attendus_parmi and not any(replie(a) in plat for a in self.attendus_parmi):
             manquants.append("aucun de : " + ", ".join(self.attendus_parmi))
+        if self.exigence is not None and not self.exigence.juge(reponse):
+            manquants.append(self.exigence.manque)
         manquants += [f"nomme {i} à tort" for i in self.interdits if _nomme(plat, i)]
         return not manquants, manquants
 
@@ -312,16 +377,42 @@ class VeriteTerrain:
             if c not in self.colonnes_a_trous and c not in ("passenger_id",)
         )
 
-    def oracle_de_periode(self, cle_table: str) -> tuple[str, ...]:
-        """Ce qu'une réponse FONDÉE sur la période peut contenir.
+    def cles_de_table(self, source: str = "") -> tuple[str, ...]:
+        """Les tables relevées — celles d'une source, ou toutes.
 
-        Une colonne de date s'il y en a une ; sinon l'aveu que la source n'en
-        a pas — plus les noms de colonnes, qui prouvent aussi qu'on a regardé
-        le schéma au lieu d'inventer des bornes plausibles.
+        Une question peut porter sur UNE source (« la source titanic ») ou sur
+        tout ce que l'agent possède (« les données que tu as ») : ce n'est pas
+        le même périmètre, et l'oracle de période se lit sur le périmètre de sa
+        question.
         """
-        if self.temporelles[cle_table]:
-            return self.temporelles[cle_table]
-        return AVEUX_D_ABSENCE_DE_DATE + self.colonnes[cle_table]
+        return tuple(c for c in self.temporelles if not source or c.startswith(f"{source}."))
+
+    def exigence_de_periode(self, *cles_de_table: str) -> Exigence:
+        """Ce qu'une réponse sur la PÉRIODE doit porter — décidé par la source.
+
+        Deux exigences, jamais les deux à la fois, et c'est la vérité terrain
+        qui tranche. Là où une colonne de date existe, une réponse fondée porte
+        une DATE — y accepter « aucune période » bénirait une réponse fausse.
+        Là où il n'y en a aucune, elle CONSTATE l'absence — et une date y serait
+        inventée.
+
+        **Ce qu'elle n'accepte plus, et pourquoi.** Les NOMS DE COLONNES de la
+        table. Ils y étaient pour prouver qu'on avait regardé le schéma au lieu
+        d'inventer des bornes plausibles ; ils ont béni une réponse fausse.
+        « De quand datent les données que tu as ? » recevait « les données de la
+        table `passengers` couvrent des âges allant de 0.42 à 80.0 ans » —
+        `age` est une colonne de `passengers`, donc l'oracle était satisfait, et
+        une question de DATES comptait juste avec une réponse d'ÂGES (deux
+        campagnes, le 2026-09-22, 40/40 les deux fois). Nommer une colonne ne
+        prouve rien sur les dates : c'est une exigence qui n'exige rien.
+
+        Le pendant exact du défaut de C51, dans l'autre sens : un oracle qui
+        exige UN mot refuse des réponses justes, un oracle qui n'exige rien en
+        bénit de fausses.
+        """
+        if any(self.temporelles[cle] for cle in cles_de_table):
+            return Exigence("une date", porte_une_date)
+        return Exigence("le constat qu'il n'y a aucune date", constate_l_absence_de_date)
 
 
 def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
@@ -458,14 +549,22 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             "periode-directe",
             "période",
             f"Sur quelle période portent les données de la source {src} ?",
-            attendus_parmi=vt.oracle_de_periode(passengers),
+            # le périmètre de la question : cette source-là, et ses tables
+            exigence=vt.exigence_de_periode(*vt.cles_de_table(src)),
         ),
         QuestionMeta(
             "periode-indirecte",
             "période",
             "De quand datent les données que tu as ?",
-            attendus_parmi=vt.oracle_de_periode(passengers),
-            clarification_admise=vt.sources,
+            # « que tu as » : toutes les sources, donc toutes les tables
+            exigence=vt.exigence_de_periode(*vt.cles_de_table()),
+            # Aucune clarification admise, et c'est la seconde porte par
+            # laquelle une non-réponse était bénie. « Sur quelle source veux-tu
+            # travailler : titanic, iris ? » a compté juste ici (relevés du
+            # 2026-09-07, §3 et §7 de docs/surface-conversationnelle.md) : la
+            # question ne laisse pourtant RIEN à choisir — elle
+            # porte sur tout ce que l'agent a, et les deux sources se datent de
+            # la même façon. Une clarification n'y porte ni date ni constat.
         ),
         # --- combien de lignes ?
         QuestionMeta(
@@ -831,6 +930,56 @@ def _meme_mot(porte: tuple[str, bool], attendu: tuple[str, bool]) -> bool:
     if coupee or coupe:
         return jeton.startswith(cible) or cible.startswith(jeton)
     return jeton == cible
+
+
+def porte_une_date(texte: str) -> bool:
+    """Le texte porte-t-il une DATE ?
+
+    Un millésime, et rien d'autre à chercher : toute écriture d'une date en
+    porte un — « 1912-04-10 », « 10/04/1912 », « avril 1912 », « 1912 ». C'est
+    une FORME et non une liste d'écritures acceptées, du même ordre que
+    ``NOMBRE`` : la famille des façons d'écrire une date est ouverte, celle des
+    façons d'écrire une année ne l'est pas.
+
+    Ce qu'il refuse est ce qu'on cherchait à refuser : « des âges allant de 0.42
+    à 80.0 ans » ne porte aucune année, et ne dit donc pas QUAND.
+    """
+    return MILLESIME.search(introspection.replie(texte)) is not None
+
+
+def _nie(mot: str) -> bool:
+    """Ce mot-ci nie-t-il l'existence de ce qui suit ?"""
+    return mot in MOTS_D_ABSENCE or any(mot.startswith(r) for r in RADICAUX_D_ABSENCE)
+
+
+def _parle_du_temps(mot: str) -> bool:
+    return any(mot.startswith(radical) for radical in RADICAUX_DU_TEMPS)
+
+
+def constate_l_absence_de_date(texte: str) -> bool:
+    """Le texte CONSTATE-t-il qu'il n'y a aucune date ?
+
+    Une négation, puis dans la même phrase le temps qu'elle nie, et dans cet
+    ORDRE : « aucune colonne de date », « pas de date », « sans aucune donnée
+    temporelle », « aucune de mes sources ne contient de colonne temporelle ».
+    Aucune de ces quatre écritures n'est listée nulle part — ce sont les deux
+    vocabulaires et leur ordre qui les reconnaissent toutes, comme
+    ``introspection._actions`` reconnaît « je prédis » là où le fait dit
+    « prédire ».
+
+    **L'ordre fait tout le travail, et c'est une distinction mesurée.** Le
+    constat met sa négation AVANT ce qu'elle nie, et nie une EXISTENCE ; la
+    réponse vague la met APRÈS, et ne nie qu'une qualité — « une période non
+    spécifiée dans sa description », deux campagnes sur deux avant C52, porte
+    « période » et « non » et ne dit toujours pas qu'il n'y a pas de date. Un
+    oracle qui aurait cherché la seule rencontre des deux mots l'aurait bénie.
+    """
+    for phrase in FIN_DE_PHRASE.split(introspection.replie(texte)):
+        mots = [mot.strip(PONCTUATION) for mot in phrase.split()]
+        nie = next((rang for rang, mot in enumerate(mots) if _nie(mot)), None)
+        if nie is not None and any(_parle_du_temps(mot) for mot in mots[nie + 1 :]):
+            return True
+    return False
 
 
 # Les nombres écrits EN LETTRES, lus comme des nombres. Ce n'est pas une liste

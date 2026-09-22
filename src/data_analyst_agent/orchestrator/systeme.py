@@ -693,6 +693,61 @@ def _plancher_des_sources_nommees(deps: SystemeDeps) -> None:
     )
 
 
+def _plancher_de_la_periode(deps: SystemeDeps) -> None:
+    """Le message demande QUAND, et aucune source n'a de date à donner.
+
+    Le TROISIÈME plancher, et il répare le même genre de tour que les deux
+    autres : aucun outil appelé, et pourtant rien en aval ne sait répondre.
+
+    **Mesuré le 2026-09-22, trois tirages sur trois, catalogue par défaut.**
+    « De quand datent les données que tu as ? » : l'agent système répond
+    ``AUTRE`` sans appeler le moindre outil, le tour repart au planificateur qui
+    le classe `query`, et l'agent SQL — à qui l'on demande des dates sur un
+    schéma qui n'en porte aucune — écrit ``SELECT MIN(age), MAX(age) FROM
+    passengers``. L'utilisateur reçoit « les données couvrent des âges allant de
+    0.42 à 80.0 ans » à une question de dates. C'est le comblement que C52 a
+    nommé, un nœud plus loin : un fait absent qui ne dit pas qu'il est absent
+    laisse chercher autre chose à mesurer.
+
+    **Ce n'est ni le prompt ni la fiche d'outil qui répare**, et pas par
+    principe : cinq formulations l'ont été ici, et les cinq ont été retirées,
+    chacune au prix d'une question de la surface conversationnelle. §20.9 de
+    `docs/surface-conversationnelle.md` en garde la trace la plus nette — la
+    ligne de frontière qui faisait justement capter CETTE question-ci par
+    l'agent système lui faisait rendre une phrase vague, et en coûtait une
+    seconde ailleurs. Un plancher, lui, ne parle à personne.
+
+    **Et il ne se déclenche que là où la réponse est une ABSENCE.** C'est la
+    garde qui le rend inoffensif partout ailleurs : dès qu'UNE source du
+    catalogue porte une période, il se retire et la question suit son chemin —
+    elle a alors une réponse à calculer, et c'est au planificateur de la
+    chercher. Les catalogues de démonstration et métier datent toutes leurs
+    sources principales : ce plancher y est muet, et les campagnes qui s'y
+    jouent ne peuvent pas bouger.
+
+    Il n'invente rien : il sert l'inventaire, celui-là même que
+    ``sources_de_donnees`` aurait rendu, et où chaque source porte déjà son
+    constat — « aucune période couverte : la source ne porte aucune colonne de
+    date » (C52). Le fait existait ; ce qui manquait était qu'on le serve au
+    tour qui renonce.
+    """
+    if deps.outils_appeles or deps.releves is None:
+        return
+    if not introspection.demande_une_periode(deps.question):
+        return
+    faits = deps.releves.tous()
+    # TOUTES, et pas une seule : une source datée rend la question calculable,
+    # et un plancher qui parlerait quand même répondrait à côté d'une réponse
+    # qui existe. Un relevé en échec ne constate rien — on ne sait pas — et
+    # ferme donc le plancher lui aussi.
+    if not faits or not all(releve.sans_periode for releve in faits.values()):
+        return
+    deps.retenir(
+        "plancher_de_la_periode",
+        introspection.decrire_les_sources(deps.catalogue_declare, faits),
+    )
+
+
 def run_systeme(
     question: str,
     *,
@@ -741,6 +796,7 @@ def run_systeme(
         usage_limits=UsageLimits(request_limit=request_limit),
     )
     _plancher_des_sources_nommees(deps)
+    _plancher_de_la_periode(deps)
     return ResultatSysteme(
         reponse=run.output,
         faits="\n\n".join(deps.faits),

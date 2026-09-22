@@ -3604,3 +3604,244 @@ pas une réponse, il change la porte par laquelle elle sort.** Quand une questio
 bascule d'un chemin à l'autre, ce qu'il faut regarder n'est pas le prompt qui
 l'a routée, c'est si le nouveau chemin porte les faits que l'ancien portait.
 Ici, il en manquait un.
+
+## 25. L'oracle bénissait une réponse fausse
+
+Le §24 finit sur une phrase qui était fausse au moment où elle a été écrite :
+
+> `periode-indirecte` — « de quand datent les données que tu as ? » — reste verte
+> et continue de passer par le planificateur : elle n'a pas changé de chemin.
+
+Elle *restait verte*, en effet. Elle ne restait pas *juste*. Deux campagnes de
+surface, **40/40** les deux fois, et l'une des quarante répondait à côté sans
+que rien ne le dise.
+
+### 25.1 Ce que la campagne bénissait
+
+| | |
+|---|---|
+| clé | `periode-indirecte` |
+| question | De quand datent les données que tu as ? |
+| chemin | `system → plan → retrieval → synthesize`, 5 appels LLM |
+| réponse | *Les données disponibles dans la table `passengers` couvrent des **âges** allant de 0.42 à 80.0 ans.* |
+| verdict | **répondu correctement** |
+
+On demande des DATES, il répond des ÂGES. Ni `titanic` ni `iris` ne portent la
+moindre colonne de date, et la bonne réponse est celle que le §24 vient de
+rendre possible sur la formulation directe : *ne porte aucune colonne de date,
+elle ne couvre donc aucune période*.
+
+**Deux formulations de la même question, deux chemins, deux réponses, et le même
+verdict vert.** Tant que l'oracle bénit celle-là, le 40/40 n'est pas un verdict :
+c'est un chiffre.
+
+### 25.2 Ce que l'oracle exigeait, et ce qu'il exige
+
+L'ancien, tel qu'il était écrit :
+
+```python
+def oracle_de_periode(self, cle_table):
+    if self.temporelles[cle_table]:
+        return self.temporelles[cle_table]
+    return AVEUX_D_ABSENCE_DE_DATE + self.colonnes[cle_table]
+```
+
+Deux défauts, et le second est celui qui a béni :
+
+1. `AVEUX_D_ABSENCE_DE_DATE` était une **liste de dix tournures entières**
+   comparées en sous-chaîne — le défaut du §22 dans l'autre sens : une liste
+   refuse la onzième façon de dire l'absence ;
+2. `+ self.colonnes[cle_table]` acceptait **n'importe quel nom de colonne de la
+   table**. Il était là pour prouver qu'on avait regardé le schéma au lieu
+   d'inventer des bornes plausibles. Or `age` est une colonne de `passengers`,
+   et il vit à l'intérieur du mot « âges », que l'oracle replie en « ages ». La
+   réponse sur les âges satisfaisait donc l'oracle **par le mot même qui la
+   rendait fausse**.
+
+Une exigence qui accepte dix noms de colonnes n'exige rien.
+
+Le nouveau n'est pas une liste plus longue, ni une liste plus courte : c'est une
+**exigence jugée par une fonction**, un troisième bord à côté de `attendus_tous`
+et de `interdits`.
+
+```python
+@dataclass(frozen=True)
+class Exigence:
+    manque: str
+    juge: Callable[[str], bool]
+```
+
+Et deux juges, tous deux de FORME :
+
+- **une date** est un millésime — `(?<!\d)(?:1\d{3}|2[01]\d{2})(?!\d)`. Toute
+  écriture d'une date en porte un ; « 0.42 » et « 80.0 » n'en portent aucun ;
+- **le constat d'absence** est une négation suivie, dans la même phrase, de ce
+  qu'elle nie : les mots d'absence (`pas`, `ni`, `sans`, `rien`, `non`,
+  `aucun*`, `dépourvu*`) devant les radicaux du temps (`date`, `period`,
+  `temporel`, `chronolog`, `horodat`, `année`, `millésim`). Six
+  écritures mesurées passent, dont aucune n'est écrite nulle part —
+  « ne porte aucune colonne de date », « aucune de mes sources ne contient de
+  colonne temporelle », « dépourvues de dates », « ne sont pas datées »…
+
+**L'ORDRE fait tout le travail**, et c'est ce qui distingue le constat de la
+phrase vague. Le constat met sa négation AVANT ce qu'elle nie et nie une
+EXISTENCE ; la réponse vague la met après et ne nie qu'une qualité — *« une
+période non spécifiée dans sa description »*, celle de deux campagnes avant le
+§24, porte « période » et « non » et ne dit toujours pas qu'il n'y a pas de
+date. Un oracle qui aurait cherché la seule rencontre des deux mots l'aurait
+bénie.
+
+**Et lequel des deux est exigé, c'est la source qui le dit.** Là où une colonne
+de date existe, une réponse fondée porte une date, et « aucune période » y
+serait faux. Là où il n'y en a aucune, elle constate l'absence, et une date y
+serait inventée. L'oracle reste lu dans la source, comme tous les autres de
+cette batterie.
+
+**La seconde porte, fermée elle aussi.** `periode-indirecte` admettait une
+*clarification* énumérant les sources — et les relevés des §3 et §7 en gardent la
+trace : « Sur quelle source veux-tu travailler : titanic, iris ? », **répondu
+correctement**. La question ne laisse pourtant rien à choisir : elle porte sur
+tout ce que l'agent a, et les deux sources se datent de la même façon. Une
+clarification n'y porte ni date ni constat.
+
+### 25.3 Les trente-neuf autres
+
+Un oracle qui laisse passer celle-là en laisse peut-être passer d'autres. Les
+trente-neuf autres questions ont été relues une à une. **Trente-quatre tiennent**
+— ce sont celles dont l'oracle est une **conjonction exhaustive** tirée de la
+source : les dix colonnes de `passengers`, les trois modèles du registre, les
+deux sources du catalogue. Une réponse fausse devrait les nommer toutes.
+
+**Cinq ne tiennent pas**, et une seule a été corrigée ici :
+
+| clé | ce que l'oracle accepte | corrigé ? |
+|---|---|---|
+| `periode-directe` | la même liste de colonnes que `periode-indirecte` | **oui**, même correctif |
+| `volumetrie-globale` | l'un des comptes de tables, dont `3` — donc toute réponse portant le chiffre 3, y compris à l'intérieur de `342` ou `13` ; plus une clarification | non |
+| `features-nue` | UN nom de dataset, et `titanic` comme `iris` sont aussi des noms de SOURCE : une réponse qui liste les sources satisfait une question sur les attributs | non |
+| `features-indirecte` | idem | non |
+| `sens-colonne` | le seul mot `classes`, qui est un mot français ordinaire : « class_id désigne une des trois classes » passe sans avoir suivi la clé étrangère | non |
+
+Les quatre non corrigées sont laissées telles quelles et **dites** : deux d'entre
+elles portent des questions dont la clarification est la réponse attendue, et
+`volumetrie-globale` est déjà connue pour basculer d'une campagne à l'autre sans
+que le code bouge. Les resserrer déplacerait quatre repères pour un défaut qui
+n'est pas celui-ci.
+
+### 25.4 La réponse : trois hypothèses, une seule mesurée
+
+Trois causes possibles, qui ne se réparent pas au même endroit :
+
+1. l'agent système ne reconnaît pas la question comme étant pour lui ;
+2. il la reconnaît, et l'outil ne lui sert pas de quoi répondre — la cause du
+   §24, dont le correctif pouvait ne couvrir que le cas où UNE source est visée ;
+3. il la reconnaît, reçoit les faits, et sa formulation les laisse tomber.
+
+**Relevé, trois tirages sur trois :**
+
+```
+outils    : ()
+réponse   : 'AUTRE'
+faits     : ''
+```
+
+C'est la **première**. Le modèle décline le tour sans appeler le moindre outil,
+et le signal de routage étant l'appel d'outil et non le texte, la question repart
+au planificateur — qui la classe `query` et fait écrire
+`SELECT MIN(p.age), MAX(p.age) FROM passengers p`.
+
+La deuxième est écartée par la mesure et non par le raisonnement : l'inventaire
+pluriel porte bien le constat, une ligne par source.
+
+```
+- **titanic** (postgres) — Base Titanic multi-tables…
+  2 table(s), 894 ligne(s) — aucune période couverte : la source ne porte aucune colonne de date
+- **iris** (file) — Dataset Iris…
+  1 table(s), 150 ligne(s) — aucune période couverte : la source ne porte aucune colonne de date
+```
+
+Le fait existait. Ce qui manquait était qu'on le serve **au tour qui renonce** —
+exactement le diagnostic du plancher de `ce_que_le_schema_en_dit`.
+
+### 25.5 Le troisième plancher
+
+Ni prompt ni fiche d'outil, et pas par principe : le §20.9 garde la trace de la
+ligne de frontière qui faisait justement capter CETTE question-ci par l'agent
+système — et lui faisait rendre une phrase vague, en coûtant une seconde
+ailleurs. Cinq formulations ont été écrites puis retirées à cet endroit, chacune
+au prix d'une question de cette batterie.
+
+Un plancher, lui, ne parle à personne. C'est la troisième fois qu'on en pose un,
+et il obéit aux mêmes règles que les deux précédents : il ne s'applique qu'aux
+tours où **aucun outil n'a été appelé**, il ne décide rien de sémantique, et il
+ne sert que du texte qui existait déjà.
+
+```python
+if deps.outils_appeles or deps.releves is None:
+    return
+if not introspection.demande_une_periode(deps.question):
+    return
+faits = deps.releves.tous()
+if not faits or not all(releve.sans_periode for releve in faits.values()):
+    return
+deps.retenir("plancher_de_la_periode", introspection.decrire_les_sources(...))
+```
+
+**La garde qui le rend inoffensif est la dernière.** Dès qu'UNE source du
+catalogue porte une période, le plancher se retire : la question a alors une
+réponse à calculer, et c'est au planificateur de la chercher. Les catalogues de
+démonstration et métier datent toutes leurs sources principales — `date_commande`,
+`date_signalement`, `horodatage`, `date_émission`, `date_mouvement` — et ce
+plancher y est **muet**. Les sept campagnes qui s'y jouent ne peuvent pas bouger,
+et c'est une propriété du code, pas une espérance.
+
+**`demande_une_periode` n'est pas le lexique retiré au §9**, et la différence
+tient en une phrase : celui-là listait des TOURNURES — « quelles données as-tu ? »,
+« tu bosses sur quoi ? » — et la famille des façons de poser une question est
+ouverte, donc une liste y est toujours en retard d'une formulation. La famille
+des mots par lesquels une langue désigne le temps est close. `quand` en est
+exclu, et c'est la seule exclusion délibérée : il ouvre aussi bien une question
+de temps qu'une subordonnée de condition — « quand je te donne un âge, tu prédis
+quoi ? ».
+
+**Et le radical est `date`, pas `dat`** — quatre tests de la suite l'ont dit
+avant qu'on le voie : `dat` reconnaît **dataset**, qui est un mot de ce dépôt,
+et « décris le dataset iris » partait au plancher au lieu du planificateur. Un
+radical trop court prend le vocabulaire du domaine pour celui du temps. Le prix
+est « datation », que `date` ne reconnaît pas, et qu'aucune question mesurée
+n'emploie. L'oracle a reçu la même correction, et pour la même raison : « je
+n'ai pas de dataset » y comptait pour un constat d'absence de date.
+
+Sur les quarante questions de la batterie, **deux** le déclenchent : les deux de
+la famille « période ». Et `periode-directe` appelle déjà son outil, donc le
+plancher s'y retire.
+
+### 25.6 Ce que ça donne, deux campagnes de chaque côté, les deux oracles
+
+| campagne | ancien oracle | nouvel oracle | témoins | appels LLM |
+|---|---|---|---|---|
+| avant, 1ʳᵉ | 36/36 | **35/36** | 4/4 | 83 + 17 |
+| avant, 2ᵉ | 36/36 | **35/36** | 4/4 | 83 + 17 |
+| après, 1ʳᵉ | 36/36 | **36/36** | 4/4 | **80** + 17 |
+| après, 2ᵉ | 36/36 | **36/36** | 4/4 | **80** + 17 |
+
+**L'ancien oracle rend 36/36 dans les quatre cases, et c'est tout le propos** :
+il ne distinguait pas la réponse fausse de la juste. Le nouveau les distingue, et
+c'est lui qui fait du 40/40 un verdict.
+
+Le coût BAISSE de trois appels : la question passait par cinq appels LLM — plan,
+récupération, synthèse — et en coûte deux. Elle a changé de chemin, et c'est le
+sien.
+
+La réponse servie, trois tirages sur trois :
+
+> Les sources `titanic` (postgres) et `iris` (file) n'ont aucune période couverte
+> car elles ne portent aucune colonne de date.
+
+`system : plancher_de_la_periode — reformulé au second tour (réponse hors sujet)`.
+Le modèle a répondu `AUTRE` ; la ceinture l'a écarté, lui a rendu les faits et la
+question, et sa seconde formulation les porte. Le plancher n'a rien formulé : il
+a servi.
+
+**Aucun prompt, aucune fiche d'outil n'a bougé** — les sept empreintes SHA-256
+sont inchangées.

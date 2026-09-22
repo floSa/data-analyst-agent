@@ -698,12 +698,37 @@ au-dessus du pire cas observé plutôt que de coller à lui. Ce qu'un **outil** 
 n'est pas rattrapé : c'est un vrai défaut de configuration, il remonte au garde-fou
 et il est dit.
 
+**Trois planchers, pour les tours où le modèle n'appelle rien.** Le signal de
+routage reste l'appel d'outil ; ces trois-là ne le remplacent pas, ils rattrapent
+des tours où *aucun* outil n'a été appelé et où rien en aval ne sait répondre. Ils
+sont **mécaniques** — ils ne parlent ni au modèle ni à l'utilisateur — et ils ne
+servent que du texte qui existait déjà. C'est un choix mesuré : cinq formulations
+de prompt ou de fiche d'outil ont été écrites pour dire la même chose, et les cinq
+ont été retirées, chacune au prix d'une question de la surface conversationnelle.
+
+| Plancher | Se déclenche quand | Sert |
+|---|---|---|
+| `decrire_les_sources` | un outil allait rendre le catalogue ENTIER alors que le message nomme ses sources | leurs fiches |
+| `_plancher_des_sources_nommees` | le message nomme **deux** sources déclarées ou plus et porte une question | leurs fiches |
+| `_plancher_de_la_periode` | le message demande QUAND et **aucune** source relevée n'a de date | l'inventaire, où chaque source porte son constat |
+
+Le troisième a la garde la plus stricte, et c'est elle qui le rend inoffensif :
+dès qu'une seule source du catalogue porte une période, il se retire — la question
+a une réponse à calculer, et c'est au planificateur de la chercher. Sur les
+catalogues dont les sources sont datées, il est muet.
+
 **La frontière tient en une phrase**, et c'est le prompt de l'agent système qui la
 porte : il répond sur ce que l'agent **EST**, jamais sur ce que les données
-**CONTIENNENT**. « Sur quelle période portent les données ? » et « combien de
-lignes ? » exigent un `MIN`/`MAX` ou un `COUNT` : elles restent du ressort de `query`.
-Ce n'est plus une garantie de code mais un comportement de modèle — d'où les
-**témoins** de la batterie live, qui sont là pour ne pas bouger.
+**CONTIENNENT**. « Combien de lignes ? » exige un `COUNT` : elle reste du ressort
+de `query`. Ce n'est plus une garantie de code mais un comportement de modèle —
+d'où les **témoins** de la batterie live, qui sont là pour ne pas bouger.
+
+La **période** a changé de côté, et pour une raison qui vaut d'être dite : depuis
+qu'elle est LUE au relevé du catalogue (§4.11, « Ce qu'on LIT dans une source »),
+ce n'est plus un `MIN`/`MAX` à
+calculer mais un fait de la fiche — y compris quand ce fait est une absence. Une
+question de période est donc une question sur ce que l'agent **a**, et son chemin
+est l'agent système.
 
 **Cette capacité n'est PAS une valeur de `Capability`, et c'est mesuré.** Le `Literal`
 est le JSON Schema de la sortie structurée du planificateur : l'élargir change le
