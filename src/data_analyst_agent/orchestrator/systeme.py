@@ -78,6 +78,11 @@ logger = logging.getLogger("data_analyst_agent.orchestrator")
 # une réponse non bornée se paierait autant de fois qu'il y a d'outils appelés.
 REPONSE_PRECEDENTE_MAX_CARACTERES = 600
 
+# Ce qu'on rend quand le fil n'a encore rien produit. Une absence se CONSTATE,
+# comme partout ici : rendre une chaîne vide ferait compter l'outil comme
+# appelé sans rien donner à formuler, et le modèle comblerait.
+AUCUN_OBJET = "Cette conversation n'a encore produit aucun tableau ni aucun code."
+
 
 def _trouver_la_source(catalogue: Catalog, nom: str) -> Source | None:
     """La source dont le nom est CELUI-LÀ, à la typographie près.
@@ -142,6 +147,14 @@ class SystemeDeps:
     # La source de travail au moment du tour, pour que l'accueil puisse dire
     # celle qu'on QUITTE. "" = aucune, ce qui est le premier tour d'un fil.
     source_de_travail: str = ""
+    # Ce que CETTE conversation a produit, en texte déjà rendu : ses tableaux
+    # sous ``transformees``, ses tableaux ET son code sous ``objets`` (cf.
+    # ``ConversationWorkspace.sources_transformees`` et
+    # ``objets_de_la_conversation``). Du texte et pas un magasin, pour que ce
+    # module continue de ne rien savoir du disque — c'est la même frontière que
+    # pour ``releves``, qui reçoit des faits déjà lus.
+    objets: str = ""
+    transformees: str = ""
 
     def retenir(
         self, outil: str, texte: str, *, a_enumerer: bool = True, fiches: tuple[str, ...] = ()
@@ -268,11 +281,19 @@ class SystemeDeps:
             liee = _trouver_la_source(self.catalogue_declare, self.source_de_travail)
             if liee is not None:
                 return self.retenir(outil, self._fiche(liee), fiches=(liee.name,))
-        return self.retenir(
-            outil,
-            introspection.decrire_les_sources(self.catalogue_declare, faits),
-            a_enumerer=a_enumerer,
-        )
+        inventaire = introspection.decrire_les_sources(self.catalogue_declare, faits)
+        # Le PLANCHER des sources transformées. Un inventaire servi dans un fil
+        # qui a fabriqué des tableaux les dit, sous leur propre en-tête. C'est
+        # la réponse au mot « maintenant » : « quelles données as-tu à ta
+        # disposition maintenant ? » recevait le catalogue du YAML, identique au
+        # premier tour comme au dixième, et le tableau qu'on venait de produire
+        # n'y apparaissait pas (§3.4). Il ne parle qu'où le catalogue ENTIER
+        # part : une fiche unique répond à une question sur une source, une
+        # recherche par sujet est une matière à choisir, et ni l'une ni l'autre
+        # n'est un inventaire.
+        if a_enumerer and self.transformees:
+            inventaire = f"{inventaire}\n\n{self.transformees}"
+        return self.retenir(outil, inventaire, a_enumerer=a_enumerer)
 
     def _fiche(self, source: Source) -> str:
         """La fiche d'une source, avec ce qu'on a LU dedans quand on l'a lu."""
@@ -482,6 +503,15 @@ def build_systeme_agent() -> Agent[SystemeDeps, str]:
         return ctx.deps.retenir_la_liaison(source)
 
     @agent.tool
+    def memoire_de_la_conversation(ctx: RunContext[SystemeDeps]) -> str:
+        """Ce que CETTE conversation a déjà produit : ses tableaux et son code.
+
+        Pour les sources du CATALOGUE — celles qui existaient avant le fil —
+        c'est `sources_de_donnees`.
+        """
+        return ctx.deps.retenir("memoire_de_la_conversation", ctx.deps.objets or AUCUN_OBJET)
+
+    @agent.tool
     def modeles_de_prediction(ctx: RunContext[SystemeDeps]) -> str:
         """Les modèles de prédiction du registre : tâche, cible, classes, unité."""
         return ctx.deps.retenir(
@@ -663,6 +693,8 @@ def run_systeme(
     releves: RelevesDuCatalogue | None = None,
     source_de_travail: str = "",
     echange_precedent: tuple[str, str] | None = None,
+    objets: str = "",
+    transformees: str = "",
 ) -> ResultatSysteme:
     """Soumet la question à l'agent système et rend ce qu'il en a fait.
 
@@ -687,6 +719,8 @@ def run_systeme(
         question=question,
         releves=releves,
         source_de_travail=source_de_travail,
+        objets=objets,
+        transformees=transformees,
     )
     run = build_systeme_agent().run_sync(
         question,

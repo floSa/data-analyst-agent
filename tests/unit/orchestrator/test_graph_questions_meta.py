@@ -410,12 +410,24 @@ def test_une_question_sur_les_donnees_garde_sa_route(mini_csv: Path, registre: R
     assert [s.node for s in reponse.trace] == ["system", "plan", "retrieval", "synthesize"]
 
 
-def test_un_tableau_intermediaire_n_est_pas_annonce_comme_une_source(
+def test_l_inventaire_dit_les_sources_transformees_SOUS_LEUR_NOM(
     tmp_path: Path, mini_csv: Path, registre: Registry
 ):
-    """Un tableau du fil est interrogeable, ce n'est pas une source de données :
-    l'annoncer comme telle induirait en erreur. Même distinction que dans
-    ``PlanContext`` entre catalogue déclaré et catalogue effectif."""
+    """Un tableau du fil n'est toujours pas une source de données — il est DIT.
+
+    La décision d'avant était écrite et argumentée : l'outil qui énumère lit le
+    catalogue DÉCLARÉ, parce qu'annoncer un tableau intermédiaire comme une
+    source du catalogue induirait en erreur. Elle tient encore. Ce qu'elle
+    coûtait, la mesure l'a montré : le mot « maintenant » de « quelles données
+    as-tu à ta disposition maintenant ? » ne changeait rien à la réponse, et un
+    utilisateur qui venait de fabriquer un tableau ne le voyait nulle part
+    (`docs/memoire-de-conversation.md` §3.4).
+
+    Les deux tiennent ensemble parce que les transformées ont leur PROPRE
+    en-tête : l'inventaire ne ment sur rien, il cesse d'omettre. Ce sont les
+    mots de floSa — « j'ai les sources primaires, j'ai les sources
+    transformées ».
+    """
     ConversationWorkspace(tmp_path, "fil").save_table(["a"], [[1]], "un tour précédent")
     llm = agent_systeme("sources_de_donnees", {}, "Ma seule source est `mini`.")
     catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
@@ -424,8 +436,81 @@ def test_un_tableau_intermediaire_n_est_pas_annonce_comme_une_source(
         "Quelles sont tes sources de données ?", conversation_id="fil", workspace_root=tmp_path
     )
 
+    # la formulation du modèle omettait `resultat_1` : ce sont les faits qui sont servis
     assert "mini" in reponse.answer
-    assert "resultat_1" not in reponse.answer
+    assert "resultat_1" in reponse.answer
+    assert "TRANSFORMÉES" in reponse.answer  # et il est dit qu'elle ne vient pas du catalogue
+
+
+def test_une_recherche_par_sujet_ne_deballe_pas_les_transformees(
+    tmp_path: Path, mini_csv: Path, registre: Registry
+):
+    """Le plancher ne parle QUE là où le catalogue entier part.
+
+    Une recherche par sujet est une matière à CHOISIR, pas un inventaire : y
+    ajouter les tableaux du fil ferait répondre à côté, et rallumerait la
+    ceinture d'exhaustivité que C47 a dû desserrer pour cette raison exacte.
+    """
+    ConversationWorkspace(tmp_path, "fil").save_table(["a"], [[1]], "un tour précédent")
+    llm = agent_systeme("chercher_une_source", {"sujet": "les ventes"}, "C'est `mini`.")
+    catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "as-tu quelque chose sur les ventes ?", conversation_id="fil", workspace_root=tmp_path
+    )
+
+    assert reponse.answer == "C'est `mini`."
+
+
+def test_la_memoire_du_fil_a_enfin_un_proprietaire(
+    tmp_path: Path, mini_csv: Path, registre: Registry
+):
+    """« Qu'est-ce que tu as en mémoire dans cette conversation ? » — 0/3 avant.
+
+    Le fil portait deux objets, et la réponse servie était « Je n'ai pas
+    interrogé la source pour cette question, je ne peux donc rien en
+    affirmer ». Aucun des deux agents qui pouvaient répondre ne s'y
+    autorisait : l'agent système répond sur ce que l'agent EST et ne voyait
+    jamais le magasin, l'agent de rappel s'interdit les questions sur ce dont
+    il dispose. La question tombait au planificateur, qui la classait `query`
+    et partait écrire du SQL (`docs/memoire-de-conversation.md` §3.3).
+    """
+    espace = ConversationWorkspace(tmp_path, "fil")
+    espace.save_table(["region"], [["nord"]], "la répartition par région")
+    espace.save_code("print(1)", "un graphique", source="mini", figures=1)
+    llm = agent_systeme(
+        "memoire_de_la_conversation",
+        {},
+        "J'ai le tableau `resultat_1` et le code `graphique_1`.",
+    )
+    catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "qu'est-ce que tu as en mémoire dans cette conversation ?",
+        conversation_id="fil",
+        workspace_root=tmp_path,
+    )
+
+    assert "resultat_1" in reponse.answer
+    assert "graphique_1" in reponse.answer
+    assert [s.node for s in reponse.trace] == ["system", "synthesize"]
+
+
+def test_un_fil_qui_n_a_rien_produit_le_CONSTATE(
+    tmp_path: Path, mini_csv: Path, registre: Registry
+):
+    """Une absence se constate. Un outil qui ne rend rien laisse le modèle combler."""
+    llm = agent_systeme(
+        "memoire_de_la_conversation", {}, "Cette conversation n'a encore rien produit."
+    )
+    catalogue = Catalog(sources=[FileSource(name="mini", path=mini_csv)])
+
+    reponse = orchestrateur(llm, catalog=catalogue, registry=registre).ask(
+        "qu'est-ce que tu as en mémoire ?", conversation_id="neuf", workspace_root=tmp_path
+    )
+
+    assert "rien" in reponse.answer.lower()
+    assert reponse.error is None
 
 
 def test_les_colonnes_d_un_tableau_intermediaire_restent_lisibles(
@@ -1321,7 +1406,7 @@ def test_les_trois_voies_se_nomment_et_se_lisent_dans_la_trace():
 
 # --- ce qu'on s'interdit d'écrire, figé ---------------------------------------
 
-# Les empreintes des sept fiches d'outils de l'agent système. Elles ne sont pas
+# Les empreintes des huit fiches d'outils de l'agent système. Elles ne sont pas
 # là pour empêcher de les modifier : elles sont là pour qu'une modification
 # soit un GESTE, avec une campagne à l'appui.
 #
@@ -1348,6 +1433,13 @@ EMPREINTES_DES_FICHES_D_OUTIL = {
     "travailler_sur_une_source": "6d5b6232f652a60652e517b5e11318a923440766b342aae1989d4cb89391f989",
     "modeles_de_prediction": "e6acc1ec8c22ab79a40fa83b6072253d2f310619c89c2a031248f8702394f80f",
     "attributs_d_un_modele": "412f4dea2265524db4cbe947ef4c841f16e1a5da4b8449b0348d8ac5d3e061e1",
+    # La HUITIÈME, et c'est un geste de C51 : la mémoire du fil n'appartenait à
+    # personne, et la question « qu'est-ce que tu as en mémoire ? » se faisait
+    # classer `query`. Ce que sa venue coûte à la surface conversationnelle est
+    # mesuré deux fois de chaque côté (`docs/memoire-de-conversation.md`).
+    "memoire_de_la_conversation": (
+        "a9d36cb5ccbbdf9b0afe87a80866fcdc1ed5c7b845b359660a8d2c64b670440e"
+    ),
 }
 
 
@@ -1356,7 +1448,7 @@ def _empreinte(texte: str) -> str:
 
 
 def test_aucune_fiche_d_outil_n_a_bouge_au_caractere_pres():
-    """Les sept fiches d'outils, à l'octet près.
+    """Les huit fiches d'outils, à l'octet près.
 
     `test_aucune_fiche_d_outil_n_a_bouge` interdisait deux phrases nommément ;
     celui-ci interdit tout ajout. La différence compte : ce qui a coûté

@@ -888,6 +888,69 @@ class ConversationWorkspace:
             "être relu ou rejoué avec une modification) :\n" + lignes
         )
 
+    # Ce qui distingue, dans une phrase d'inventaire, une source du CATALOGUE
+    # d'un tableau que la conversation a FABRIQUÉ. Les deux sont interrogeables
+    # par leur nom ; une seule des deux existait avant le fil, et l'utilisateur
+    # a besoin de savoir laquelle. C'est la demande de floSa, dans ses mots :
+    # « j'ai les sources primaires, j'ai les sources transformées ».
+    EN_TETE_DES_TRANSFORMEES = (
+        "Sources TRANSFORMÉES — les tableaux que CETTE conversation a produits. Elles ne "
+        "viennent pas du catalogue : le fil les a fabriquées, et elles sont interrogeables "
+        "par leur nom comme les autres"
+    )
+    EN_TETE_DU_CODE_PRODUIT = (
+        "Code produit dans CETTE conversation, rappelable par son nom pour être relu ou "
+        "rejoué avec une modification"
+    )
+
+    @staticmethod
+    def _ligne_nommee(artefact: WorkspaceArtifact) -> str:
+        """La ligne de catalogue, le nom entre accents graves.
+
+        La décoration n'est pas cosmétique : c'est à elle que la vérification
+        d'après-coup de l'agent système reconnaît ce qu'un fait NOMME, et donc
+        ce qu'une réponse doit reprendre (``introspection.defaut_de_fondation``).
+        """
+        return (
+            f"- `{artefact.name}` — {artefact.description} — produit par : « {artefact.question} »"
+        )
+
+    def sources_transformees(self) -> str:
+        """Les tableaux du fil, dits comme des SOURCES — "" quand il n'y en a pas.
+
+        Ce que l'inventaire des sources ne disait pas. L'outil qui énumère lit
+        le catalogue DÉCLARÉ, et c'était une décision écrite — « un tableau
+        intermédiaire de la conversation n'est pas une source de données, et
+        l'annoncer comme telle induirait en erreur ». La mesure a montré ce
+        qu'elle coûte : le mot « maintenant » de « quelles données as-tu à ta
+        disposition maintenant ? » ne changeait rien à la réponse, et un
+        utilisateur qui venait de fabriquer un tableau ne le voyait nulle part
+        (`docs/memoire-de-conversation.md` §3.4).
+
+        La décision tient toujours — ce n'est pas une source de données — et
+        c'est pourquoi ce bloc porte son propre en-tête au lieu d'être fondu
+        dans le catalogue : l'inventaire ne ment sur rien, il cesse d'omettre.
+        """
+        if not self.injected:
+            return ""
+        lignes = "\n".join(self._ligne_nommee(a) for a in self.injected)
+        return f"{self.EN_TETE_DES_TRANSFORMEES} :\n{lignes}"
+
+    def objets_de_la_conversation(self) -> str:
+        """Tout ce que le fil porte — ses tableaux, puis son code — "" si rien.
+
+        C'est la réponse à « qu'est-ce que tu as en mémoire dans cette
+        conversation ? », et personne ne l'avait : l'agent système ne voyait
+        jamais le magasin, l'agent de rappel s'interdit les questions sur ce
+        dont il dispose, et le planificateur classait la question en `query` et
+        partait écrire du SQL sur une source pour y répondre (§3.3).
+        """
+        blocs = [self.sources_transformees()]
+        if self.codes_injectes:
+            lignes = "\n".join(self._ligne_nommee(a) for a in self.codes_injectes)
+            blocs.append(f"{self.EN_TETE_DU_CODE_PRODUIT} :\n{lignes}")
+        return "\n\n".join(bloc for bloc in blocs if bloc)
+
     def catalogue(self) -> list[WorkspaceArtifact]:
         """Tout ce qui est RETENU ce tour-ci, tableaux et code, dans l'ordre."""
         return list(self.retenus)

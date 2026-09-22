@@ -1619,6 +1619,12 @@ class Orchestrator:
         engage = self._tour_deja_engage(state)
         if engage:
             return {"trace": [self._step("system", engage, start)]}
+        # Ce que le fil porte, rendu en texte ICI : c'est le nœud qui a le
+        # magasin sous la main, et `orchestrator/systeme` continue de ne rien
+        # savoir du disque.
+        espace = state.get("workspace")
+        objets = espace.objets_de_la_conversation() if espace is not None else ""
+        transformees = espace.sources_transformees() if espace is not None else ""
         try:
             resultat = run_systeme(
                 state["question"],
@@ -1630,6 +1636,8 @@ class Orchestrator:
                 request_limit=self.settings.systeme_request_limit,
                 source_de_travail=state.get("source_in") or "",
                 echange_precedent=state.get("echange_precedent"),
+                objets=objets,
+                transformees=transformees,
             )
         except (UnexpectedModelBehavior, UsageLimitExceeded) as exc:
             incident = reference_dincident()

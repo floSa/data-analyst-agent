@@ -48,7 +48,7 @@ Un tour de conversation le traverse une fois, de l'entrée à la fin.
 L'ordre n'est pas libre : `system` est l'entrée, `rappel` vient ensuite, `plan`
 n'est atteint que si les deux se sont retirés, et tout finit par `synthesize`.
 
-## Les sept outils de l'agent système
+## Les huit outils de l'agent système
 
 Ce sont les seuls outils du nœud `system`. Ils lisent la configuration et les
 sources déclarées ; aucun n'écrit ni ne calcule. Ils sont définis dans
@@ -63,6 +63,7 @@ sources déclarées ; aucun n'écrit ni ne calcule. Ils sont définis dans
 | `travailler_sur_une_source` | retient une source comme source de travail du fil |
 | `modeles_de_prediction` | les modèles du registre : tâche, cible, classes, unité |
 | `attributs_d_un_modele` | les attributs qu'un modèle attend pour prédire |
+| `memoire_de_la_conversation` | les tableaux et le code que CE fil a produits — les sources transformées |
 
 ---
 
