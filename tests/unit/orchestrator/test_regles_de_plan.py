@@ -131,6 +131,7 @@ def test_l_ordre_des_regles_est_explicite_et_verrouille():
     assert [regle.__name__ for regle in Orchestrator._REGLES_DU_PLAN] == [
         "_regle_source_imposee",
         "_regle_degrader_faute_de_source",
+        "_regle_croiser_les_sources",
         "_regle_source_de_la_conversation",
         "_regle_reprendre_les_features_acquises",
         "_regle_normaliser_le_nom_de_source",
@@ -423,7 +424,13 @@ def test_une_designation_qui_empaquette_deux_sources_declarees_ne_dit_pas_introu
 
     question = orchestrateur._regle_normaliser_le_nom_de_source(
         plan,
-        contexte(declare=[source("ventes", tmp_path), source("production", tmp_path)]),
+        contexte(
+            declare=[source("ventes", tmp_path), source("production", tmp_path)],
+            # Le MESSAGE, et non un texte quelconque : depuis que deux sources
+            # empaquetées peuvent former un périmètre de croisement, c'est lui
+            # qui départage l'hésitation de la demande (``_perimetre_croise``).
+            question="ventes ou production ?",
+        ),
     )
 
     assert question == "Sur quelle source veux-tu travailler : ventes, production ?"

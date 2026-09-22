@@ -52,6 +52,11 @@ from data_analyst_agent.agents.retrieval.catalog import (
     open_source,
 )
 from data_analyst_agent.agents.retrieval.classement import grandeur_du_classement
+from data_analyst_agent.agents.retrieval.croisement import (
+    dictionnaire_du_croisement,
+    ouvrir_le_croisement,
+    prefixer,
+)
 from data_analyst_agent.agents.retrieval.faits import ReglagesDuReleve, RelevesDuCatalogue
 from data_analyst_agent.agents.retrieval.sql import QueryResult
 from data_analyst_agent.config import Settings, get_settings
@@ -981,6 +986,14 @@ class Orchestrator:
             return None
         if plan.capability not in self._SOURCE_CAPABILITIES:
             return None
+        # Un tour qui CROISE porte son périmètre dans `plan.source`, et la
+        # reposition le réduirait à la source liée — c'est-à-dire répondrait sur
+        # la moitié de la question, sans le dire. Le périmètre s'ajoute au fil,
+        # il ne le remplace pas : la source de travail reste celle d'avant
+        # (`_lier_la_source` ne retient qu'un nom DÉCLARÉ, et « ventes,
+        # production » n'en est pas un).
+        if self._perimetre_croise(plan, ctx):
+            return None
         nommee = introspection.source_nommee(ctx.question, ctx.catalogue_declare)
         declarees = [s.name for s in ctx.catalogue_declare.sources]
         objet = self._objet_du_fil_designe(plan, ctx)
@@ -1079,6 +1092,75 @@ class Orchestrator:
                 plan.features = {**acquis, **plan.features}
         return None
 
+    def _perimetre_croise(self, plan: Plan, ctx: PlanContext) -> list:
+        """Les sources DÉCLARÉES que ``plan.source`` empaquette — [] s'il n'en nomme qu'une.
+
+        Le planificateur écrit ``source='ventes, production'`` quand la question
+        en croise deux : les deux noms qu'il a lus, empaquetés dans un champ qui
+        en attend un. C'est une information, et le code la jetait —
+        ``_match_source_name`` rend ``None`` dès qu'il trouve deux noms, et le
+        tour ressortait en demande de précision.
+
+        **Sur le catalogue DÉCLARÉ, et sur lui seul.** Un tableau intermédiaire
+        du fil est interrogeable, mais il n'entre pas dans un croisement : le
+        périmètre qu'on monte est fait de sources, et y mêler les résultats qui
+        traînent rouvrirait le fouillis que le montage ciblé a fermé.
+
+        **Deux conditions, et la seconde est le témoin.** L'empaquetage dit que
+        le planificateur a vu deux sources ; il ne dit pas qu'on lui demande
+        quelque chose DESSUS. « ventes ou production ? » nomme deux sources et
+        ne demande rien : c'est une hésitation, et la réponse due est la
+        question qui fait choisir — pas un croisement qu'on aurait deviné. On
+        exige donc que le MESSAGE dise autre chose que des noms de sources.
+
+        Le décompte est celui de ``choix_de_source``, au pluriel : c'est le même
+        fait, mesuré sur les mêmes formulations
+        (``introspection.mots_hors_des_noms``, ``MOTS_EN_PLUS_D_UN_CHOIX``).
+        Réemployé et non réécrit — deux décomptes du même fait divergent, et
+        celui-ci décide d'un montage.
+
+        Le premier décompte porte sur la DÉSIGNATION du planificateur, le second
+        sur le MESSAGE de l'utilisateur, et c'est délibéré : l'un dit ce que le
+        modèle a lu, l'autre ce que quelqu'un a demandé. Un croisement a besoin
+        des deux.
+        """
+        if plan.capability not in self._SOURCE_CAPABILITIES or not plan.source:
+            return []
+        nommees = introspection.sources_nommees(plan.source, ctx.catalogue_declare)
+        if len(nommees) <= 1:
+            return []
+        dans_le_message = introspection.sources_nommees(ctx.question, ctx.catalogue_declare)
+        reste = introspection.mots_hors_des_noms(ctx.question, dans_le_message)
+        if len(reste) <= introspection.MOTS_EN_PLUS_D_UN_CHOIX:
+            return []
+        return nommees
+
+    def _regle_croiser_les_sources(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """Un plan qui nomme plusieurs sources garde les DEUX : c'est un périmètre.
+
+        Elle ne décide rien, elle conserve. Sans elle, les deux noms sont
+        effacés trois règles plus loin — ``_regle_normaliser_le_nom_de_source``
+        n'en résout aucun et rend la question du choix — et la question qui les
+        croise n'a plus de chemin.
+
+        Les noms sont réécrits CANONIQUES : le planificateur écrit ce qu'il a lu
+        (« Production, ventes »), et la suite du tour compare des chaînes. Le
+        séparateur reste ``, `` — c'est la forme sous laquelle le modèle les a
+        empaquetés, et la relire coûte une seule fonction
+        (``_perimetre_croise``) plutôt qu'un champ de plus dans le contrat de
+        sortie du planificateur, que le modèle lit et paie ailleurs (cf. le coût
+        mesuré d'une cinquième valeur de ``Capability``, `orchestrator/plan.py`).
+
+        Placée AVANT ``_regle_source_de_la_conversation`` : celle-ci repose la
+        source liée au fil sans condition, et reposer « ventes » sur un tour qui
+        croise ventes et production ferait répondre sur la moitié de la question.
+        """
+        croise = self._perimetre_croise(plan, ctx)
+        if not croise:
+            return None
+        plan.source = ", ".join(s.name for s in croise)
+        return None
+
     def _regle_normaliser_le_nom_de_source(self, plan: Plan, ctx: PlanContext) -> str | None:
         """Le nom de source désigné est ramené à un nom du catalogue, ou on demande.
 
@@ -1109,6 +1191,11 @@ class Orchestrator:
         l'information utile.
         """
         if not plan.source:
+            return None
+        # Un périmètre de croisement est déjà résolu (``_regle_croiser_les_sources``) :
+        # il nomme plusieurs sources EXPRÈS, et le faire trancher ici rendrait la
+        # question du choix à un tour qui a justement de quoi ne plus la poser.
+        if self._perimetre_croise(plan, ctx):
             return None
         resolved = self._match_source_name(plan.source, ctx.catalogue_effectif)
         if resolved is None:
@@ -1265,6 +1352,7 @@ class Orchestrator:
     _REGLES_DU_PLAN = (
         _regle_source_imposee,
         _regle_degrader_faute_de_source,
+        _regle_croiser_les_sources,
         _regle_source_de_la_conversation,
         _regle_reprendre_les_features_acquises,
         _regle_normaliser_le_nom_de_source,
@@ -1901,7 +1989,7 @@ class Orchestrator:
         # lequel des fichiers qui y étaient montés : lui retirer un montage,
         # c'est le faire échouer sur un `FileNotFoundError` que rien n'annonce.
         objets = [artefact] if tableau else list(self._objets_du_fil(state))
-        with self._decor_de_donnees(state, source, objets) as (data_files, data_context, avis):
+        with self._decor_de_donnees(state, [source], objets) as (data_files, data_context, avis):
             resultat = run_analysis(
                 self._consigne_de_calcul(artefact, modification) if tableau else modification,
                 data_files=data_files,
@@ -2126,35 +2214,95 @@ class Orchestrator:
             "trace": [self._step("rappel", detail, start, **mesures)],
         }
 
+    def _sources_du_perimetre(self, plan: Plan) -> list:
+        """Les sources DÉCLARÉES que le plan croise — [] quand il n'en vise qu'une.
+
+        Le pendant de ``_perimetre_croise`` pour les nœuds, qui n'ont pas de
+        ``PlanContext``. Les deux lisent le MÊME champ de la même façon : le
+        périmètre n'est écrit nulle part ailleurs que dans ``plan.source``, donc
+        rien ne peut diverger entre la règle qui l'a posé et le nœud qui
+        l'ouvre.
+        """
+        if plan.capability not in self._SOURCE_CAPABILITIES or not plan.source:
+            return []
+        nommees = introspection.sources_nommees(plan.source, self.catalog)
+        return nommees if len(nommees) > 1 else []
+
+    @contextmanager
+    def _ouvrir_pour_requeter(self, plan: Plan, state: OrchestratorState) -> Iterator[tuple]:
+        """Cède ``(adaptateur, dictionnaire, nom_lisible, avis)`` pour l'agent SQL.
+
+        Un seul chemin pour les deux cas — une source, ou un périmètre qui en
+        croise plusieurs — parce que l'agent SQL est le même : il reçoit un
+        adaptateur, un dictionnaire, et il écrit du SQL. Le croisement n'est pas
+        une capacité de plus, c'est une source de plus large.
+
+        ``closing`` et non un adaptateur gardé, dans les deux branches : un nœud
+        est exécuté à chaque question, et un pool de connexions abandonné à
+        chaque fois finit par remplir le ``max_connections`` du serveur
+        (audit §2.3).
+        """
+        croise = self._sources_du_perimetre(plan)
+        if not croise:
+            source = self._resolve_source(plan, self._effective_catalog(state))
+            with closing(open_source(source)) as adapter:
+                # Ce que la source DÉCLARE vouloir dire. Un tableau
+                # intermédiaire de la conversation n'en a pas — `dictionary`
+                # vaut alors `None` et le prompt est celui d'avant.
+                yield adapter, source.dictionary_text(), source.name, ""
+            return
+        croisement = ouvrir_le_croisement(croise, max_rows=self.settings.analysis_table_max_rows)
+        with closing(croisement):
+            yield (
+                croisement.adapter,
+                dictionnaire_du_croisement(croise),
+                ", ".join(croisement.noms),
+                self._avis_de_troncature(croisement.tronquees),
+            )
+
+    def _budget_du_perimetre(self, plan: Plan) -> Settings:
+        """Les réglages du tour, dont le budget de dictionnaire suit le périmètre.
+
+        ``dictionary_max_chars`` taille le dictionnaire d'UNE source — c'est sur
+        une source qu'il a été réglé, et c'est une source qu'il décrit. Un
+        périmètre qui en croise deux porte deux dictionnaires : leur laisser le
+        budget d'un seul en couperait un des deux, et ce qui saute est la fin du
+        document, c'est-à-dire précisément la section des PIÈGES. Le croisement
+        rendrait alors des chiffres faux en silence — le défaut même que le
+        dictionnaire existe pour fermer.
+
+        Multiplié et non relevé en dur : le réglage garde son sens — un budget
+        par source — et l'installation qui l'a baissé le voit toujours respecté.
+        """
+        croise = self._sources_du_perimetre(plan)
+        if not croise:
+            return self.settings
+        return self.settings.model_copy(
+            update={"dictionary_max_chars": self.settings.dictionary_max_chars * len(croise)}
+        )
+
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
-        # `closing` et non un adaptateur gardé : un nœud est exécuté à chaque
-        # question, et un pool de connexions abandonné à chaque fois finit par
-        # remplir le `max_connections` du serveur (audit §2.3).
-        source = self._resolve_source(plan, self._effective_catalog(state))
-        with closing(open_source(source)) as adapter:
+        with self._ouvrir_pour_requeter(plan, state) as (adapter, dictionary, nom, avis):
             outcome = run_retrieval(
                 state["question"],
                 adapter=adapter,
                 model=self.model,
-                settings=self.settings,
-                # Ce que la source DÉCLARE vouloir dire. Un tableau
-                # intermédiaire de la conversation n'en a pas — `dictionary`
-                # vaut alors `None` et le prompt est celui d'avant.
-                dictionary=source.dictionary_text(),
+                settings=self._budget_du_perimetre(plan),
+                dictionary=dictionary,
             )
         artifacts = [_table_artifact(outcome.result)] if outcome.result else []
         # mémorise le tableau produit pour le réutiliser aux tours suivants
         self._memorize(state, outcome.result)
         detail = outcome.sql or f"{len(outcome.executed)} requête(s), aucune n'a abouti"
-        mesures: dict = {"truncated": False, "truncation": ""}
+        mesures: dict = {"truncated": bool(avis), "truncation": avis}
         self._ajoute_avis(mesures, outcome.dictionary_notice)
         return {
             "retrieval": outcome,
             "artifacts": artifacts,
             "dire_du_dictionnaire": introspection.ce_qu_en_dit_le_dictionnaire(
-                state["question"], source.dictionary_text(), source.name
+                state["question"], dictionary, nom
             ),
             "trace": [self._step("retrieval", detail, start, **mesures)],
         }
@@ -2300,7 +2448,7 @@ class Orchestrator:
 
     @contextmanager
     def _decor_de_donnees(
-        self, state: OrchestratorState, source, objets: list[WorkspaceArtifact]
+        self, state: OrchestratorState, sources: list, objets: list[WorkspaceArtifact]
     ) -> Iterator[tuple]:
         """Ce que le code d'analyse voit sous ``/data/``, et ce qu'on lui en dit.
 
@@ -2323,35 +2471,61 @@ class Orchestrator:
         qui marchait au tour 1 échouerait au tour 4 sans que rien ne le dise.
         """
         avis = ""
+        # Le préfixe ne sert QUE lorsqu'on croise : seul un périmètre à plusieurs
+        # sources peut porter deux tables de même nom, et préfixer un montage à
+        # une source renommerait les fichiers de tous les tours d'avant.
+        prefixe = len(sources) > 1
         with tempfile.TemporaryDirectory(prefix="daa-analysis-") as tmp:
-            if isinstance(source, FileSource):
-                data_files = {source.path: source.path.name}
-                data_context = ""
-            else:
+            data_files = {}
+            contextes: list[str] = []
+            tronquees: list[str] = []
+            for source in sources:
+                if isinstance(source, FileSource) and not prefixe:
+                    data_files[source.path] = source.path.name
+                    continue
                 # source SQL : matérialise chaque table en CSV pour la sandbox
-                tronquees: list[str] = []
                 with closing(open_source(source)) as adapter:
                     schema = adapter.schema()
-                    data_files = {}
                     for table in schema.tables:
                         result = adapter.run(
                             f"SELECT * FROM {table.name}",
                             max_rows=self.settings.analysis_table_max_rows,
                         )
+                        nom = f"{source.name}_{table.name}" if prefixe else table.name
                         if result.truncated:
-                            tronquees.append(table.name)
-                        csv_path = Path(tmp) / f"{table.name}.csv"
+                            tronquees.append(nom)
+                        csv_path = Path(tmp) / f"{nom}.csv"
                         pd.DataFrame(result.rows, columns=result.columns).to_csv(
                             csv_path, index=False
                         )
-                        data_files[csv_path] = f"{table.name}.csv"
+                        data_files[csv_path] = f"{nom}.csv"
                 # La base est refermée AVANT l'analyse : le code généré tourne sur
                 # les CSV matérialisés, il n'a plus rien à demander à la source, et
                 # une analyse dure bien plus longtemps qu'une extraction.
-                data_context = schema.to_prompt()
-                avis = self._avis_de_troncature(tronquees)
-                if avis:
-                    data_context = f"{data_context}\n\n{avis}"
+                if not prefixe:
+                    contextes.append(schema.to_prompt())
+                    continue
+                # Le DDL doit nommer les tables COMME LES FICHIERS, et c'est un
+                # défaut mesuré. Le montage était juste — les 140 ordres de
+                # fabrication étaient bien sous `/data/production_ordres_
+                # fabrication.csv` — mais le schéma annonçait « TABLE
+                # ordres_fabrication » : le code généré ouvrait
+                # `/data/ordres_fabrication.csv`, ne le trouvait pas, et rendait
+                # « quantité produite : 0 pour chaque produit ». Un zéro, pas
+                # une erreur, dans une phrase qui a l'air d'une réponse.
+                # Une ligne de titre qui annonce le préfixe ne suffit pas : ce
+                # que le modèle recopie, c'est le nom qu'il lit dans le DDL.
+                # `prefixer` renomme AUSSI les clés étrangères : une FK qui
+                # pointe vers `produits` quand le fichier est
+                # `ventes_produits.csv` fait deviner la jointure, et une
+                # jointure devinée entre deux sources rend un chiffre faux sans
+                # lever d'erreur.
+                renommees = schema.model_copy(update={"tables": prefixer(schema, source.name)})
+                contextes.append(f"Source `{source.name}` :\n{renommees.to_prompt()}")
+            data_context = "\n\n".join(contextes)
+            avis = self._avis_de_troncature(tronquees)
+            if avis:
+                data_context = f"{data_context}\n\n{avis}" if data_context else avis
             # objets intermédiaires de la conversation : montés aussi pour que le
             # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
             data_context, tronques = self._mount_workspace(state, data_files, data_context, objets)
@@ -2369,8 +2543,12 @@ class Orchestrator:
         start = time.monotonic()
         plan = state["plan"]
         workspace = state.get("workspace")
-        source = self._resolve_source(plan, self._effective_catalog(state))
-        with self._decor_de_donnees(state, source, self._objets_vises(state, plan)) as (
+        # Le périmètre du tour : les sources qu'il croise, ou la seule qu'il vise.
+        # Jamais le catalogue — monter ce que le tour ne demande pas est le défaut
+        # que `_mount_workspace` a fermé, et il se paie en chiffres plausibles.
+        croise = self._sources_du_perimetre(plan)
+        sources = croise or [self._resolve_source(plan, self._effective_catalog(state))]
+        with self._decor_de_donnees(state, sources, self._objets_vises(state, plan)) as (
             data_files,
             data_context,
             avis,
@@ -2383,12 +2561,14 @@ class Orchestrator:
                 data_context=data_context,
                 previous_code=previous_code,
                 model=self.model,
-                settings=self.settings,
+                settings=self._budget_du_perimetre(plan),
                 sandbox=self._sandbox_override,
-                # Ce que la source DÉCLARE vouloir dire. Le schéma monté en CSV
-                # donne les colonnes et leurs types ; lui seul dit qu'un -1 est
-                # l'absence de mesure et qu'un 0 est une mesure.
-                dictionary=source.dictionary_text(),
+                # Ce que la ou les sources DÉCLARENT vouloir dire. Le schéma
+                # monté en CSV donne les colonnes et leurs types ; lui seul dit
+                # qu'un -1 est l'absence de mesure et qu'un 0 est une mesure.
+                dictionary=(
+                    dictionnaire_du_croisement(croise) if croise else sources[0].dictionary_text()
+                ),
             )
         # Une analyse en échec ne livre PAS ses figures : la tentative ratée laisse
         # des axes vides, et un graphique blanc affiché sous « l'analyse n'a pas
@@ -2420,7 +2600,9 @@ class Orchestrator:
             "analysis": outcome,
             "artifacts": images,
             "dire_du_dictionnaire": introspection.ce_qu_en_dit_le_dictionnaire(
-                state["question"], source.dictionary_text(), source.name
+                state["question"],
+                dictionnaire_du_croisement(croise) if croise else sources[0].dictionary_text(),
+                ", ".join(s.name for s in sources),
             ),
             "trace": [self._step("analysis", detail, start, **mesures)],
         }
