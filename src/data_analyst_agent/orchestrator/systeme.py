@@ -384,6 +384,29 @@ class ResultatSysteme:
     def concerne_le_systeme(self) -> bool:
         return bool(self.outils_appeles)
 
+    @property
+    def retenu_par_le_seul_plancher_des_sources(self) -> bool:
+        """Le tour n'a été retenu que par le PLANCHER — le modèle n'a rien appelé.
+
+        La distinction décide d'un arbitrage, et elle n'était pas lisible. Un
+        tour où le modèle appelle ``chercher_une_source`` est un tour où le
+        MODÈLE a jugé que la question portait sur les sources ; un tour retenu
+        par le seul plancher est un tour où il a jugé l'inverse — le plancher ne
+        se déclenche qu'``outils_appeles`` vide — et où un décompte de mots l'a
+        contredit.
+
+        **Mesuré le 2026-09-22, catalogue métier, trois tirages, huit messages
+        de la campagne `sources-nommees`** : six sont retenus par le modèle
+        lui-même, deux par le seul plancher. « Qu'est-ce que t'appelles source
+        vente, production, stock ? » — la question dont C54 fait la raison de ne
+        pas toucher à ce chemin — appelle ``chercher_une_source`` 3 fois sur 3 et
+        ne passe JAMAIS par le plancher. Les trois questions de croisement, à
+        l'inverse, y passent 3 sur 3, sans que le modèle appelle quoi que ce
+        soit. L'arbitrage de C54 portait donc sur une famille plus étroite qu'il
+        ne paraissait, et c'est cette propriété-ci qui le dit.
+        """
+        return self.outils_appeles == (PLANCHER_DES_SOURCES_NOMMEES,)
+
 
 def build_systeme_agent() -> Agent[SystemeDeps, str]:
     """L'agent et ses sept outils : cinq sujets documentés, la recherche par sujet, la liaison.
@@ -633,6 +656,12 @@ def ontologies_visees(precision: str, catalogue: Catalog) -> list[introspection.
 # aucun outil, et il a raison.
 SOURCES_NOMMEES_HORS_DE_PORTEE_D_UN_CALCUL = 2
 
+# Le nom que ``outils_appeles`` porte quand c'est le plancher qui a retenu le
+# tour, et non un outil. Nommé plutôt qu'écrit deux fois : l'appelant le
+# COMPARE désormais (``ResultatSysteme.retenu_par_le_seul_plancher_des_sources``),
+# et deux littéraux qui doivent coïncider finissent par diverger.
+PLANCHER_DES_SOURCES_NOMMEES = "plancher_des_sources_nommees"
+
 
 def _plancher_des_sources_nommees(deps: SystemeDeps) -> None:
     """Le message nomme PLUSIEURS sources déclarées et aucun outil n'a été appelé.
@@ -687,7 +716,7 @@ def _plancher_des_sources_nommees(deps: SystemeDeps) -> None:
         return
     faits = deps.releves.tous() if deps.releves is not None else None
     deps.retenir(
-        "plancher_des_sources_nommees",
+        PLANCHER_DES_SOURCES_NOMMEES,
         introspection.fiches_des_sources(nommees, faits),
         fiches=tuple(s.name for s in nommees),
     )

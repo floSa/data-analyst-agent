@@ -206,6 +206,12 @@ class OrchestratorState(TypedDict, total=False):
     # répondent en regardant les données, et par eux seuls : c'est le chemin qui
     # n'a pas de ceinture (cf. `introspection.ce_qu_en_dit_le_dictionnaire`).
     dire_du_dictionnaire: str
+    # Le plan DÉJÀ obtenu par le nœud système, quand il a dû le demander pour
+    # savoir s'il cédait le tour (``_le_plancher_cede_au_perimetre``). Il n'est
+    # pas ``plan`` : celui-là est le plan ARRÊTÉ du tour, que le routeur lit, et
+    # le renseigner ici ferait router avant que les règles d'ajustement soient
+    # passées. Le nœud du plan le reprend au lieu de payer un second appel.
+    plan_davance: Plan | None
     system: str | None  # réponse à une question SUR le système
     rappel: str | None  # réponse rendue en rappelant un artefact du fil
     clarification: str | None
@@ -1093,13 +1099,31 @@ class Orchestrator:
         return None
 
     def _perimetre_croise(self, plan: Plan, ctx: PlanContext) -> list:
-        """Les sources DÉCLARÉES que ``plan.source`` empaquette — [] s'il n'en nomme qu'une.
+        """Les sources DÉCLARÉES que le plan désigne ENSEMBLE — [] s'il n'en vise qu'une.
 
-        Le planificateur écrit ``source='ventes, production'`` quand la question
-        en croise deux : les deux noms qu'il a lus, empaquetés dans un champ qui
-        en attend un. C'est une information, et le code la jetait —
-        ``_match_source_name`` rend ``None`` dès qu'il trouve deux noms, et le
-        tour ressortait en demande de précision.
+        Le planificateur les désigne de DEUX façons, et on lit l'UNION des deux.
+        Il remplit ``plan.sources``, le champ de périmètre du contrat de sortie ;
+        et il empaquette ``source='ventes, production'``, deux noms dans un champ
+        qui en attend un. C'est cette seconde forme que C54 a exploitée — c'est
+        une information, et le code la jetait (``_match_source_name`` rend
+        ``None`` dès qu'il trouve deux noms, et le tour ressortait en demande de
+        précision).
+
+        **L'union, et non l'une OU l'autre** : c'est elle qui rend cinq questions
+        sur cinq là où chaque forme prise seule en rend deux ou trois. Mesuré,
+        planificateur seul, trois tirages, catalogue métier :
+
+        | question | ``source`` | ``sources`` | union |
+        |---|---|---|---|
+        | `produites-vs-vendues` | `production` | `[ventes]` | **2** |
+        | `vend-plus-quon-produit` | `ventes, production` | `[]` | **2** |
+        | `ca-produit-vs-fabrique` | — | `[ventes, production]` | **2** |
+        | `vel04-production-ventes` | — | `[production, ventes]` | **2** |
+        | `fabrique-vendu-stock` | `production, ventes, stocks` (2/3) | `[]` | **3** (2/3) |
+
+        `produites-vs-vendues` est le cas qui justifie l'union à lui seul : ni
+        l'empaquetage ni le champ ne portent deux noms, et pourtant le
+        planificateur en a bien lu deux — un dans chaque champ.
 
         **Sur le catalogue DÉCLARÉ, et sur lui seul.** Un tableau intermédiaire
         du fil est interrogeable, mais il n'entre pas dans un croisement : le
@@ -1124,9 +1148,12 @@ class Orchestrator:
         modèle a lu, l'autre ce que quelqu'un a demandé. Un croisement a besoin
         des deux.
         """
-        if plan.capability not in self._SOURCE_CAPABILITIES or not plan.source:
+        if plan.capability not in self._SOURCE_CAPABILITIES:
             return []
-        nommees = introspection.sources_nommees(plan.source, ctx.catalogue_declare)
+        designees = ", ".join([*plan.sources, plan.source or ""])
+        if not designees.strip(" ,"):
+            return []
+        nommees = introspection.sources_nommees(designees, ctx.catalogue_declare)
         if len(nommees) <= 1:
             return []
         dans_le_message = introspection.sources_nommees(ctx.question, ctx.catalogue_declare)
@@ -1534,21 +1561,14 @@ class Orchestrator:
 
     # -- le nœud du plan -------------------------------------------------------
 
-    def _plan_node(self, state: OrchestratorState) -> dict:
-        start = time.monotonic()
-        choix = self._court_circuit_du_choix_de_source(state, start)
-        if choix is not None:
-            return choix
-        system_prompt, mesures = self._peser_le_prompt(state)
-        plan = self._demander_un_plan(system_prompt, state, mesures)
-        if plan is None:
-            return self._clarify(
-                Plan(capability="query"),
-                self._ce_que_le_schema_en_dit(state) or self._repli_du_planificateur(state),
-                start,
-                **mesures,
-            )
-        ctx = PlanContext(
+    def _contexte_du_plan(self, state: OrchestratorState) -> PlanContext:
+        """Ce que les règles d'ajustement ont le droit de regarder, pour CE tour.
+
+        Factorisé parce que le nœud système en a besoin lui aussi : il doit
+        savoir si le plan désigne un périmètre avant de décider s'il cède le
+        tour, et deux compositions du même contexte divergeraient.
+        """
+        return PlanContext(
             source_imposee=state.get("source_name"),
             pending=state.get("pending_in"),
             workspace=state.get("workspace"),
@@ -1557,6 +1577,25 @@ class Orchestrator:
             question=state["question"],
             source_de_travail=state.get("source_in"),
         )
+
+    def _plan_node(self, state: OrchestratorState) -> dict:
+        start = time.monotonic()
+        choix = self._court_circuit_du_choix_de_source(state, start)
+        if choix is not None:
+            return choix
+        system_prompt, mesures = self._peser_le_prompt(state)
+        # Le nœud système a parfois DÉJÀ demandé ce plan — pour savoir s'il
+        # cédait le tour. On le reprend : le redemander coûterait un second
+        # appel LLM pour la même question, et rien ne garantit la même réponse.
+        plan = state.get("plan_davance") or self._demander_un_plan(system_prompt, state, mesures)
+        if plan is None:
+            return self._clarify(
+                Plan(capability="query"),
+                self._ce_que_le_schema_en_dit(state) or self._repli_du_planificateur(state),
+                start,
+                **mesures,
+            )
+        ctx = self._contexte_du_plan(state)
         question = self._appliquer_les_regles(plan, ctx)
         relue = self._relire_sans_la_clause_dabsence(plan, ctx, system_prompt, state, mesures)
         if relue:
@@ -1745,6 +1784,9 @@ class Orchestrator:
                     self._step("system", "aucun outil appelé — passe au planificateur", start)
                 ]
             }
+        cede = self._le_plancher_cede_au_perimetre(state, resultat, start)
+        if cede is not None:
+            return cede
         liaison = self._liaison_demandee(state, resultat, start)
         if liaison is not None:
             return liaison
@@ -1764,6 +1806,72 @@ class Orchestrator:
         if retenue:
             rendu["source_out"] = retenue
         return rendu
+
+    def _le_plancher_cede_au_perimetre(
+        self, state: OrchestratorState, resultat: ResultatSysteme, start: float
+    ) -> dict | None:
+        """Le plancher rend le tour quand le PLAN désigne un périmètre — ``None`` sinon.
+
+        **Ce que le plancher ne savait pas.** ``_plancher_des_sources_nommees``
+        retient tout message qui nomme deux sources déclarées et dit plus que
+        leurs noms, parce qu'à l'époque rien en aval ne savait répondre à
+        « décris-moi ces deux sources-là ». Depuis C54, quelque chose en aval
+        sait répondre à une autre famille qui coche exactement les mêmes cases :
+        celle qui demande un CALCUL sur ces deux sources. Le plancher les retient
+        toutes les deux, et sert deux fiches à qui demandait deux chiffres.
+
+        **Le départage ne se lit pas dans le message, et c'est mesuré.** Les deux
+        familles nomment deux sources et disent plus que leurs noms ; « quelle
+        est la différence entre iris et titanic ? » et « compare la production et
+        les ventes du VEL-04 » ne se séparent ni par le décompte des mots, ni par
+        le vocabulaire du schéma — aucune des deux ne nomme une table ou une
+        colonne — ni par la comparaison, que les deux demandent.
+
+        **Il se lit dans ce que la question RÉCLAME, et c'est le planificateur
+        qui le dit.** C'est son métier : il classe ce qu'une demande appelle. Le
+        champ de périmètre du contrat de sortie (``Plan.sources``) est vide 3
+        tirages sur 3 pour les deux questions de fiches qui passent par ce
+        plancher, et rempli 3 sur 3 pour les trois questions de croisement. On
+        lui demande donc, et on cède le tour quand il désigne un périmètre.
+
+        **Trois raisons pour que le prix reste petit.**
+
+        - Il ne se paie QUE sur les tours retenus par le seul plancher. Six des
+          huit messages de `sources-nommees` mesurés le 2026-09-22 sont retenus
+          par le MODÈLE, qui appelle un vrai outil : ils n'arrivent jamais ici,
+          et « Qu'est-ce que t'appelles source vente, production, stock ? » est
+          de ceux-là (cf. ``retenu_par_le_seul_plancher_des_sources``).
+        - L'appel n'est pas perdu quand il cède : le plan part dans
+          ``plan_davance`` et le nœud du plan le reprend. Le tour qui cède coûte
+          donc exactement ce qu'il aurait coûté sans ce plancher.
+        - Un plan que le modèle rate, ou qui ne désigne aucun périmètre, laisse
+          le plancher servir comme avant — ``None``, et rien n'a bougé.
+
+        **Une source IMPOSÉE par l'appelant ferme ce chemin.** ``source=`` est un
+        paramètre d'API : quelqu'un a tranché sur quoi travailler, et ouvrir un
+        périmètre de deux sources contre cette décision serait la défaire en
+        silence. C'est le même garde-fou que ``_regle_source_imposee`` pose une
+        règle plus loin, et il vaut ici parce que c'est ici qu'on ouvre.
+        """
+        if not resultat.retenu_par_le_seul_plancher_des_sources:
+            return None
+        if state.get("source_name"):
+            return None
+        system_prompt, mesures = self._peser_le_prompt(state)
+        plan = self._demander_un_plan(system_prompt, state, mesures)
+        if plan is None or not self._perimetre_croise(plan, self._contexte_du_plan(state)):
+            return None
+        return {
+            "plan_davance": plan,
+            "trace": [
+                self._step(
+                    "system",
+                    "périmètre désigné par le plan — le plancher cède au planificateur",
+                    start,
+                    **mesures,
+                )
+            ],
+        }
 
     def _lier_la_source_nommee(self, state: OrchestratorState) -> tuple[str, str]:
         """La source que le message NOMME est retenue, même quand c'est l'agent

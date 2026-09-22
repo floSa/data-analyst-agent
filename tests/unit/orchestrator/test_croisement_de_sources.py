@@ -23,7 +23,11 @@ from data_analyst_agent.agents.retrieval.croisement import (
 from data_analyst_agent.config import Settings
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
-from helpers.scripted_llm import ScriptedLLM
+from data_analyst_agent.orchestrator.systeme import (
+    PLANCHER_DES_SOURCES_NOMMEES,
+    ResultatSysteme,
+)
+from helpers.scripted_llm import PLANNER, ScriptedLLM, plan_response, text
 
 CROISEMENT = "compare les quantités produites et les quantités vendues par produit"
 
@@ -333,3 +337,235 @@ def test_une_cle_vers_une_table_hors_de_la_source_n_est_pas_prefixee(tmp_path: P
 
     assert table.name == "ventes_lignes"
     assert table.foreign_keys[0].ref_table == "ailleurs"
+
+
+# --- le CHAMP de périmètre, et l'union des deux désignations ----------------------
+
+
+def test_le_champ_de_perimetre_seul_ouvre_un_croisement(orchestrateur, tmp_path: Path):
+    """`sources=['ventes','production']` suffit : le plan désigne explicitement.
+
+    C'est la forme que le planificateur rend le plus souvent une fois le champ
+    au contrat — 3 tirages sur 3 sur `ca-produit-vs-fabrique` et
+    `vel04-production-ventes`, là où l'empaquetage de `source` n'en portait
+    qu'un seul nom.
+    """
+    plan = Plan(capability="query", sources=["ventes", "production"])
+
+    croise = orchestrateur._perimetre_croise(
+        plan, contexte(declare=deux(tmp_path), question=CROISEMENT)
+    )
+
+    assert [s.name for s in croise] == ["ventes", "production"]
+
+
+def test_l_union_des_deux_champs_ouvre_ce_qu_aucun_n_ouvrait_seul(orchestrateur, tmp_path: Path):
+    """Un nom dans chaque champ : le planificateur en a lu deux, et on les prend.
+
+    Le cas qui justifie l'union à lui seul. Mesuré sur `produites-vs-vendues`,
+    3 tirages sur 3 : `source='production'` et `sources=['ventes']`. Ni l'un ni
+    l'autre ne porte deux noms ; ensemble ils en portent deux, et la question
+    demandait bien les deux.
+    """
+    plan = Plan(capability="query", source="production", sources=["ventes"])
+
+    croise = orchestrateur._perimetre_croise(
+        plan, contexte(declare=deux(tmp_path), question=CROISEMENT)
+    )
+
+    assert [s.name for s in croise] == ["ventes", "production"]
+
+
+def test_le_meme_nom_dans_les_deux_champs_n_ouvre_rien(orchestrateur, tmp_path: Path):
+    """Un périmètre se compte en SOURCES, pas en désignations.
+
+    Sans cette propriété, un plan qui répète sa source — ce que le modèle fait —
+    monterait un « croisement » d'une source avec elle-même, et paierait une
+    matérialisation pour rien.
+    """
+    plan = Plan(capability="query", source="ventes", sources=["ventes"])
+
+    assert (
+        orchestrateur._perimetre_croise(plan, contexte(declare=deux(tmp_path), question=CROISEMENT))
+        == []
+    )
+
+
+def test_un_plan_sans_aucune_designation_n_ouvre_rien(orchestrateur, tmp_path: Path):
+    """`source` vide et `sources` vide : il n'y a rien à croiser, et rien à lire."""
+    assert (
+        orchestrateur._perimetre_croise(
+            plan := Plan(capability="query"), contexte(declare=deux(tmp_path), question=CROISEMENT)
+        )
+        == []
+    )
+    assert plan.sources == []
+
+
+def test_le_temoin_tient_aussi_quand_le_champ_est_rempli(orchestrateur, tmp_path: Path):
+    """« ventes ou production ? » : même si le plan désignait un périmètre, on fait choisir.
+
+    Le second garde-fou est sur le MESSAGE, et il ne dépend pas de la façon dont
+    le planificateur a désigné. Le mesurer avec le champ REMPLI est ce qui le
+    prouve : le témoin ne tient pas parce que le modèle s'est abstenu, il tient
+    parce que le message n'a rien demandé.
+    """
+    plan = Plan(capability="query", sources=["ventes", "production"])
+
+    assert (
+        orchestrateur._perimetre_croise(
+            plan, contexte(declare=deux(tmp_path), question="ventes ou production ?")
+        )
+        == []
+    )
+
+
+# --- le PLANCHER cède au périmètre : ce qui le fait céder, et ce qui le retient ----
+
+
+def _orchestrateur_sur(llm: ScriptedLLM, tmp_path: Path) -> Orchestrator:
+    """Un orchestrateur dont le catalogue porte `ventes` et `production`."""
+    return Orchestrator(
+        model=llm.model(),
+        catalog=Catalog(sources=deux(tmp_path)),
+        registry=registre(tmp_path / "registre_p", UN_MODELE_YAML),
+        settings=Settings(_env_file=None),
+    )
+
+
+def _retenu_par_le_plancher() -> ResultatSysteme:
+    """Ce que rend l'agent système quand SEUL le plancher a retenu le tour."""
+    return ResultatSysteme(
+        reponse="AUTRE",
+        faits="les deux fiches",
+        faits_a_enumerer="",
+        outils_appeles=(PLANCHER_DES_SOURCES_NOMMEES,),
+    )
+
+
+def _etat(question: str, **extra) -> dict:
+    return {"question": question, "workspace": None, **extra}
+
+
+def test_le_plancher_cede_quand_le_plan_designe_un_perimetre(tmp_path: Path):
+    """« compare la production et les ventes du VEL-04 » : le plan désigne, le plancher rend.
+
+    Le verrou nommé par C54. Le message nomme deux sources et dit plus que leurs
+    noms : le plancher le retient, et sert deux FICHES à qui demandait deux
+    CHIFFRES. Rien dans le message ne le distingue de « quelle est la différence
+    entre iris et titanic ? » — c'est ce que le plan en fait qui les sépare.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER, [plan_response(Plan(capability="query", sources=["production", "ventes"]))]
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    cede = orchestrateur._le_plancher_cede_au_perimetre(
+        _etat("compare la production et les ventes du VEL-04"), _retenu_par_le_plancher(), 0.0
+    )
+
+    assert cede is not None
+    assert cede["plan_davance"].sources == ["production", "ventes"]
+    assert "le plancher cède" in cede["trace"][0].detail
+
+
+def test_le_plancher_sert_quand_le_plan_ne_designe_aucun_perimetre(tmp_path: Path):
+    """« titanic et iris, c'est quoi au juste ? » : le plan reste vide, les fiches partent.
+
+    L'autre bord, et c'est lui qui rend la cession sans risque. Mesuré sur le
+    planificateur, 3 tirages sur 3 : les deux questions de fiches qui passent par
+    ce plancher laissent `sources` VIDE et ne nomment aucune source dans
+    `source`. Le plancher garde donc le tour, exactement comme avant.
+    """
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", source=""))])
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    cede = orchestrateur._le_plancher_cede_au_perimetre(
+        _etat("ventes et production, c'est quoi au juste ?"), _retenu_par_le_plancher(), 0.0
+    )
+
+    assert cede is None
+
+
+def test_un_tour_retenu_par_un_vrai_outil_ne_paie_aucun_plan(tmp_path: Path):
+    """Le modèle a appelé un outil : c'est LUI qui a jugé, et on ne le contredit pas.
+
+    Six des huit messages de `sources-nommees` mesurés le 2026-09-22 sont dans ce
+    cas, « Qu'est-ce que t'appelles source vente, production, stock ? » compris.
+    Aucun n'atteint ce chemin, et aucun ne paie l'appel au planificateur : le
+    script du planificateur reste intact, et c'est ce qui le prouve.
+    """
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", sources=["x"]))])
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+    retenu_par_le_modele = ResultatSysteme(
+        reponse="…", faits="…", faits_a_enumerer="", outils_appeles=("chercher_une_source",)
+    )
+
+    cede = orchestrateur._le_plancher_cede_au_perimetre(
+        _etat("ventes et production, c'est quoi ?"), retenu_par_le_modele, 0.0
+    )
+
+    assert cede is None
+    assert llm.prompts_for(PLANNER) == []
+
+
+def test_une_source_imposee_ferme_la_cession(tmp_path: Path):
+    """`source=` est un paramètre d'API : quelqu'un a tranché, on ne défait pas.
+
+    Ouvrir un périmètre de deux sources contre une source imposée serait
+    l'élargir en silence — et c'est le seul endroit où l'élargissement se
+    déciderait sans que personne le demande.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER, [plan_response(Plan(capability="query", sources=["ventes", "production"]))]
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    cede = orchestrateur._le_plancher_cede_au_perimetre(
+        _etat("compare la production et les ventes", source_name="ventes"),
+        _retenu_par_le_plancher(),
+        0.0,
+    )
+
+    assert cede is None
+    assert llm.prompts_for(PLANNER) == []
+
+
+def test_un_plan_que_le_modele_rate_laisse_le_plancher_servir(tmp_path: Path):
+    """Sortie structurée manquée : le repli est déjà prêt, et il est juste.
+
+    Le nœud système est fail-open pour ce que le MODÈLE rate ; cette cession-ci
+    l'est aussi, et dans l'autre sens — un incident ne doit pas faire perdre les
+    fiches qu'on avait sous la main.
+    """
+    # Trois refus : `pydantic-ai` réessaie avant d'abandonner, et un script
+    # trop court ferait échouer le test sur sa propre longueur.
+    llm = ScriptedLLM().script(PLANNER, [text("pas un plan")] * 3)
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    cede = orchestrateur._le_plancher_cede_au_perimetre(
+        _etat("compare la production et les ventes du VEL-04"), _retenu_par_le_plancher(), 0.0
+    )
+
+    assert cede is None
+
+
+def test_le_noeud_du_plan_reprend_le_plan_davance_sans_le_redemander(tmp_path: Path):
+    """Le tour qui cède coûte ce qu'il aurait coûté sans ce plancher, et pas un appel de plus.
+
+    C'est la troisième raison pour laquelle la cession reste bon marché : le
+    plan obtenu pour décider n'est pas jeté. Le redemander coûterait un second
+    appel LLM sur la même question — et rien ne garantit la même réponse, donc
+    rien ne garantirait qu'on croise ce pour quoi on a cédé.
+    """
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", source="ventes"))])
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+    davance = Plan(capability="query", sources=["ventes", "production"])
+
+    rendu = orchestrateur._plan_node(
+        _etat(CROISEMENT, plan_davance=davance, source_in=None, source_name=None)
+    )
+
+    assert rendu["plan"] is davance
+    assert rendu["plan"].source == "ventes, production"  # la règle a canonisé le périmètre
+    assert llm.prompts_for(PLANNER) == []  # aucun appel : le plan était déjà là

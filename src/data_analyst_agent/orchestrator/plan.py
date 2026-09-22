@@ -49,6 +49,44 @@ class Plan(BaseModel):
 
     capability: Capability
     source: str | None = None
+    # LE PÉRIMÈTRE, quand la question en demande un — et c'est un CHAMP de plus
+    # au contrat de sortie, pas une valeur de plus au `Literal` ci-dessus. La
+    # distinction est celle qui décide du prix : une valeur de plus élargit ce
+    # que le modèle a le droit de CHOISIR, et le coût mesuré plus haut (`pcass`
+    # au lieu de `pclass`, la prédiction remplacée par une relance) est celui
+    # d'un choix élargi. Un champ facultatif, lui, n'enlève rien aux autres.
+    #
+    # **Le prix a été mesuré AVANT d'être payé**, et il est nul. Planificateur
+    # seul, catalogue métier, trois tirages, quinze messages, le contrat
+    # d'aujourd'hui contre celui-ci : les huit questions sur les données gardent
+    # leur capacité ET leur source au tirage près, la prédiction reste
+    # `predict` avec ses sept features, et « ventes ou production ? » cesse
+    # même d'empaqueter deux noms une fois sur trois. Le relevé est dans
+    # docs/croisement-de-sources.md.
+    #
+    # **Il porte ce que `source` ne peut pas porter.** Le planificateur écrivait
+    # déjà `source='ventes, production'` — deux noms empaquetés dans un champ
+    # qui en attend un — et C54 a bâti le croisement sur cet empaquetage. Il
+    # tient sur deux questions et lâche sur trois autres : le modèle choisit
+    # alors UN nom, et rien ne dit qu'il en avait lu deux. Le champ ne remplace
+    # pas l'empaquetage, il s'y AJOUTE — `_perimetre_croise` lit l'union des
+    # deux, et c'est cette union, et non l'un ou l'autre, qui rend cinq
+    # questions sur cinq.
+    #
+    # **Et il départage ce qu'aucun décompte de mots ne départageait.** « titanic
+    # et iris, c'est quoi au juste ? » laisse ce champ VIDE 3 tirages sur 3 —
+    # c'est une question sur ce que SONT ces sources ; « compare la production
+    # et les ventes du VEL-04 » le remplit 3 sur 3 — c'est une question sur
+    # leurs DONNÉES. Les deux nomment deux sources et disent plus que leurs
+    # noms : aucune propriété du message ne les séparait, et celle-ci ne se lit
+    # pas dans les noms cités mais dans ce que la question RÉCLAME.
+    sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Les sources à interroger ENSEMBLE quand la demande confronte des "
+            "données de plusieurs d'entre elles. Vide quand une seule suffit."
+        ),
+    )
     dataset: str | None = None
     features: dict[str, Any] = Field(default_factory=dict)
     data_question: str | None = None  # fetch_then_predict : quoi récupérer
