@@ -4,7 +4,7 @@ import stat
 from pathlib import Path
 
 from data_analyst_agent.agents.retrieval.catalog import FileSource, open_source
-from data_analyst_agent.orchestrator.workspace import ConversationWorkspace
+from data_analyst_agent.orchestrator.workspace import ConversationWorkspace, WorkspaceArtifact
 
 
 def test_save_table_ecrit_csv_et_manifeste(tmp_path: Path):
@@ -58,6 +58,87 @@ def test_describe_et_sandbox_files(tmp_path: Path):
     assert "ces lignes" in description  # aiguille le planificateur sur le plus récent
     files = ws.sandbox_files()
     assert list(files.values()) == ["resultat_1.csv"]
+
+
+# --- ce qu'on sait d'un tableau DÉRIVÉ -----------------------------------------
+#
+# Une source primaire est décrite finement : le type de chaque colonne, ses
+# clés, et les VALEURS POSSIBLES des colonnes catégorielles. Un tableau produit
+# dans le fil n'avait que ses noms de colonnes et son nombre de lignes — le
+# modèle en savait donc moins sur ce qu'il venait de produire que sur ce dont
+# il était parti, ce qui est une raison de plus de repartir de la base.
+
+
+def test_un_tableau_derive_porte_le_type_de_chaque_colonne(tmp_path: Path):
+    ws = ConversationWorkspace(tmp_path, "types")
+    artefact = ws.save_table(
+        ["station", "pannes", "duree_h", "sous_contrat"],
+        [["Gare Nord", 3, 1.5, True], ["Place Bleue", 1, 0.25, False]],
+        "les pannes par station",
+    )
+
+    assert artefact.types == {
+        "station": "texte",
+        "pannes": "entier",
+        "duree_h": "décimal",
+        "sous_contrat": "booléen",
+    }
+
+
+def test_une_colonne_texte_a_faible_cardinalite_montre_ses_valeurs(tmp_path: Path):
+    """La MÊME règle qu'ailleurs, et par le même code : un modèle ne filtre pas
+    sur des valeurs qu'il n'a jamais vues — il devine, et il devine dans sa langue."""
+    ws = ConversationWorkspace(tmp_path, "valeurs")
+    artefact = ws.save_table(
+        ["nature", "n"],
+        [["borne hors service", 141], ["câble endommagé", 140]],
+        "les natures",
+    )
+
+    assert artefact.valeurs == {"nature": ["borne hors service", "câble endommagé"]}
+    assert "nature (texte : 'borne hors service', 'câble endommagé')" in artefact.description
+    assert "n (entier)" in artefact.description
+
+
+def test_une_colonne_a_forte_cardinalite_ne_montre_aucune_valeur(tmp_path: Path):
+    """Au-delà du plafond, la colonne est un identifiant ou du texte libre."""
+    ws = ConversationWorkspace(tmp_path, "cardinalite")
+    artefact = ws.save_table(
+        ["libelle"], [[f"station {i}"] for i in range(30)], "toutes les stations"
+    )
+
+    assert artefact.valeurs == {}
+    assert artefact.colonnes_en_clair() == "libelle (texte)"
+
+
+def test_une_ligne_de_catalogue_reste_UNE_ligne(tmp_path: Path):
+    """Quand tout ne tient pas, ce sont les VALEURS qui tombent — et on le dit."""
+    ws = ConversationWorkspace(tmp_path, "plafond")
+    artefact = ws.save_table(
+        ["a", "b"],
+        [
+            [f"une valeur plutôt longue numéro {i}", f"une autre valeur numéro {i}"]
+            for i in range(9)
+        ],
+        "beaucoup de texte",
+    )
+
+    en_clair = artefact.colonnes_en_clair()
+
+    assert en_clair == (
+        "a (texte), b (texte)"
+        " (valeurs possibles non montrées : elles ne tiennent pas sur une ligne)"
+    )
+    assert "\n" not in en_clair
+
+
+def test_un_manifeste_ecrit_avant_ce_champ_rend_la_liste_nue(tmp_path: Path):
+    """Aucune migration : sans ``types``, la ligne de catalogue est celle d'avant."""
+    ancien = WorkspaceArtifact(
+        name="resultat_1", file="resultat_1.csv", columns=["a", "b"], question="q"
+    )
+
+    assert ancien.colonnes_en_clair() == "a, b"
 
 
 def test_describe_vide_si_aucun_objet(tmp_path: Path):

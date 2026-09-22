@@ -56,6 +56,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from data_analyst_agent.agents.retrieval.catalog import FileSource
+from data_analyst_agent.agents.retrieval.sql import low_cardinality_values
 from data_analyst_agent.orchestrator.context_budget import (
     ContextLimits,
     ContextTrim,
@@ -270,6 +271,92 @@ EXTENSION = {KIND_TABLE: ".csv", KIND_CODE: ".py", KIND_FIGURE: ".py"}
 LIGNES_LUES = 20
 
 
+# Ce qu'on dit du TYPE d'une colonne dérivée, par famille de dtype pandas. En
+# français et en un mot, comme le DDL le dit en SQL : ce que le modèle a besoin
+# de savoir d'une colonne, c'est s'il peut la sommer, la trier ou la grouper.
+TYPES_EN_CLAIR = (
+    ("b", "booléen"),
+    ("i", "entier"),
+    ("u", "entier"),
+    ("f", "décimal"),
+    ("M", "date"),
+    ("m", "durée"),
+)
+TYPE_PAR_DEFAUT = "texte"
+
+# Au-delà, la description des colonnes cesse de tenir sur UNE ligne de
+# catalogue, et une ligne de catalogue qui s'étale sur dix perd ce pour quoi
+# elle existe : un index qu'on injecte à chaque tour parce qu'il ne coûte rien.
+# Quand le plafond est franchi, ce sont les VALEURS qui tombent et les types
+# qui restent — le type de chaque colonne est ce que la source primaire donne
+# toujours, les valeurs sont ce qu'elle ne donne qu'à faible cardinalité. Et
+# la coupe est DITE, parce qu'un inventaire silencieusement amputé se lit comme
+# un inventaire complet.
+COLONNES_MAX_CARACTERES = 600
+SANS_LES_VALEURS = " (valeurs possibles non montrées : elles ne tiennent pas sur une ligne)"
+
+
+def type_en_clair(serie) -> str:
+    """Le type d'une colonne, en un mot français (cf. ``TYPES_EN_CLAIR``)."""
+    genre = serie.dtype.kind
+    return next((clair for kind, clair in TYPES_EN_CLAIR if kind == genre), TYPE_PAR_DEFAUT)
+
+
+def valeurs_possibles(serie) -> list[str] | None:
+    """Les valeurs d'une colonne TEXTE à faible cardinalité, ou ``None``.
+
+    La MÊME règle qu'ailleurs, et par le même code : ``low_cardinality_values``
+    est la seule définition de ce plafond dans ce dépôt (audit §5.2), et une
+    seconde ici se mettrait à diverger en silence. On lui donne un ``fetch`` qui
+    lit le DataFrame au lieu d'une base ; le ``+1`` qui distingue « atteint » de
+    « dépassé » est le sien.
+    """
+    if type_en_clair(serie) != TYPE_PAR_DEFAUT:
+        return None
+    return low_cardinality_values(lambda limite: [[v] for v in serie.dropna().unique()[:limite]])
+
+
+def colonnes_en_clair(
+    colonnes: list[str],
+    types: dict[str, str],
+    valeurs: dict[str, list[str]],
+    plafond: int = COLONNES_MAX_CARACTERES,
+) -> str:
+    """Les colonnes d'un tableau, avec leur type et leurs valeurs — sur UNE ligne.
+
+    « nature (texte : 'borne hors service', 'câble endommagé'), duree_indispo_min
+    (entier) ». C'est ce qu'une source DÉCLARÉE donne déjà par son DDL
+    (``TableInfo.to_ddl``) et qu'un tableau du fil ne donnait pas : il n'avait
+    que des noms de colonnes et un nombre de lignes. Le modèle en savait donc
+    moins sur ce qu'il venait de produire que sur ce dont il était parti — et
+    c'était une raison de plus de repartir de la base.
+
+    ``plafond`` borne la ligne, et la coupe est DITE. Ce qui tombe d'abord, ce
+    sont les VALEURS : un type ne se déduit de rien une fois le CSV relu — tout
+    y est du texte — alors qu'une valeur possible, elle, se relit dans le
+    tableau. Sans ``types`` — un manifeste écrit avant ce mécanisme — la liste
+    est rendue nue, comme avant.
+
+    Fonction et pas seulement méthode : ``save_table`` compose la description
+    de l'artefact AVANT de l'avoir construit, et se fabriquer un artefact
+    provisoire pour appeler sa propre méthode serait un détour visible.
+    """
+    if not types:
+        return ", ".join(colonnes)
+
+    def une(nom: str, *, avec_valeurs: bool) -> str:
+        genre = types.get(nom, "")
+        possibles = valeurs.get(nom) if avec_valeurs else None
+        if possibles:
+            return f"{nom} ({genre} : {', '.join(repr(v) for v in possibles)})"
+        return f"{nom} ({genre})" if genre else nom
+
+    avec = ", ".join(une(nom, avec_valeurs=True) for nom in colonnes)
+    if len(avec) <= plafond:
+        return avec
+    return ", ".join(une(nom, avec_valeurs=False) for nom in colonnes) + SANS_LES_VALEURS
+
+
 class WorkspaceArtifact(BaseModel):
     """Un objet produit dans la conversation, et qui porte un nom.
 
@@ -286,6 +373,14 @@ class WorkspaceArtifact(BaseModel):
     file: str  # nom du fichier, relatif au dossier de la conversation
     kind: KindArtefact = KIND_TABLE
     columns: list[str] = Field(default_factory=list)
+    # Ce qu'une source PRIMAIRE dit de chaque colonne et qu'un tableau dérivé ne
+    # disait pas : son type, et ses valeurs possibles quand elle est
+    # catégorielle. Le modèle en savait donc moins sur ce qu'il venait de
+    # produire que sur ce dont il était parti — une raison de plus de repartir
+    # de la base. Absents d'un manifeste écrit avant ce champ : la ligne de
+    # catalogue est alors celle d'avant, ce qui est exact.
+    types: dict[str, str] = Field(default_factory=dict)
+    valeurs: dict[str, list[str]] = Field(default_factory=dict)
     row_count: int = 0
     question: str  # la question qui l'a produit (aide le planificateur)
     description: str = ""  # une ligne, ce qui permet de le reconnaître
@@ -305,6 +400,10 @@ class WorkspaceArtifact(BaseModel):
     @property
     def est_du_code(self) -> bool:
         return self.kind in (KIND_CODE, KIND_FIGURE)
+
+    def colonnes_en_clair(self, plafond: int = COLONNES_MAX_CARACTERES) -> str:
+        """Ses colonnes, avec leur type et leurs valeurs (cf. ``colonnes_en_clair``)."""
+        return colonnes_en_clair(self.columns, self.types, self.valeurs, plafond)
 
     def ligne_de_catalogue(self) -> str:
         """L'artefact en UNE ligne : son nom, ce qu'il est, ce qui l'a produit.
@@ -663,14 +762,28 @@ class ConversationWorkspace:
         """
         table = pd.DataFrame(rows, columns=columns)
         coupe = " ; tronqué" if tronque else ""
+        # Le type et les valeurs sont relevés ICI, sur le DataFrame qu'on a en
+        # main. Les recalculer au tour suivant demanderait de relire le CSV —
+        # et un CSV relu a perdu ses types : tout y est du texte.
+        types = {nom: type_en_clair(table[nom]) for nom in columns}
+        valeurs = {
+            nom: trouvees
+            for nom in columns
+            if (trouvees := valeurs_possibles(table[nom])) is not None
+        }
         return self._enregistrer(
             KIND_TABLE,
             lambda chemin: table.to_csv(chemin, index=False),
             columns=list(columns),
+            types=types,
+            valeurs=valeurs,
             row_count=len(rows),
             question=question,
             tronque=tronque,
-            description=f"tableau de {len(rows)} ligne(s){coupe} ; colonnes : {', '.join(columns)}",
+            description=(
+                f"tableau de {len(rows)} ligne(s){coupe} ; "
+                f"colonnes : {colonnes_en_clair(list(columns), types, valeurs)}"
+            ),
         )
 
     def save_code(
@@ -711,7 +824,10 @@ class ConversationWorkspace:
         return [
             FileSource(
                 name=a.name,
-                description=f"Tableau intermédiaire ({a.row_count} lignes) issu de : {a.question}",
+                description=(
+                    f"Tableau intermédiaire ({a.row_count} lignes ; "
+                    f"colonnes : {a.colonnes_en_clair()}) issu de : {a.question}"
+                ),
                 path=self.path_of(a),
             )
             for a in self.injected
@@ -732,7 +848,7 @@ class ConversationWorkspace:
         blocs = []
         if self.injected:
             lines = [
-                f"- {a.name} ({a.row_count} lignes ; colonnes : {', '.join(a.columns)})"
+                f"- {a.name} ({a.row_count} lignes ; colonnes : {a.colonnes_en_clair()})"
                 f" — produit par : « {a.question} »"
                 for a in self.injected
             ]

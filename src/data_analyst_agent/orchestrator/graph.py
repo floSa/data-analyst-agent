@@ -1835,7 +1835,7 @@ class Orchestrator:
             nom=artefact.name,
             fichier=artefact.file,
             lignes=artefact.row_count,
-            colonnes=", ".join(artefact.columns) or "(inconnues)",
+            colonnes=artefact.colonnes_en_clair() or "(inconnues)",
             demande=demande,
         )
 
@@ -2201,7 +2201,7 @@ class Orchestrator:
             data_files.setdefault(workspace.path_of(artefact), artefact.file)
         lines = [
             f"- /data/{a.file} ({a.row_count} lignes{' ; TRONQUÉ' if a.tronque else ''}"
-            f" ; colonnes : {', '.join(a.columns)})"
+            f" ; colonnes : {a.colonnes_en_clair()})"
             for a in objets
         ]
         extra = "Objets intermédiaires de la conversation (réutilisables) :\n" + "\n".join(lines)

@@ -297,7 +297,16 @@ def test_le_graphe_se_reprend_deux_tours_plus_tard(
 def test_un_tableau_intermediaire_se_reprend_par_son_nom(
     tmp_path: Path, iris_csv: Path, registry: Registry
 ):
-    """Le même parcours, sur un TABLEAU désigné par son nom, deux tours plus tard."""
+    """Le même parcours, sur un TABLEAU désigné par son nom, deux tours plus tard.
+
+    Et le contrat du catalogue, qui n'a pas changé avec C51 : ce qui entre dans
+    le prompt reste l'INDEX. Une colonne catégorielle y expose désormais ses
+    valeurs possibles, comme le DDL d'une source déclarée le fait depuis
+    toujours — c'est borné à quinze valeurs par ``low_cardinality_values`` et
+    c'est ce qui permet de filtrer sans deviner. Les LIGNES, elles, n'y sont
+    toujours pas : le comptage de chaque espèce ne s'obtient qu'en ouvrant
+    l'artefact.
+    """
     ws = ConversationWorkspace(tmp_path, "fil")
     ws.save_table(["espece", "n"], [["setosa", 50]], "répartition des espèces")
     ws.save_table(["a"], [[1]], "une digression")
@@ -315,9 +324,14 @@ def test_un_tableau_intermediaire_se_reprend_par_son_nom(
 
     assert reponse.error is None
     assert "resultat_1" in reponse.answer
-    # le contenu du tableau a bien été OUVERT, et n'était pas dans le prompt
-    assert "setosa" not in llm.systems_for(RAPPEL)[0]
-    assert "répartition des espèces" in llm.systems_for(RAPPEL)[0]  # le catalogue, lui, y est
+    catalogue = llm.systems_for(RAPPEL)[0]
+    # le CONTENU du tableau a bien été OUVERT, et n'était pas dans le prompt
+    assert "50" not in catalogue
+    assert "répartition des espèces" in catalogue  # le catalogue, lui, y est
+    # et ce que le catalogue dit désormais d'une colonne dérivée : son type,
+    # et ses valeurs quand elles sont assez peu nombreuses pour tenir
+    assert "espece (texte : 'setosa')" in catalogue
+    assert "n (entier)" in catalogue
 
 
 def test_un_artefact_absent_est_refuse_pas_invente(
