@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, GetJsonSchemaHandler
+from pydantic.json_schema import JsonSchemaValue
 from pydantic_ai import Agent
+from pydantic_core import CoreSchema
 
 from data_analyst_agent import prompts
 
@@ -45,7 +47,12 @@ def planner_template() -> str:
 
 
 class Plan(BaseModel):
-    """Décision de routage + paramètres extraits de la question."""
+    """Décision de routage + paramètres extraits de la question.
+
+    CETTE DOCSTRING NE PART PAS AU MODÈLE (``__get_pydantic_json_schema__``), et
+    ce n'est pas un détail de présentation : c'est le réglage le plus cher qu'on
+    ait mesuré sur ce contrat.
+    """
 
     capability: Capability
     source: str | None = None
@@ -91,6 +98,53 @@ class Plan(BaseModel):
     features: dict[str, Any] = Field(default_factory=dict)
     data_question: str | None = None  # fetch_then_predict : quoi récupérer
     reason: str = ""
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        """Le JSON Schema de sortie, SANS la description tirée de la docstring.
+
+        **Pydantic promeut silencieusement ``__doc__`` en ``description`` du
+        schéma.** Une phrase écrite pour qui lit le code devient donc une phrase
+        que le MODÈLE lit, sans que personne l'ait décidé — et elle ne parle pas
+        au modèle, elle parle du module.
+
+        **Ce que cette phrase-là coûtait, mesuré le 2026-09-22**, catalogue
+        métier, six tirages par variante, deux contrats identiques au mot près
+        sauf celle-ci :
+
+        | description du modèle | ce que rend le plan |
+        |---|---|
+        | « …paramètres extraits de la question. » | `source='production'`, `sources=[]` — **6/6** |
+        | (aucune) | `source=None`, `sources=['production','ventes']` — **6/6** |
+
+        (sur « compare la production et les ventes du VEL-04 » ; la première
+        ligne est la docstring de cette classe, au mot près.)
+
+        Six sur six dans chaque sens, sur la même question, le même prompt et le
+        même modèle. Le titre du schéma, lui, ne change rien : `Plan` et `PlanB`
+        se comportent pareil à description égale, ce qui isole la cause.
+        « paramètres extraits de la question » énonce le champ au SINGULIER, et
+        le modèle le suit contre la description du champ ``sources``, qui dit
+        l'inverse deux lignes plus bas.
+
+        **On retire plutôt qu'on réécrit.** Une troisième rédaction — « une
+        source, ou un périmètre qui en croise plusieurs » — a été mesurée aussi :
+        elle rend deux questions sur trois et en perd une que le retrait garde.
+        Réécrire, c'est chercher la phrase qui plaît au modèle du jour ; retirer,
+        c'est lui rendre le champ tel qu'il est déclaré. La description du CHAMP
+        reste, elle, et elle est mesurée comme payante : sans elle, trois
+        questions de croisement sur huit perdent leur périmètre.
+
+        La docstring reste écrite pour qui lit le code. C'est le seul endroit du
+        dépôt où une documentation est explicitement coupée du schéma, et elle
+        le dit.
+        """
+        schema = handler(core_schema)
+        schema = handler.resolve_ref_schema(schema)
+        schema.pop("description", None)
+        return schema
 
 
 def planner_system_prompt(

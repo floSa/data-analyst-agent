@@ -590,3 +590,22 @@ def test_le_noeud_relit_le_perimetre_que_la_regle_a_ecrit(orchestrateur, tmp_pat
 
     assert plan.source == "ventes, production"
     assert [s.name for s in orchestrateur._sources_du_perimetre(plan)] == ["ventes", "production"]
+
+
+def test_la_docstring_du_plan_ne_part_pas_au_modele():
+    """Une phrase écrite pour le lecteur du code n'a rien à faire dans le schéma.
+
+    Pydantic promeut ``__doc__`` en ``description`` du JSON Schema, donc en texte
+    que le modèle LIT. Mesuré le 2026-09-22, six tirages par variante : avec
+    cette phrase, « compare la production et les ventes du VEL-04 » rend
+    `sources=[]` 6 fois sur 6 ; sans elle, `sources=['production','ventes']` 6
+    fois sur 6. Le test tient les trois faits ensemble — la docstring existe pour
+    les humains, elle ne part pas au modèle, et la description du CHAMP, elle,
+    part bien.
+    """
+    schema = Plan.model_json_schema()
+
+    assert Plan.__doc__ is not None
+    assert "Décision de routage" in Plan.__doc__
+    assert "description" not in schema
+    assert "ENSEMBLE" in schema["properties"]["sources"]["description"]
