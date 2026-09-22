@@ -182,6 +182,83 @@ QUESTIONS: tuple[Question, ...] = (
         attendu="le même tableau, sur un fil déjà lié à `ventes`",
         montre="le périmètre S'AJOUTE à la source du fil au lieu de la remplacer",
     ),
+    # ---- LE RELEVÉ DU PILOTE, DANS SA CONDITION --------------------------
+    #
+    # Les deux phrases du pilote étaient déjà au banc, mais sur un fil VIERGE.
+    # Le pilote, lui, les a posées sur un fil lié à `ventes` — et c'est là
+    # qu'elles ont rendu ce qu'il rapporte. Une question mesurée hors de sa
+    # condition ne mesure pas la question : `ca-produit-vs-fabrique` est 3/3
+    # sur fil vierge dans le relevé de C54, et le pilote la voit répondre
+    # « la quantité fabriquée est de 8 unités » sur fil lié. Les deux relevés
+    # sont justes ; ils ne parlent pas du même tour.
+    Question(
+        cle="ca-produit-vs-fabrique-fil-lie",
+        message="compare le chiffre d'affaires par produit avec les quantités fabriquées",
+        fil="ventes",
+        nombres=(461,),
+        interdits=(341_130, 1_636_093),
+        faits=(("annulée", "annulées", "annulation", "exclu les annul", "statut ANN"),),
+        attendu="VEL-07 : 323 700 € pour 461 fabriqués, annulées exclues et DIT",
+        montre="LE RELEVÉ DU PILOTE — la première phrase, sur le fil qu'il a mesuré",
+    ),
+    Question(
+        cle="vend-plus-quon-produit-fil-lie",
+        message="est-ce qu'on vend plus que ce qu'on produit ?",
+        fil="ventes",
+        nombres=(4413,),
+        faits=(
+            (
+                "on produit plus",
+                "produit davantage",
+                "production dépasse",
+                "production est supérieure",
+                "plus qu'on n'en vend",
+                "plus que ce qu'on vend",
+                "fabrique plus",
+                "produites sont supérieures",
+            ),
+        ),
+        interdits=(1180,),
+        attendu="non : 4 413 unités fabriquées pour 1 078 vélos vendus",
+        montre="LE RELEVÉ DU PILOTE — la seconde phrase, sur le fil qu'il a mesuré",
+    ),
+    # ---- TROIS FORMULATIONS NEUVES ---------------------------------------
+    #
+    # Écrites pour ce tour, et avant de savoir ce qu'elles rendent. Aucune ne
+    # reprend une tournure du banc : un correctif qui ne tiendrait que sur les
+    # phrases déjà écrites se verrait ici, et nulle part ailleurs.
+    Question(
+        cle="vel01-fabrique-vendu",
+        message="pour le VEL-01, combien on en a fabriqué et combien on en a vendu ?",
+        nombres=(689, 123),
+        # 141 est le même produit sans le filtre des annulées.
+        interdits=(141,),
+        attendu="VEL-01 : 689 fabriqués, 123 vendus",
+        montre="NEUVE — un croisement resserré, posé comme une question de comptoir",
+    ),
+    Question(
+        cle="vendus-sans-fabriquer",
+        message="quels produits vendons-nous sans les fabriquer nous-mêmes ?",
+        # Un croisement par DIFFÉRENCE et non par rapprochement : ce qui est
+        # dans `ventes` et pas dans `production`. Les quatre accessoires sont
+        # achetés à un fournisseur, et c'est écrit dans le catalogue.
+        faits=(("ACC-01",), ("ACC-02",), ("ACC-03",), ("ACC-04",)),
+        # Un vélo cité comme « non fabriqué » est la réponse inverse.
+        attendu="les quatre accessoires ACC-01 à ACC-04",
+        montre="NEUVE — un croisement par DIFFÉRENCE, pas par rapprochement",
+    ),
+    Question(
+        cle="total-fabrique-vs-total-vendu",
+        message=(
+            "au total, combien d'unités sont sorties de l'atelier "
+            "et combien sont parties en commande ?"
+        ),
+        nombres=(4413, 1828),
+        # 2 006 est le total vendu annulées comprises.
+        interdits=(2006,),
+        attendu="4 413 fabriquées, 1 828 vendues (annulées exclues)",
+        montre="NEUVE — deux totaux, et le piège des annulées sur le second",
+    ),
     # ---- LES TROIS TÉMOINS -----------------------------------------------
     Question(
         cle="temoin-une-seule-source",
