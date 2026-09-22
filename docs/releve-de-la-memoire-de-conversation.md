@@ -34,21 +34,21 @@ Ce qui entre RÉELLEMENT dans un prompt, en caractères :
 | nœud | ce qui est injecté | tours concernés | médiane | max |
 |---|---|---|---|---|
 | `analysis` | `montage_sandbox` | 6 | 370 car. | 428 car. |
-| `plan` | `describe` | 30 | 1188 car. | 2652 car. |
-| `rappel` | `catalogue_du_rappel` | 39 | 808 car. | 2588 car. |
+| `plan` | `describe` | 30 | 1188 car. | 2658 car. |
+| `rappel` | `catalogue_du_rappel` | 39 | 808 car. | 2594 car. |
 
 Et ce qui est MIS À DISPOSITION d'un nœud sans forcément entrer dans son prompt — le texte des objets du fil, que l'agent système ne lit que s'il appelle l'outil qui le rend :
 
 | nœud | ce qui est offert | tours concernés | médiane | max |
 |---|---|---|---|---|
-| `system` | `objets_du_fil` | 45 | 970 car. | 2652 car. |
-| `system` | `sources_transformees` | 45 | 724 car. | 2652 car. |
+| `system` | `objets_du_fil` | 45 | 970 car. | 2658 car. |
+| `system` | `sources_transformees` | 45 | 724 car. | 2658 car. |
 
 Nœuds du graphe où **aucun texte** de la mémoire de conversation n'est entré pendant toute la campagne : `retrieval`, `inference` (jamais traversé), `fetch_predict` (jamais traversé), `synthesize`. Cela ne veut pas dire qu'ils l'ignorent : certains reçoivent les tableaux du fil comme des sources interrogeables, sans qu'aucune ligne de catalogue n'entre dans leur prompt (tableau plus bas).
 
-Rapporté au prompt qui la porte : le catalogue des objets pèse **18 % du prompt du planificateur** en médiane sur les 30 tours où il est injecté, et jusqu'à **32 %** (tour F.8 · tirage 1). Les deux termes sont pris en tokens estimés, comme le budget qui les arbitre.
+Rapporté au prompt qui la porte : le catalogue des objets pèse **18 % du prompt du planificateur** en médiane sur les 30 tours où il est injecté, et jusqu'à **32 %** (tour F.8 · tirage 2). Les deux termes sont pris en tokens estimés, comme le budget qui les arbitre.
 
-La **pesée du budget** (`fit_to_budget`, nœud `plan`) a redemandé ce même catalogue 60 fois pour le mesurer sans l'envoyer — médiane 1188 car., max 2652 car. Elle n'est pas comptée ci-dessus.
+La **pesée du budget** (`fit_to_budget`, nœud `plan`) a redemandé ce même catalogue 60 fois pour le mesurer sans l'envoyer — médiane 1188 car., max 2658 car. Elle n'est pas comptée ci-dessus.
 
 Les tableaux du fil exposés comme **sources interrogeables** (`_effective_catalog`), par nœud demandeur :
 
@@ -93,12 +93,12 @@ Ce qu'on cherche : le tour 2 repart-il du tableau du tour 1, ou relance-t-il un 
 
 Ce qu'on cherche : lie la source, sans quoi le tour 1 n'interroge rien.
 
-**0 appel(s) LLM**, 163 ms, source liée après le tour : `titanic`.
+**0 appel(s) LLM**, 224 ms, source liée après le tour : `titanic`.
 
 | nœud | détail | ms |
 |---|---|---|
 | `system` | choix de source — passe au planificateur | 0 |
-| `plan` | source choisie : titanic — sans appel LLM | 159 |
+| `plan` | source choisie : titanic — sans appel LLM | 219 |
 | `synthesize` | clarification | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -115,7 +115,7 @@ Réponse servie :
 
 > Entendu : on travaille sur **titanic** (postgres) — Base Titanic multi-tables (passengers + classes jointes par clé étrangère class_id) — survie, sexe, âge, tarif, classe.
 >
-> 2 table(s), 894 ligne(s) (classes : 3, passengers : 891)
+> 2 table(s), 894 ligne(s) (classes : 3, passengers : 891) — aucune période couverte : la source ne porte aucune colonne de date
 >
 > Je garde cette source pour la suite de la conversation. Nomme-en une autre à tout moment et je basculerai dessus.
 >
@@ -125,13 +125,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau, et on verra s'il est tronqué.
 
-**5 appel(s) LLM**, 4239 ms, plan : `query · source=titanic`, source liée après le tour : `titanic`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 3217 ms, plan : `query · source=titanic`, source liée après le tour : `titanic`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 439 |
-| `plan` | query sur titanic *(prompt : 1540 tokens estimés, 1434 évalués)* | 856 |
-| `retrieval` | SELECT * FROM passengers WHERE survived = 1 AND sex = 'female' | 2938 |
+| `system` | aucun outil appelé — passe au planificateur | 447 |
+| `plan` | query sur titanic *(prompt : 1540 tokens estimés, 1434 évalués)* | 862 |
+| `retrieval` | SELECT * FROM passengers WHERE survived = 1 AND sex = 'female' | 1901 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -162,15 +162,15 @@ Réponse servie :
 
 Ce qu'on cherche : le chemin : SQL neuf sur la base, ou lecture du tableau d'avant.
 
-**5 appel(s) LLM**, 14062 ms, plan : `analyze · source=resultat_1`, source liée après le tour : `titanic`, artefacts rendus : `image/png`.
+**5 appel(s) LLM**, 14381 ms, plan : `analyze · source=resultat_1`, source liée après le tour : `titanic`, artefacts rendus : `image/png`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 141 |
-| `rappel` | aucun outil appelé — passe au planificateur | 509 |
-| `plan` | analyze sur resultat_1 *(prompt : 1906 tokens estimés, 1731 évalués)* | 1494 |
-| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 10646 |
-| `synthesize` | LLM | 1262 |
+| `system` | aucun outil appelé — passe au planificateur | 102 |
+| `rappel` | aucun outil appelé — passe au planificateur | 333 |
+| `plan` | analyze sur resultat_1 *(prompt : 1906 tokens estimés, 1731 évalués)* | 1123 |
+| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 10837 |
+| `synthesize` | LLM | 1977 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
@@ -237,7 +237,7 @@ print(df['age'].describe())
 
 Réponse servie :
 
-> Un graphique de la distribution de l'âge a été généré (ci-joint). Les statistiques montrent que sur 200 entrées, l'âge moyen est de 28.07 ans, avec une médiane de 28.00 ans. Les âges varient de 0.75 à 63 ans.
+> Un graphique de la distribution de l'âge a été généré (ci-joint). Les statistiques montrent que sur 200 observations, l'âge moyen est de 28.07 ans, avec une médiane de 28.00 ans. Les âges varient de 0.75 à 63 ans.
 >
 > Données tronquées : resultat_1 coupée(s) à 200 lignes (réglage DAA_RETRIEVAL_MAX_ROWS) — tout agrégat qui porte sur elles (somme, moyenne, comptage) décrit cet échantillon, pas le résultat entier de la requête qui les a produits.
 
@@ -245,7 +245,7 @@ Réponse servie :
 
 Ce qu'on cherche : lie la source, sans quoi le tour 1 n'interroge rien.
 
-**0 appel(s) LLM**, 4 ms, source liée après le tour : `titanic`.
+**0 appel(s) LLM**, 3 ms, source liée après le tour : `titanic`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -267,7 +267,7 @@ Réponse servie :
 
 > Entendu : on travaille sur **titanic** (postgres) — Base Titanic multi-tables (passengers + classes jointes par clé étrangère class_id) — survie, sexe, âge, tarif, classe.
 >
-> 2 table(s), 894 ligne(s) (classes : 3, passengers : 891)
+> 2 table(s), 894 ligne(s) (classes : 3, passengers : 891) — aucune période couverte : la source ne porte aucune colonne de date
 >
 > Je garde cette source pour la suite de la conversation. Nomme-en une autre à tout moment et je basculerai dessus.
 >
@@ -277,13 +277,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau, et on verra s'il est tronqué.
 
-**5 appel(s) LLM**, 3049 ms, plan : `query · source=titanic`, source liée après le tour : `titanic`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 2512 ms, plan : `query · source=titanic`, source liée après le tour : `titanic`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 106 |
-| `plan` | query sur titanic *(prompt : 1540 tokens estimés, 1434 évalués)* | 646 |
-| `retrieval` | SELECT * FROM passengers WHERE survived = 1 AND sex = 'female' | 2289 |
+| `system` | aucun outil appelé — passe au planificateur | 136 |
+| `plan` | query sur titanic *(prompt : 1540 tokens estimés, 1434 évalués)* | 807 |
+| `retrieval` | SELECT * FROM passengers WHERE survived = 1 AND sex = 'female' | 1561 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -314,15 +314,15 @@ Réponse servie :
 
 Ce qu'on cherche : le chemin : SQL neuf sur la base, ou lecture du tableau d'avant.
 
-**5 appel(s) LLM**, 14510 ms, plan : `analyze · source=resultat_1`, source liée après le tour : `titanic`, artefacts rendus : `image/png`.
+**6 appel(s) LLM**, 22766 ms, plan : `analyze · source=resultat_1`, source liée après le tour : `titanic`, artefacts rendus : `image/png`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 134 |
-| `rappel` | aucun outil appelé — passe au planificateur | 126 |
-| `plan` | analyze sur resultat_1 *(prompt : 1906 tokens estimés, 1731 évalués)* | 1220 |
-| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 11783 |
-| `synthesize` | LLM | 1237 |
+| `system` | aucun outil appelé — passe au planificateur | 105 |
+| `rappel` | aucun outil appelé — passe au planificateur | 89 |
+| `plan` | analyze sur resultat_1 *(prompt : 1906 tokens estimés, 1731 évalués)* | 912 |
+| `analysis` | 2 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 19749 |
+| `synthesize` | LLM | 1900 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
@@ -382,7 +382,7 @@ plt.grid(axis='y', alpha=0.5)
 # Afficher le graphique
 plt.show()
 
-# Afficher quelques statistiques descriptives de l'âge
+# Afficher quelques statistiques descriptives de l'âge sans utiliser to_markdown
 print("Statistiques descriptives de l'âge:")
 print(df['age'].describe())
 ```
@@ -397,7 +397,7 @@ Réponse servie :
 
 Ce qu'on cherche : lie la source, sans quoi le tour 1 n'interroge rien.
 
-**0 appel(s) LLM**, 4 ms, source liée après le tour : `titanic`.
+**0 appel(s) LLM**, 3 ms, source liée après le tour : `titanic`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -419,7 +419,7 @@ Réponse servie :
 
 > Entendu : on travaille sur **titanic** (postgres) — Base Titanic multi-tables (passengers + classes jointes par clé étrangère class_id) — survie, sexe, âge, tarif, classe.
 >
-> 2 table(s), 894 ligne(s) (classes : 3, passengers : 891)
+> 2 table(s), 894 ligne(s) (classes : 3, passengers : 891) — aucune période couverte : la source ne porte aucune colonne de date
 >
 > Je garde cette source pour la suite de la conversation. Nomme-en une autre à tout moment et je basculerai dessus.
 >
@@ -429,13 +429,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau, et on verra s'il est tronqué.
 
-**5 appel(s) LLM**, 2306 ms, plan : `query · source=titanic`, source liée après le tour : `titanic`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 2520 ms, plan : `query · source=titanic`, source liée après le tour : `titanic`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 103 |
-| `plan` | query sur titanic *(prompt : 1540 tokens estimés, 1434 évalués)* | 645 |
-| `retrieval` | SELECT * FROM passengers WHERE survived = 1 AND sex = 'female' | 1549 |
+| `system` | aucun outil appelé — passe au planificateur | 136 |
+| `plan` | query sur titanic *(prompt : 1540 tokens estimés, 1434 évalués)* | 804 |
+| `retrieval` | SELECT * FROM passengers WHERE survived = 1 AND sex = 'female' | 1572 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -466,14 +466,14 @@ Réponse servie :
 
 Ce qu'on cherche : le chemin : SQL neuf sur la base, ou lecture du tableau d'avant.
 
-**5 appel(s) LLM**, 13141 ms, plan : `analyze · source=resultat_1`, source liée après le tour : `titanic`, artefacts rendus : `image/png`.
+**6 appel(s) LLM**, 19398 ms, plan : `analyze · source=resultat_1`, source liée après le tour : `titanic`, artefacts rendus : `image/png`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 104 |
-| `rappel` | aucun outil appelé — passe au planificateur | 89 |
+| `system` | aucun outil appelé — passe au planificateur | 106 |
+| `rappel` | aucun outil appelé — passe au planificateur | 92 |
 | `plan` | analyze sur resultat_1 *(prompt : 1906 tokens estimés, 1731 évalués)* | 916 |
-| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 10780 |
+| `analysis` | 2 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 17031 |
 | `synthesize` | LLM | 1241 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -534,7 +534,7 @@ plt.grid(axis='y', alpha=0.5)
 # Afficher le graphique
 plt.show()
 
-# Afficher quelques statistiques descriptives de l'âge
+# Afficher quelques statistiques descriptives de l'âge sans utiliser to_markdown
 print("Statistiques descriptives de l'âge:")
 print(df['age'].describe())
 ```
@@ -573,7 +573,7 @@ Ce qu'on cherche : sait-il énumérer ses objets, les distinguer, et dire ce que
 
 Ce qu'on cherche : lie la source.
 
-**0 appel(s) LLM**, 89 ms, source liée après le tour : `interventions`.
+**0 appel(s) LLM**, 90 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -605,13 +605,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau.
 
-**5 appel(s) LLM**, 8287 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 11710 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 128 |
-| `plan` | query sur interventions *(prompt : 1794 tokens estimés, 1637 évalués)* | 1694 |
-| `retrieval` | SELECT station_libelle, nature, duree_indispo_min FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 6456 |
+| `system` | aucun outil appelé — passe au planificateur | 129 |
+| `plan` | query sur interventions *(prompt : 1794 tokens estimés, 1637 évalués)* | 2599 |
+| `retrieval` | SELECT station_libelle, nature, duree_indispo_min FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 8974 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -645,15 +645,15 @@ Réponse servie :
 
 Ce qu'on cherche : une figure.
 
-**5 appel(s) LLM**, 24410 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `image/png`.
+**5 appel(s) LLM**, 23573 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `image/png`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 131 |
-| `rappel` | aucun outil appelé — passe au planificateur | 369 |
-| `plan` | analyze sur interventions *(prompt : 2246 tokens estimés, 1992 évalués)* | 1397 |
-| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 20845 |
-| `synthesize` | LLM | 1656 |
+| `system` | aucun outil appelé — passe au planificateur | 133 |
+| `rappel` | aucun outil appelé — passe au planificateur | 336 |
+| `plan` | analyze sur interventions *(prompt : 2246 tokens estimés, 1992 évalués)* | 882 |
+| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 20557 |
+| `synthesize` | LLM | 1654 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
@@ -718,15 +718,16 @@ df_filtered = df_filtered[df_filtered['nature'].isin(natures_a_conserver)].copy(
 
 # 3. Nettoyage des valeurs manquantes dans la colonne catégorielle 'nature'
 # Règle : S'assurer qu'il n'y a pas de NaN dans la colonne catégorielle avant le comptage.
-# Bien que le filtrage ci-dessus ait réduit les cas, on applique dropna pour garantir la validité de la catégorisation.
+# Bien que le filtrage ci-dessus ait réduit les cas, on applique dropna pour garantir la robustesse.
 df_filtered.dropna(subset=['nature'], inplace=True)
 
-
 # --- Agrégation des données ---
-# Compter le nombre d'interventions pour chaque nature
+
+# Compter le nombre d'interventions par nature
 nature_counts = df_filtered['nature'].value_counts()
 
 # --- Visualisation ---
+
 plt.figure(figsize=(12, 7))
 nature_counts.plot(kind='bar', color='skyblue')
 plt.title('Nombre d\'Interventions par Nature (Excluant la Maintenance Préventive)')
@@ -754,11 +755,11 @@ Réponse servie :
 
 Ce qu'on cherche : l'inventaire de ses propres objets.
 
-**2 appel(s) LLM**, 5135 ms, source liée après le tour : `interventions`.
+**2 appel(s) LLM**, 6520 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | memoire_de_la_conversation — formulé par le modèle | 5132 |
+| `system` | memoire_de_la_conversation — formulé par le modèle | 6517 |
 | `synthesize` | système (déterministe) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -792,12 +793,12 @@ Réponse servie :
 
 Ce qu'on cherche : le contenu d'un objet désigné par son rang, pas par son nom.
 
-**4 appel(s) LLM**, 1018 ms, source liée après le tour : `interventions`.
+**4 appel(s) LLM**, 1417 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 132 |
-| `rappel` | lire_un_artefact — faits servis (sentinelle rendue alors qu'un outil a été appelé) | 883 |
+| `system` | aucun outil appelé — passe au planificateur | 201 |
+| `rappel` | lire_un_artefact — faits servis (sentinelle rendue alors qu'un outil a été appelé) | 1212 |
 | `synthesize` | rappel d'artefact | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -868,13 +869,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau.
 
-**5 appel(s) LLM**, 10182 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 8515 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 147 |
-| `plan` | query sur interventions *(prompt : 1794 tokens estimés, 1637 évalués)* | 2414 |
-| `retrieval` | SELECT station_libelle, nature, duree_indispo_min FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 7613 |
+| `system` | aucun outil appelé — passe au planificateur | 104 |
+| `plan` | query sur interventions *(prompt : 1794 tokens estimés, 1637 évalués)* | 1481 |
+| `retrieval` | SELECT station_libelle, nature, duree_indispo_min FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 6922 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -908,15 +909,15 @@ Réponse servie :
 
 Ce qu'on cherche : une figure.
 
-**5 appel(s) LLM**, 22674 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `image/png`.
+**5 appel(s) LLM**, 21484 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `image/png`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 104 |
-| `rappel` | aucun outil appelé — passe au planificateur | 90 |
-| `plan` | analyze sur interventions *(prompt : 2246 tokens estimés, 1992 évalués)* | 653 |
-| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 19140 |
-| `synthesize` | LLM | 2679 |
+| `system` | aucun outil appelé — passe au planificateur | 132 |
+| `rappel` | aucun outil appelé — passe au planificateur | 121 |
+| `plan` | analyze sur interventions *(prompt : 2246 tokens estimés, 1992 évalués)* | 1048 |
+| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 17598 |
+| `synthesize` | LLM | 2574 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
@@ -963,35 +964,30 @@ except FileNotFoundError:
 
 # 1. Gestion de 'duree_indispo_min' (Piège n°2)
 # Règle : Écarter les lignes où 'duree_indispo_min' est -1, car cela signifie "non renseigné".
-# Filtre appliqué : df['duree_indispo_min'] >= 0
+# Le filtre est : WHERE duree_indispo_min >= 0.
 df_filtered = df[df['duree_indispo_min'] >= 0].copy()
 
 # 2. Gestion de 'nature' (Piège n°3)
 # Règle : Isoler les pannes en filtrant sur les libellés de nature qui ne sont pas "maintenance préventive".
 # Les libellés à conserver sont : 'borne hors service', 'câble endommagé', 'écran illisible', 'défaut de paiement carte', 'communication réseau perdue'.
-# Le code est relu, la courbe ne l'est pas.
-natures_a_conserver = [
-    'borne hors service', 
-    'câble endommagé', 
-    'écran illisible', 
-    'défaut de paiement carte', 
-    'communication réseau perdue'
-]
-df_filtered = df_filtered[df_filtered['nature'].isin(natures_a_conserver)].copy()
+# Le filtre est : nature != 'maintenance préventive'.
+df_filtered = df_filtered[df_filtered['nature'] != 'maintenance préventive'].copy()
 
-# 3. Nettoyage des valeurs manquantes dans la colonne catégorielle 'nature'
-# Règle : S'assurer qu'il n'y a pas de NaN dans la colonne catégorielle avant le comptage.
-# Bien que le filtrage ci-dessus ait réduit les cas, on applique dropna pour garantir la validité de la catégorisation.
+# 3. Nettoyage des valeurs catégorielles (NaN)
+# Règle : Avant d'agréger ou de tracer une variable catégorielle, les NaN doivent être gérés.
+# Nous allons supprimer les lignes où 'nature' est NaN, car c'est la variable de regroupement.
 df_filtered.dropna(subset=['nature'], inplace=True)
 
-
 # --- Agrégation des données ---
-# Compter le nombre d'interventions pour chaque nature
+
+# Compter le nombre d'interventions par nature
 nature_counts = df_filtered['nature'].value_counts()
 
 # --- Visualisation ---
+
 plt.figure(figsize=(12, 7))
 nature_counts.plot(kind='bar', color='skyblue')
+
 plt.title('Nombre d\'Interventions par Nature (Excluant la Maintenance Préventive)')
 plt.xlabel('Nature de l\'Intervention')
 plt.ylabel('Nombre d\'Interventions')
@@ -1001,7 +997,7 @@ plt.tight_layout()
 plt.show()
 
 # Affichage des résultats agrégés
-print("Comptage des interventions par nature (après filtrage) :")
+print("Nombre d'interventions par nature (après filtrage) :")
 print(nature_counts.to_string())
 ```
 
@@ -1017,11 +1013,11 @@ Réponse servie :
 
 Ce qu'on cherche : l'inventaire de ses propres objets.
 
-**2 appel(s) LLM**, 6727 ms, source liée après le tour : `interventions`.
+**2 appel(s) LLM**, 6015 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | memoire_de_la_conversation — formulé par le modèle | 6725 |
+| `system` | memoire_de_la_conversation — formulé par le modèle | 6012 |
 | `synthesize` | système (déterministe) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1055,12 +1051,12 @@ Réponse servie :
 
 Ce qu'on cherche : le contenu d'un objet désigné par son rang, pas par son nom.
 
-**4 appel(s) LLM**, 2017 ms, source liée après le tour : `interventions`.
+**4 appel(s) LLM**, 1621 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 99 |
-| `rappel` | lire_un_artefact — formulé par le modèle | 1914 |
+| `system` | aucun outil appelé — passe au planificateur | 107 |
+| `rappel` | lire_un_artefact — formulé par le modèle | 1510 |
 | `synthesize` | rappel d'artefact | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1082,9 +1078,7 @@ Chemin : repart d'un objet = **oui**, SQL neuf = **non**, base rematérialisée 
 
 Réponse servie :
 
-> Je suis désolé, mais je ne peux pas répondre à cette demande car elle ne correspond pas aux instructions. Je dois répondre en utilisant les outils disponibles ou en fournissant une réponse textuelle basée sur les résultats des outils.
->
-> Si vous souhaitez que je fasse quelque chose avec le tableau `resultat_1` (par exemple, calculer une moyenne, filtrer des données, etc.), veuillez me le demander.
+> Je suis désolé, mais je ne peux pas répondre à cette demande. Elle ne porte pas sur un artefact existant dans le catalogue, ni sur une demande de calcul dérivé à effectuer sur un artefact existant. Elle semble être une instruction de validation ou un retour d'information externe.
 
 #### B.0 · tirage 3 — « travaillons sur interventions » *(amorce, hors comptage)*
 
@@ -1122,13 +1116,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau.
 
-**5 appel(s) LLM**, 8006 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 9505 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
 | `system` | aucun outil appelé — passe au planificateur | 105 |
-| `plan` | query sur interventions *(prompt : 1794 tokens estimés, 1637 évalués)* | 1484 |
-| `retrieval` | SELECT station_libelle, nature, duree_indispo_min FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 6409 |
+| `plan` | query sur interventions *(prompt : 1794 tokens estimés, 1637 évalués)* | 1881 |
+| `retrieval` | SELECT station_libelle, nature, duree_indispo_min FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 7510 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1162,15 +1156,15 @@ Réponse servie :
 
 Ce qu'on cherche : une figure.
 
-**5 appel(s) LLM**, 22050 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `image/png`.
+**5 appel(s) LLM**, 22329 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `image/png`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 112 |
-| `rappel` | aucun outil appelé — passe au planificateur | 93 |
-| `plan` | analyze sur interventions *(prompt : 2246 tokens estimés, 1992 évalués)* | 661 |
-| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 19523 |
-| `synthesize` | LLM | 1650 |
+| `system` | aucun outil appelé — passe au planificateur | 178 |
+| `rappel` | aucun outil appelé — passe au planificateur | 114 |
+| `plan` | analyze sur interventions *(prompt : 2246 tokens estimés, 1992 évalués)* | 1036 |
+| `analysis` | 1 essai(s), 1 figure(s), statut ok — retenu sous le nom graphique_1 | 18415 |
+| `synthesize` | LLM | 2575 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
@@ -1217,35 +1211,30 @@ except FileNotFoundError:
 
 # 1. Gestion de 'duree_indispo_min' (Piège n°2)
 # Règle : Écarter les lignes où 'duree_indispo_min' est -1, car cela signifie "non renseigné".
-# Filtre appliqué : df['duree_indispo_min'] >= 0
+# Le filtre est : WHERE duree_indispo_min >= 0.
 df_filtered = df[df['duree_indispo_min'] >= 0].copy()
 
 # 2. Gestion de 'nature' (Piège n°3)
 # Règle : Isoler les pannes en filtrant sur les libellés de nature qui ne sont pas "maintenance préventive".
 # Les libellés à conserver sont : 'borne hors service', 'câble endommagé', 'écran illisible', 'défaut de paiement carte', 'communication réseau perdue'.
-# Le code est relu, la courbe ne l'est pas.
-natures_a_conserver = [
-    'borne hors service', 
-    'câble endommagé', 
-    'écran illisible', 
-    'défaut de paiement carte', 
-    'communication réseau perdue'
-]
-df_filtered = df_filtered[df_filtered['nature'].isin(natures_a_conserver)].copy()
+# Le filtre est : nature != 'maintenance préventive'.
+df_filtered = df_filtered[df_filtered['nature'] != 'maintenance préventive'].copy()
 
-# 3. Nettoyage des valeurs manquantes dans la colonne catégorielle 'nature'
-# Règle : S'assurer qu'il n'y a pas de NaN dans la colonne catégorielle avant le comptage.
-# Bien que le filtrage ci-dessus ait réduit les cas, on applique dropna pour garantir la validité de la catégorisation.
+# 3. Nettoyage des valeurs catégorielles (NaN)
+# Règle : Avant d'agréger ou de tracer une variable catégorielle, les NaN doivent être gérés.
+# Nous allons supprimer les lignes où 'nature' est NaN, car c'est la variable de regroupement.
 df_filtered.dropna(subset=['nature'], inplace=True)
 
-
 # --- Agrégation des données ---
-# Compter le nombre d'interventions pour chaque nature
+
+# Compter le nombre d'interventions par nature
 nature_counts = df_filtered['nature'].value_counts()
 
 # --- Visualisation ---
+
 plt.figure(figsize=(12, 7))
 nature_counts.plot(kind='bar', color='skyblue')
+
 plt.title('Nombre d\'Interventions par Nature (Excluant la Maintenance Préventive)')
 plt.xlabel('Nature de l\'Intervention')
 plt.ylabel('Nombre d\'Interventions')
@@ -1255,7 +1244,7 @@ plt.tight_layout()
 plt.show()
 
 # Affichage des résultats agrégés
-print("Comptage des interventions par nature (après filtrage) :")
+print("Nombre d'interventions par nature (après filtrage) :")
 print(nature_counts.to_string())
 ```
 
@@ -1271,11 +1260,11 @@ Réponse servie :
 
 Ce qu'on cherche : l'inventaire de ses propres objets.
 
-**2 appel(s) LLM**, 4834 ms, source liée après le tour : `interventions`.
+**2 appel(s) LLM**, 6740 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | memoire_de_la_conversation — formulé par le modèle | 4831 |
+| `system` | memoire_de_la_conversation — formulé par le modèle | 6736 |
 | `synthesize` | système (déterministe) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1309,12 +1298,12 @@ Réponse servie :
 
 Ce qu'on cherche : le contenu d'un objet désigné par son rang, pas par son nom.
 
-**4 appel(s) LLM**, 2025 ms, source liée après le tour : `interventions`.
+**4 appel(s) LLM**, 2116 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 104 |
-| `rappel` | lire_un_artefact — formulé par le modèle | 1917 |
+| `system` | aucun outil appelé — passe au planificateur | 102 |
+| `rappel` | lire_un_artefact — formulé par le modèle | 2010 |
 | `synthesize` | rappel d'artefact | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1336,9 +1325,7 @@ Chemin : repart d'un objet = **oui**, SQL neuf = **non**, base rematérialisée 
 
 Réponse servie :
 
-> Je suis désolé, mais je ne peux pas répondre à cette demande car elle ne correspond pas aux instructions. Je dois répondre en utilisant les outils disponibles ou en fournissant une réponse textuelle basée sur les résultats des outils.
->
-> Si vous souhaitez que je fasse quelque chose avec le tableau `resultat_1` (par exemple, calculer une moyenne, filtrer des données, etc.), veuillez me le demander.
+> Je suis désolé, mais je ne peux pas répondre à cette demande. Elle ne porte pas sur un artefact existant dans le catalogue, ni sur une demande de calcul dérivé à effectuer sur un artefact existant. Elle semble être une instruction de validation ou un retour d'information externe.
 
 ### Fil C — Sources primaires et sources transformées
 
@@ -1362,12 +1349,12 @@ Ce qu'on cherche : distingue-t-il les sources du catalogue de celles que la conv
 
 Ce qu'on cherche : lie la source.
 
-**0 appel(s) LLM**, 60 ms, source liée après le tour : `referentiel`.
+**0 appel(s) LLM**, 66 ms, source liée après le tour : `referentiel`.
 
 | nœud | détail | ms |
 |---|---|---|
 | `system` | choix de source — passe au planificateur | 0 |
-| `plan` | source choisie : referentiel — sans appel LLM | 56 |
+| `plan` | source choisie : referentiel — sans appel LLM | 62 |
 | `synthesize` | clarification | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1394,13 +1381,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau.
 
-**5 appel(s) LLM**, 3586 ms, plan : `query · source=referentiel`, source liée après le tour : `referentiel`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 4044 ms, plan : `query · source=referentiel`, source liée après le tour : `referentiel`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 132 |
-| `plan` | query sur referentiel *(prompt : 1791 tokens estimés, 1638 évalués)* | 1585 |
-| `retrieval` | SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10 | 1861 |
+| `system` | aucun outil appelé — passe au planificateur | 191 |
+| `plan` | query sur referentiel *(prompt : 1791 tokens estimés, 1638 évalués)* | 2251 |
+| `retrieval` | SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10 | 1594 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1431,11 +1418,11 @@ Réponse servie :
 
 Ce qu'on cherche : le catalogue déclaré, le tableau fabriqué, ou les deux.
 
-**2 appel(s) LLM**, 3919 ms, source liée après le tour : `referentiel`.
+**2 appel(s) LLM**, 5002 ms, source liée après le tour : `referentiel`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | sources_de_donnees — formulé par le modèle | 3916 |
+| `system` | sources_de_donnees — formulé par le modèle | 4999 |
 | `synthesize` | système (déterministe) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1498,20 +1485,20 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau.
 
-**5 appel(s) LLM**, 3057 ms, plan : `query · source=referentiel`, source liée après le tour : `referentiel`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 2914 ms, plan : `query · source=referentiel`, source liée après le tour : `referentiel`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 107 |
-| `plan` | query sur referentiel *(prompt : 1791 tokens estimés, 1638 évalués)* | 1568 |
-| `retrieval` | SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10 | 1374 |
+| `system` | aucun outil appelé — passe au planificateur | 104 |
+| `plan` | query sur referentiel *(prompt : 1791 tokens estimés, 1638 évalués)* | 1432 |
+| `retrieval` | SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10 | 1369 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
 | # | outil | arguments |
 |---|---|---|
-| 1 | `final_result` | `capability='query', data_question='SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10', reason="La demande est une requête directe pour obtenir une liste filtrée et triée de données […]` |
+| 1 | `final_result` | `capability='query', data_question='SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10', reason="Requête SQL directe pour obtenir les 10 stations les plus récemment mises en service  […]` |
 | 2 | `get_schema` | `—` |
 | 3 | `run_sql` | `query='SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10'` |
 
@@ -1535,11 +1522,11 @@ Réponse servie :
 
 Ce qu'on cherche : le catalogue déclaré, le tableau fabriqué, ou les deux.
 
-**2 appel(s) LLM**, 3989 ms, source liée après le tour : `referentiel`.
+**2 appel(s) LLM**, 3158 ms, source liée après le tour : `referentiel`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | sources_de_donnees — formulé par le modèle | 3987 |
+| `system` | sources_de_donnees — formulé par le modèle | 3155 |
 | `synthesize` | système (déterministe) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1570,7 +1557,7 @@ Réponse servie :
 
 Ce qu'on cherche : lie la source.
 
-**0 appel(s) LLM**, 1 ms, source liée après le tour : `referentiel`.
+**0 appel(s) LLM**, 3 ms, source liée après le tour : `referentiel`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -1602,20 +1589,20 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau.
 
-**5 appel(s) LLM**, 3012 ms, plan : `query · source=referentiel`, source liée après le tour : `referentiel`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 2904 ms, plan : `query · source=referentiel`, source liée après le tour : `referentiel`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 106 |
-| `plan` | query sur referentiel *(prompt : 1791 tokens estimés, 1638 évalués)* | 1554 |
-| `retrieval` | SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10 | 1346 |
+| `system` | aucun outil appelé — passe au planificateur | 104 |
+| `plan` | query sur referentiel *(prompt : 1791 tokens estimés, 1638 évalués)* | 1431 |
+| `retrieval` | SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10 | 1361 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
 | # | outil | arguments |
 |---|---|---|
-| 1 | `final_result` | `capability='query', data_question='SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10', reason="La demande est une requête directe pour obtenir une liste filtrée et triée de données […]` |
+| 1 | `final_result` | `capability='query', data_question='SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10', reason="Requête SQL directe pour obtenir les 10 stations les plus récemment mises en service  […]` |
 | 2 | `get_schema` | `—` |
 | 3 | `run_sql` | `query='SELECT * FROM referentiel ORDER BY date_mise_en_service DESC LIMIT 10'` |
 
@@ -1639,11 +1626,11 @@ Réponse servie :
 
 Ce qu'on cherche : le catalogue déclaré, le tableau fabriqué, ou les deux.
 
-**2 appel(s) LLM**, 3162 ms, source liée après le tour : `referentiel`.
+**2 appel(s) LLM**, 3716 ms, source liée après le tour : `referentiel`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | sources_de_donnees — formulé par le modèle | 3159 |
+| `system` | sources_de_donnees — formulé par le modèle | 3713 |
 | `synthesize` | système (déterministe) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1692,7 +1679,7 @@ Ce qu'on cherche : dit-il que le tableau est tronqué, ou donne-t-il le compte d
 
 Ce qu'on cherche : lie la source.
 
-**0 appel(s) LLM**, 3 ms, source liée après le tour : `interventions`.
+**0 appel(s) LLM**, 4 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -1724,20 +1711,20 @@ Réponse servie :
 
 Ce qu'on cherche : 900 lignes en source, 200 au plafond : le tableau est une tranche.
 
-**5 appel(s) LLM**, 3091 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 4121 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 1309 |
-| `plan` | query sur interventions *(prompt : 1787 tokens estimés, 1630 évalués)* | 631 |
-| `retrieval` | SELECT * FROM interventions | 1144 |
+| `system` | aucun outil appelé — passe au planificateur | 2085 |
+| `plan` | query sur interventions *(prompt : 1787 tokens estimés, 1630 évalués)* | 911 |
+| `retrieval` | SELECT * FROM interventions | 1118 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
 | # | outil | arguments |
 |---|---|---|
-| 1 | `final_result` | `capability='query', data_question='toutes les interventions de maintenance', source='interventions'` |
+| 1 | `final_result` | `capability='query', data_question='liste toutes les interventions de maintenance', source='interventions'` |
 | 2 | `get_schema` | `—` |
 | 3 | `run_sql` | `query='SELECT * FROM interventions'` |
 
@@ -1761,12 +1748,12 @@ Réponse servie :
 
 Ce qu'on cherche : 200 (la tranche), 900 (le tout), ou 200 en le DISANT.
 
-**6 appel(s) LLM**, 11687 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`.
+**6 appel(s) LLM**, 11217 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 109 |
-| `rappel` | rejeu de resultat_1 — 1 essai(s), 0 figure(s), statut ok — retenu sous le nom analyse_1 | 11375 |
+| `system` | aucun outil appelé — passe au planificateur | 107 |
+| `rappel` | rejeu de resultat_1 — 1 essai(s), 0 figure(s), statut ok — retenu sous le nom analyse_1 | 10908 |
 | `synthesize` | LLM | 194 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -1813,7 +1800,7 @@ except FileNotFoundError:
 # Afficher le nombre de lignes
 nombre_lignes = df.shape[0]
 
-print(f"Nombre de lignes dans resultat_1 : {nombre_lignes}")
+print(f"Nombre de lignes dans resultat_1: {nombre_lignes}")
 ```
 
 Réponse servie :
@@ -1826,7 +1813,7 @@ Réponse servie :
 
 Ce qu'on cherche : lie la source.
 
-**0 appel(s) LLM**, 3 ms, source liée après le tour : `interventions`.
+**0 appel(s) LLM**, 1 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -1858,20 +1845,20 @@ Réponse servie :
 
 Ce qu'on cherche : 900 lignes en source, 200 au plafond : le tableau est une tranche.
 
-**5 appel(s) LLM**, 2873 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 2870 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 1310 |
-| `plan` | query sur interventions *(prompt : 1787 tokens estimés, 1630 évalués)* | 631 |
-| `retrieval` | SELECT * FROM interventions | 925 |
+| `system` | aucun outil appelé — passe au planificateur | 1292 |
+| `plan` | query sur interventions *(prompt : 1787 tokens estimés, 1630 évalués)* | 633 |
+| `retrieval` | SELECT * FROM interventions | 938 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
 | # | outil | arguments |
 |---|---|---|
-| 1 | `final_result` | `capability='query', data_question='toutes les interventions de maintenance', source='interventions'` |
+| 1 | `final_result` | `capability='query', data_question='liste toutes les interventions de maintenance', source='interventions'` |
 | 2 | `get_schema` | `—` |
 | 3 | `run_sql` | `query='SELECT * FROM interventions'` |
 
@@ -1895,13 +1882,13 @@ Réponse servie :
 
 Ce qu'on cherche : 200 (la tranche), 900 (le tout), ou 200 en le DISANT.
 
-**6 appel(s) LLM**, 11114 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`.
+**6 appel(s) LLM**, 11881 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 97 |
-| `rappel` | rejeu de resultat_1 — 1 essai(s), 0 figure(s), statut ok — retenu sous le nom analyse_1 | 10814 |
-| `synthesize` | LLM | 195 |
+| `system` | aucun outil appelé — passe au planificateur | 104 |
+| `rappel` | rejeu de resultat_1 — 1 essai(s), 0 figure(s), statut ok — retenu sous le nom analyse_1 | 11439 |
+| `synthesize` | LLM | 331 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
@@ -1947,7 +1934,7 @@ except FileNotFoundError:
 # Afficher le nombre de lignes
 nombre_lignes = df.shape[0]
 
-print(f"Nombre de lignes dans resultat_1 : {nombre_lignes}")
+print(f"Nombre de lignes dans resultat_1: {nombre_lignes}")
 ```
 
 Réponse servie :
@@ -1960,7 +1947,7 @@ Réponse servie :
 
 Ce qu'on cherche : lie la source.
 
-**0 appel(s) LLM**, 4 ms, source liée après le tour : `interventions`.
+**0 appel(s) LLM**, 5 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -1992,20 +1979,20 @@ Réponse servie :
 
 Ce qu'on cherche : 900 lignes en source, 200 au plafond : le tableau est une tranche.
 
-**5 appel(s) LLM**, 2909 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 3554 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 1310 |
+| `system` | aucun outil appelé — passe au planificateur | 1920 |
 | `plan` | query sur interventions *(prompt : 1787 tokens estimés, 1630 évalués)* | 634 |
-| `retrieval` | SELECT * FROM interventions | 956 |
+| `retrieval` | SELECT * FROM interventions | 992 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
 | # | outil | arguments |
 |---|---|---|
-| 1 | `final_result` | `capability='query', data_question='toutes les interventions de maintenance', source='interventions'` |
+| 1 | `final_result` | `capability='query', data_question='liste toutes les interventions de maintenance', source='interventions'` |
 | 2 | `get_schema` | `—` |
 | 3 | `run_sql` | `query='SELECT * FROM interventions'` |
 
@@ -2029,13 +2016,13 @@ Réponse servie :
 
 Ce qu'on cherche : 200 (la tranche), 900 (le tout), ou 200 en le DISANT.
 
-**6 appel(s) LLM**, 10946 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`.
+**6 appel(s) LLM**, 11565 ms, plan : `analyze · source=interventions`, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 108 |
-| `rappel` | rejeu de resultat_1 — 1 essai(s), 0 figure(s), statut ok — retenu sous le nom analyse_1 | 10638 |
-| `synthesize` | LLM | 193 |
+| `system` | aucun outil appelé — passe au planificateur | 110 |
+| `rappel` | rejeu de resultat_1 — 1 essai(s), 0 figure(s), statut ok — retenu sous le nom analyse_1 | 11253 |
+| `synthesize` | LLM | 191 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
@@ -2081,7 +2068,7 @@ except FileNotFoundError:
 # Afficher le nombre de lignes
 nombre_lignes = df.shape[0]
 
-print(f"Nombre de lignes dans resultat_1 : {nombre_lignes}")
+print(f"Nombre de lignes dans resultat_1: {nombre_lignes}")
 ```
 
 Réponse servie :
@@ -2112,7 +2099,7 @@ Ce qu'on cherche : le tour 2 doit interroger la base, pas le tableau d'à côté
 
 Ce qu'on cherche : lie la source.
 
-**0 appel(s) LLM**, 4 ms, source liée après le tour : `interventions`.
+**0 appel(s) LLM**, 3 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -2144,13 +2131,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau sur interventions.
 
-**5 appel(s) LLM**, 3632 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 4705 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 101 |
-| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 1312 |
-| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 2210 |
+| `system` | aucun outil appelé — passe au planificateur | 103 |
+| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 1314 |
+| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 3280 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2181,14 +2168,14 @@ Réponse servie :
 
 Ce qu'on cherche : une autre source, sans rapport : le tableau d'à côté ne doit pas servir.
 
-**6 appel(s) LLM**, 3665 ms, plan : `query · source=facturation`, source liée après le tour : `facturation`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 3842 ms, plan : `query · source=facturation`, source liée après le tour : `facturation`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 112 |
-| `rappel` | aucun outil appelé — passe au planificateur | 326 |
-| `plan` | query sur facturation *(prompt : 2175 tokens estimés, 1929 évalués)* | 946 |
-| `retrieval` | SELECT count(*) FROM factures WHERE strftime('%Y', date_emission) = '2025' | 2271 |
+| `system` | aucun outil appelé — passe au planificateur | 159 |
+| `rappel` | aucun outil appelé — passe au planificateur | 459 |
+| `plan` | query sur facturation *(prompt : 2175 tokens estimés, 1929 évalués)* | 945 |
+| `retrieval` | SELECT count(*) FROM factures WHERE strftime('%Y', date_emission) = '2025' | 2270 |
 | `synthesize` | résumé de la récupération | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2267,13 +2254,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau sur interventions.
 
-**5 appel(s) LLM**, 4889 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 3516 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 106 |
-| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 1553 |
-| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 3223 |
+| `system` | aucun outil appelé — passe au planificateur | 107 |
+| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 1316 |
+| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 2084 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2304,14 +2291,14 @@ Réponse servie :
 
 Ce qu'on cherche : une autre source, sans rapport : le tableau d'à côté ne doit pas servir.
 
-**6 appel(s) LLM**, 3003 ms, plan : `query · source=facturation`, source liée après le tour : `facturation`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 3220 ms, plan : `query · source=facturation`, source liée après le tour : `facturation`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 153 |
-| `rappel` | aucun outil appelé — passe au planificateur | 114 |
-| `plan` | query sur facturation *(prompt : 2175 tokens estimés, 1929 évalués)* | 1183 |
-| `retrieval` | SELECT count(*) FROM factures WHERE strftime('%Y', date_emission) = '2025' | 1545 |
+| `system` | aucun outil appelé — passe au planificateur | 107 |
+| `rappel` | aucun outil appelé — passe au planificateur | 92 |
+| `plan` | query sur facturation *(prompt : 2175 tokens estimés, 1929 évalués)* | 738 |
+| `retrieval` | SELECT count(*) FROM factures WHERE strftime('%Y', date_emission) = '2025' | 2272 |
 | `synthesize` | résumé de la récupération | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2390,13 +2377,13 @@ Réponse servie :
 
 Ce qu'on cherche : un tableau sur interventions.
 
-**5 appel(s) LLM**, 3499 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 4338 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 107 |
-| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 1315 |
-| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 2070 |
+| `system` | aucun outil appelé — passe au planificateur | 154 |
+| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 2091 |
+| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 2085 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2427,14 +2414,14 @@ Réponse servie :
 
 Ce qu'on cherche : une autre source, sans rapport : le tableau d'à côté ne doit pas servir.
 
-**6 appel(s) LLM**, 2635 ms, plan : `query · source=facturation`, source liée après le tour : `facturation`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 2672 ms, plan : `query · source=facturation`, source liée après le tour : `facturation`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
 | `system` | aucun outil appelé — passe au planificateur | 106 |
 | `rappel` | aucun outil appelé — passe au planificateur | 90 |
-| `plan` | query sur facturation *(prompt : 2175 tokens estimés, 1929 évalués)* | 738 |
-| `retrieval` | SELECT count(*) FROM factures WHERE strftime('%Y', date_emission) = '2025' | 1691 |
+| `plan` | query sur facturation *(prompt : 2175 tokens estimés, 1929 évalués)* | 744 |
+| `retrieval` | SELECT count(*) FROM factures WHERE strftime('%Y', date_emission) = '2025' | 1722 |
 | `synthesize` | résumé de la récupération | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2491,36 +2478,36 @@ Ce qu'on cherche : retrouve-t-il encore le tableau du premier tour, et à quel c
 | 1 | 3 | les 5 techniciens qui sont intervenus le plus souvent | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l) | 1869 car. |
 | 1 | 4 | combien d'interventions par mois de signalement ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l) | 2316 car. |
 | 1 | 5 | les 10 stations les plus souvent en panne | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l) | 2899 car. |
-| 1 | 6 | la durée moyenne d'indisponibilité par nature | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l) | 3614 car. |
-| 1 | 7 | les interventions signalées en décembre 2025 | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l) | 4237 car. |
-| 1 | 8 | combien d'interventions par technicien ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 5078 car. |
-| 1 | 9 | reprends le tableau du tout premier tour | system → rappel → synthesize | — | — | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 2588 car. |
+| 1 | 6 | la durée moyenne d'indisponibilité par nature | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l) | 3608 car. |
+| 1 | 7 | les interventions signalées en décembre 2025 | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l) | 4231 car. |
+| 1 | 8 | combien d'interventions par technicien ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 5072 car. |
+| 1 | 9 | reprends le tableau du tout premier tour | system → rappel → synthesize | — | — | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 2585 car. |
 | 2 | 0 (amorce) | travaillons sur interventions | system → plan → synthesize | — | — | — | 0 car. |
 | 2 | 1 | les 10 interventions les plus longues | system → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l) | 0 car. |
 | 2 | 2 | combien d'interventions par nature ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l) | 1284 car. |
 | 2 | 3 | les 5 techniciens qui sont intervenus le plus souvent | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l) | 1869 car. |
 | 2 | 4 | combien d'interventions par mois de signalement ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l) | 2316 car. |
 | 2 | 5 | les 10 stations les plus souvent en panne | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l) | 2899 car. |
-| 2 | 6 | la durée moyenne d'indisponibilité par nature | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l) | 3606 car. |
-| 2 | 7 | les interventions signalées en décembre 2025 | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l) | 4229 car. |
-| 2 | 8 | combien d'interventions par technicien ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 5070 car. |
-| 2 | 9 | reprends le tableau du tout premier tour | system → rappel → synthesize | — | — | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 2584 car. |
+| 2 | 6 | la durée moyenne d'indisponibilité par nature | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l) | 3626 car. |
+| 2 | 7 | les interventions signalées en décembre 2025 | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l) | 4249 car. |
+| 2 | 8 | combien d'interventions par technicien ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 5090 car. |
+| 2 | 9 | reprends le tableau du tout premier tour | system → rappel → synthesize | — | — | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 2594 car. |
 | 3 | 0 (amorce) | travaillons sur interventions | system → plan → synthesize | — | — | — | 0 car. |
 | 3 | 1 | les 10 interventions les plus longues | system → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l) | 0 car. |
 | 3 | 2 | combien d'interventions par nature ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l) | 1284 car. |
 | 3 | 3 | les 5 techniciens qui sont intervenus le plus souvent | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l) | 1869 car. |
 | 3 | 4 | combien d'interventions par mois de signalement ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l) | 2316 car. |
 | 3 | 5 | les 10 stations les plus souvent en panne | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l) | 2899 car. |
-| 3 | 6 | la durée moyenne d'indisponibilité par nature | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l) | 3614 car. |
-| 3 | 7 | les interventions signalées en décembre 2025 | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l) | 4237 car. |
-| 3 | 8 | combien d'interventions par technicien ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 5078 car. |
-| 3 | 9 | reprends le tableau du tout premier tour | system → rappel → synthesize | — | — | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 2588 car. |
+| 3 | 6 | la durée moyenne d'indisponibilité par nature | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l) | 3610 car. |
+| 3 | 7 | les interventions signalées en décembre 2025 | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l) | 4233 car. |
+| 3 | 8 | combien d'interventions par technicien ? | system → rappel → plan → retrieval → synthesize | query · source=interventions | oui | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 5074 car. |
+| 3 | 9 | reprends le tableau du tout premier tour | system → rappel → synthesize | — | — | resultat_1(10l), resultat_2(6l), resultat_3(5l), resultat_4(12l), resultat_5(10l), resultat_6(6l), resultat_7(81l), resultat_8(18l) | 2586 car. |
 
 #### F.0 · tirage 1 — « travaillons sur interventions » *(amorce, hors comptage)*
 
 Ce qu'on cherche : lie la source.
 
-**0 appel(s) LLM**, 4 ms, source liée après le tour : `interventions`.
+**0 appel(s) LLM**, 3 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -2552,13 +2539,13 @@ Réponse servie :
 
 Ce qu'on cherche : objet 1.
 
-**5 appel(s) LLM**, 3529 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 3511 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 106 |
+| `system` | aucun outil appelé — passe au planificateur | 103 |
 | `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 1313 |
-| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 2101 |
+| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 2087 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2589,14 +2576,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 2.
 
-**6 appel(s) LLM**, 3226 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 3099 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 109 |
-| `rappel` | aucun outil appelé — passe au planificateur | 91 |
-| `plan` | query sur interventions *(prompt : 2166 tokens estimés, 1919 évalués)* | 706 |
-| `retrieval` | SELECT nature, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY nature; | 2310 |
+| `system` | aucun outil appelé — passe au planificateur | 112 |
+| `rappel` | aucun outil appelé — passe au planificateur | 89 |
+| `plan` | query sur interventions *(prompt : 2166 tokens estimés, 1919 évalués)* | 698 |
+| `retrieval` | SELECT nature, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY nature; | 2190 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2641,14 +2628,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 3.
 
-**6 appel(s) LLM**, 5126 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 4426 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 171 |
-| `rappel` | aucun outil appelé — passe au planificateur | 504 |
-| `plan` | query sur interventions *(prompt : 2267 tokens estimés, 1999 évalués)* | 2150 |
-| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien ORDER BY nombre_interventions DESC LIMIT 5; | 2293 |
+| `system` | aucun outil appelé — passe au planificateur | 126 |
+| `rappel` | aucun outil appelé — passe au planificateur | 324 |
+| `plan` | query sur interventions *(prompt : 2267 tokens estimés, 1999 évalués)* | 1684 |
+| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien ORDER BY nombre_interventions DESC LIMIT 5; | 2282 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2693,14 +2680,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 4.
 
-**6 appel(s) LLM**, 3509 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 5375 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 111 |
-| `rappel` | aucun outil appelé — passe au planificateur | 328 |
-| `plan` | query sur interventions *(prompt : 2344 tokens estimés, 2076 évalués)* | 970 |
-| `retrieval` | SELECT strftime('%Y-%m', date_signalement) AS mois, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY mois ORDER BY mois; | 2091 |
+| `system` | aucun outil appelé — passe au planificateur | 113 |
+| `rappel` | aucun outil appelé — passe au planificateur | 332 |
+| `plan` | query sur interventions *(prompt : 2344 tokens estimés, 2076 évalués)* | 969 |
+| `retrieval` | SELECT strftime('%Y-%m', date_signalement) AS mois, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY mois ORDER BY mois; | 3951 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2744,14 +2731,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 5.
 
-**6 appel(s) LLM**, 5198 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 4552 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
 | `system` | aucun outil appelé — passe au planificateur | 112 |
-| `rappel` | aucun outil appelé — passe au planificateur | 341 |
+| `rappel` | aucun outil appelé — passe au planificateur | 344 |
 | `plan` | query sur interventions *(prompt : 2434 tokens estimés, 2223 évalués)* | 928 |
-| `retrieval` | SELECT station_libelle, COUNT(intervention_id) AS nombre_panne FROM interventions GROUP BY station_libelle ORDER BY nombre_panne DESC LIMIT 10; | 3808 |
+| `retrieval` | SELECT station_libelle, COUNT(intervention_id) AS nombre_panne FROM interventions GROUP BY station_libelle ORDER BY nombre_panne DESC LIMIT 10; | 3158 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2792,14 +2779,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 6.
 
-**6 appel(s) LLM**, 4953 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 6168 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 111 |
-| `rappel` | aucun outil appelé — passe au planificateur | 338 |
-| `plan` | query sur interventions *(prompt : 2550 tokens estimés, 2329 évalués)* | 1878 |
-| `retrieval` | SELECT nature, AVG(duree_indispo_min) AS moyenne_duree_indisponibilite FROM interventions WHERE duree_indispo_min >= 0 GROUP BY nature; | 2617 |
+| `system` | aucun outil appelé — passe au planificateur | 160 |
+| `rappel` | aucun outil appelé — passe au planificateur | 518 |
+| `plan` | query sur interventions *(prompt : 2549 tokens estimés, 2329 évalués)* | 2110 |
+| `retrieval` | SELECT nature, AVG(duree_indispo_min) AS moyenne_duree_indisponibilite FROM interventions WHERE duree_indispo_min >= 0 GROUP BY nature; | 3370 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2814,13 +2801,13 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 1739 car. |
-| `system` | `_system_node` | `sources_transformees` | 1739 car. |
+| `system` | `_system_node` | `objets_du_fil` | 1736 car. |
+| `system` | `_system_node` | `sources_transformees` | 1736 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 58 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1681 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 1933 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 1933 car. |
-| `plan` | `_peser_le_prompt` | `describe` | 1933 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1678 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 1930 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 1930 car. |
+| `plan` | `_peser_le_prompt` | `describe` | 1930 car. |
 | `plan` | `_plan_node` | `sources_ephemeres` | 58 car. |
 | `retrieval` | `_retrieval_node` | `sources_ephemeres` | 58 car. |
 
@@ -2844,14 +2831,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 7.
 
-**6 appel(s) LLM**, 5355 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 5134 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 125 |
-| `rappel` | aucun outil appelé — passe au planificateur | 436 |
-| `plan` | query sur interventions *(prompt : 2653 tokens estimés, 2418 évalués)* | 2975 |
-| `retrieval` | SELECT * FROM interventions WHERE date_signalement >= '2025-12-01' AND date_signalement <= '2025-12-31' | 1809 |
+| `system` | aucun outil appelé — passe au planificateur | 122 |
+| `rappel` | aucun outil appelé — passe au planificateur | 334 |
+| `plan` | query sur interventions *(prompt : 2652 tokens estimés, 2418 évalués)* | 1855 |
+| `retrieval` | SELECT * FROM interventions WHERE date_signalement >= '2025-12-01' AND date_signalement <= '2025-12-31' | 2813 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2866,13 +2853,13 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 2059 car. |
-| `system` | `_system_node` | `sources_transformees` | 2059 car. |
+| `system` | `_system_node` | `objets_du_fil` | 2056 car. |
+| `system` | `_system_node` | `sources_transformees` | 2056 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 70 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1999 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2238 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2238 car. |
-| `plan` | `_peser_le_prompt` | `describe` | 2238 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1996 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2235 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2235 car. |
+| `plan` | `_peser_le_prompt` | `describe` | 2235 car. |
 | `plan` | `_plan_node` | `sources_ephemeres` | 70 car. |
 | `retrieval` | `_retrieval_node` | `sources_ephemeres` | 70 car. |
 
@@ -2897,9 +2884,9 @@ Ce qu'on cherche : objet 8.
 | nœud | détail | ms |
 |---|---|---|
 | `system` | aucun outil appelé — passe au planificateur | 107 |
-| `rappel` | aucun outil appelé — passe au planificateur | 343 |
-| `plan` | query sur interventions *(prompt : 2789 tokens estimés, 2533 évalués)* | 951 |
-| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien; | 1595 |
+| `rappel` | aucun outil appelé — passe au planificateur | 342 |
+| `plan` | query sur interventions *(prompt : 2788 tokens estimés, 2533 évalués)* | 954 |
+| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien; | 1593 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2914,13 +2901,13 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 2488 car. |
-| `system` | `_system_node` | `sources_transformees` | 2488 car. |
+| `system` | `_system_node` | `objets_du_fil` | 2485 car. |
+| `system` | `_system_node` | `sources_transformees` | 2485 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 82 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2426 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2652 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2652 car. |
-| `plan` | `_peser_le_prompt` | `describe` | 2652 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2423 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2649 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2649 car. |
+| `plan` | `_peser_le_prompt` | `describe` | 2649 car. |
 | `plan` | `_plan_node` | `sources_ephemeres` | 82 car. |
 | `retrieval` | `_retrieval_node` | `sources_ephemeres` | 82 car. |
 
@@ -2945,12 +2932,12 @@ Réponse servie :
 
 Ce qu'on cherche : huit objets plus tard, le premier est-il encore atteignable ?.
 
-**4 appel(s) LLM**, 2853 ms, source liée après le tour : `interventions`.
+**4 appel(s) LLM**, 4058 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 127 |
-| `rappel` | lire_un_artefact — formulé par le modèle | 2721 |
+| `system` | aucun outil appelé — passe au planificateur | 130 |
+| `rappel` | lire_un_artefact — formulé par le modèle | 3924 |
 | `synthesize` | rappel d'artefact | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -2963,20 +2950,21 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 2652 car. |
-| `system` | `_system_node` | `sources_transformees` | 2652 car. |
+| `system` | `_system_node` | `objets_du_fil` | 2649 car. |
+| `system` | `_system_node` | `sources_transformees` | 2649 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 94 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2588 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2585 car. |
 
 Chemin : repart d'un objet = **oui**, SQL neuf = **non**, base rematérialisée = **non**.
 
 Réponse servie :
 
-> Je ne peux pas "reprendre" le tableau du tout premier tour sans une instruction spécifique sur ce que vous souhaitez faire avec ce tableau (par exemple, le trier, calculer une moyenne, le filtrer, etc.).
+> Je ne peux pas "valider" ou "corriger" le tableau, car il s'agit d'un résultat de requête que je vous ai présenté.
 >
-> Le tableau `resultat_1` est le résultat de la requête : « les 10 interventions les plus longues ».
->
-> Veuillez me dire ce que vous souhaitez faire avec ce tableau.
+> Que souhaitez-vous faire avec ce tableau ? Par exemple, voulez-vous :
+> 1.  Le modifier (ex: "Reprends ce tableau et trie-le par technicien") ?
+> 2.  En tirer un chiffre dérivé (ex: "Quel est le total des durées d'indisponibilité pour ce tableau") ?
+> 3.  Le comparer à un autre tableau ?
 
 #### F.0 · tirage 2 — « travaillons sur interventions » *(amorce, hors comptage)*
 
@@ -3014,13 +3002,13 @@ Réponse servie :
 
 Ce qu'on cherche : objet 1.
 
-**5 appel(s) LLM**, 4814 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 3902 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 194 |
-| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 2428 |
-| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 2184 |
+| `system` | aucun outil appelé — passe au planificateur | 127 |
+| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 1569 |
+| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 2198 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3051,14 +3039,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 2.
 
-**6 appel(s) LLM**, 3089 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 3291 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 109 |
-| `rappel` | aucun outil appelé — passe au planificateur | 308 |
-| `plan` | query sur interventions *(prompt : 2166 tokens estimés, 1919 évalués)* | 900 |
-| `retrieval` | SELECT nature, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY nature; | 1763 |
+| `system` | aucun outil appelé — passe au planificateur | 111 |
+| `rappel` | aucun outil appelé — passe au planificateur | 307 |
+| `plan` | query sur interventions *(prompt : 2166 tokens estimés, 1919 évalués)* | 901 |
+| `retrieval` | SELECT nature, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY nature; | 1962 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3103,14 +3091,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 3.
 
-**6 appel(s) LLM**, 5544 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 4397 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
 | `system` | aucun outil appelé — passe au planificateur | 124 |
-| `rappel` | aucun outil appelé — passe au planificateur | 314 |
-| `plan` | query sur interventions *(prompt : 2267 tokens estimés, 1999 évalués)* | 1673 |
-| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien ORDER BY nombre_interventions DESC LIMIT 5; | 3425 |
+| `rappel` | aucun outil appelé — passe au planificateur | 310 |
+| `plan` | query sur interventions *(prompt : 2267 tokens estimés, 1999 évalués)* | 1675 |
+| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien ORDER BY nombre_interventions DESC LIMIT 5; | 2279 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3155,14 +3143,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 4.
 
-**6 appel(s) LLM**, 4578 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 6053 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 130 |
-| `rappel` | aucun outil appelé — passe au planificateur | 489 |
-| `plan` | query sur interventions *(prompt : 2344 tokens estimés, 2076 évalués)* | 1566 |
-| `retrieval` | SELECT strftime('%Y-%m', date_signalement) AS mois, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY mois ORDER BY mois; | 2386 |
+| `system` | aucun outil appelé — passe au planificateur | 111 |
+| `rappel` | aucun outil appelé — passe au planificateur | 312 |
+| `plan` | query sur interventions *(prompt : 2344 tokens estimés, 2076 évalués)* | 1517 |
+| `retrieval` | SELECT strftime('%Y-%m', date_signalement) AS mois, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY mois ORDER BY mois; | 4104 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3206,14 +3194,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 5.
 
-**6 appel(s) LLM**, 4371 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 4408 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
 | `system` | aucun outil appelé — passe au planificateur | 112 |
-| `rappel` | aucun outil appelé — passe au planificateur | 315 |
-| `plan` | query sur interventions *(prompt : 2434 tokens estimés, 2223 évalués)* | 907 |
-| `retrieval` | SELECT station_libelle, COUNT(intervention_id) AS nombre_panne FROM interventions GROUP BY station_libelle ORDER BY nombre_panne DESC LIMIT 10; | 3028 |
+| `rappel` | aucun outil appelé — passe au planificateur | 317 |
+| `plan` | query sur interventions *(prompt : 2434 tokens estimés, 2223 évalués)* | 908 |
+| `retrieval` | SELECT station_libelle, COUNT(intervention_id) AS nombre_panne FROM interventions GROUP BY station_libelle ORDER BY nombre_panne DESC LIMIT 10; | 3062 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3254,14 +3242,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 6.
 
-**6 appel(s) LLM**, 7740 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 8205 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 110 |
-| `rappel` | aucun outil appelé — passe au planificateur | 328 |
-| `plan` | query sur interventions *(prompt : 2548 tokens estimés, 2329 évalués)* | 2423 |
-| `retrieval` | SELECT nature, AVG(duree_indispo_min) AS moyenne_duree_indisponibilite FROM interventions WHERE duree_indispo_min >= 0 GROUP BY nature; | 4869 |
+| `system` | aucun outil appelé — passe au planificateur | 112 |
+| `rappel` | aucun outil appelé — passe au planificateur | 330 |
+| `plan` | query sur interventions *(prompt : 2552 tokens estimés, 2331 évalués)* | 2418 |
+| `retrieval` | SELECT nature, AVG(duree_indispo_min) AS moyenne_duree_indisponibilite FROM interventions WHERE duree_indispo_min >= 0 GROUP BY nature; | 5335 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3276,13 +3264,13 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 1735 car. |
-| `system` | `_system_node` | `sources_transformees` | 1735 car. |
+| `system` | `_system_node` | `objets_du_fil` | 1745 car. |
+| `system` | `_system_node` | `sources_transformees` | 1745 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 58 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1677 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 1929 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 1929 car. |
-| `plan` | `_peser_le_prompt` | `describe` | 1929 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1687 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 1939 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 1939 car. |
+| `plan` | `_peser_le_prompt` | `describe` | 1939 car. |
 | `plan` | `_plan_node` | `sources_ephemeres` | 58 car. |
 | `retrieval` | `_retrieval_node` | `sources_ephemeres` | 58 car. |
 
@@ -3306,14 +3294,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 7.
 
-**6 appel(s) LLM**, 4789 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 5322 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 183 |
-| `rappel` | aucun outil appelé — passe au planificateur | 519 |
-| `plan` | query sur interventions *(prompt : 2651 tokens estimés, 2418 évalués)* | 2258 |
-| `retrieval` | SELECT * FROM interventions WHERE date_signalement >= '2025-12-01' AND date_signalement <= '2025-12-31' | 1818 |
+| `system` | aucun outil appelé — passe au planificateur | 180 |
+| `rappel` | aucun outil appelé — passe au planificateur | 528 |
+| `plan` | query sur interventions *(prompt : 2655 tokens estimés, 2420 évalués)* | 2764 |
+| `retrieval` | SELECT * FROM interventions WHERE date_signalement >= '2025-12-01' AND date_signalement <= '2025-12-31' | 1842 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3328,13 +3316,13 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 2055 car. |
-| `system` | `_system_node` | `sources_transformees` | 2055 car. |
+| `system` | `_system_node` | `objets_du_fil` | 2065 car. |
+| `system` | `_system_node` | `sources_transformees` | 2065 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 70 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1995 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2234 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2234 car. |
-| `plan` | `_peser_le_prompt` | `describe` | 2234 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2005 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2244 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2244 car. |
+| `plan` | `_peser_le_prompt` | `describe` | 2244 car. |
 | `plan` | `_plan_node` | `sources_ephemeres` | 70 car. |
 | `retrieval` | `_retrieval_node` | `sources_ephemeres` | 70 car. |
 
@@ -3354,14 +3342,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 8.
 
-**6 appel(s) LLM**, 2991 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 3015 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 115 |
-| `rappel` | aucun outil appelé — passe au planificateur | 331 |
-| `plan` | query sur interventions *(prompt : 2788 tokens estimés, 2533 évalués)* | 941 |
-| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien; | 1595 |
+| `system` | aucun outil appelé — passe au planificateur | 106 |
+| `rappel` | aucun outil appelé — passe au planificateur | 343 |
+| `plan` | query sur interventions *(prompt : 2791 tokens estimés, 2535 évalués)* | 953 |
+| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien; | 1603 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3376,13 +3364,13 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 2484 car. |
-| `system` | `_system_node` | `sources_transformees` | 2484 car. |
+| `system` | `_system_node` | `objets_du_fil` | 2494 car. |
+| `system` | `_system_node` | `sources_transformees` | 2494 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 82 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2422 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2648 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2648 car. |
-| `plan` | `_peser_le_prompt` | `describe` | 2648 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2432 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2658 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2658 car. |
+| `plan` | `_peser_le_prompt` | `describe` | 2658 car. |
 | `plan` | `_plan_node` | `sources_ephemeres` | 82 car. |
 | `retrieval` | `_retrieval_node` | `sources_ephemeres` | 82 car. |
 
@@ -3407,12 +3395,12 @@ Réponse servie :
 
 Ce qu'on cherche : huit objets plus tard, le premier est-il encore atteignable ?.
 
-**4 appel(s) LLM**, 2478 ms, source liée après le tour : `interventions`.
+**4 appel(s) LLM**, 2323 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 131 |
-| `rappel` | lire_un_artefact — formulé par le modèle | 2343 |
+| `system` | aucun outil appelé — passe au planificateur | 136 |
+| `rappel` | lire_un_artefact — formulé par le modèle | 2182 |
 | `synthesize` | rappel d'artefact | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3425,26 +3413,24 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 2648 car. |
-| `system` | `_system_node` | `sources_transformees` | 2648 car. |
+| `system` | `_system_node` | `objets_du_fil` | 2658 car. |
+| `system` | `_system_node` | `sources_transformees` | 2658 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 94 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2584 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2594 car. |
 
 Chemin : repart d'un objet = **oui**, SQL neuf = **non**, base rematérialisée = **non**.
 
 Réponse servie :
 
-> Je ne peux pas "reprendre" le tableau du tout premier tour sans une instruction spécifique sur ce que vous souhaitez faire avec ce tableau (par exemple, le trier, calculer une moyenne, le filtrer, etc.).
+> Je ne peux pas "reprendre" le tableau sans une instruction spécifique sur ce que vous souhaitez faire avec lui (par exemple, le trier, calculer une moyenne, le filtrer, etc.).
 >
-> Le tableau `resultat_1` est le résultat de la requête : « les 10 interventions les plus longues ».
->
-> Veuillez me dire ce que vous souhaitez faire avec ce tableau.
+> Le tableau `resultat_1` est celui des "10 interventions les plus longues". Que souhaitez-vous faire avec ces données ?
 
 #### F.0 · tirage 3 — « travaillons sur interventions » *(amorce, hors comptage)*
 
 Ce qu'on cherche : lie la source.
 
-**0 appel(s) LLM**, 3 ms, source liée après le tour : `interventions`.
+**0 appel(s) LLM**, 2 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
@@ -3476,13 +3462,13 @@ Réponse servie :
 
 Ce qu'on cherche : objet 1.
 
-**5 appel(s) LLM**, 4622 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**5 appel(s) LLM**, 6200 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 127 |
-| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 2296 |
-| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 2192 |
+| `system` | aucun outil appelé — passe au planificateur | 184 |
+| `plan` | query sur interventions *(prompt : 1783 tokens estimés, 1630 évalués)* | 2535 |
+| `retrieval` | SELECT * FROM interventions WHERE duree_indispo_min >= 0 ORDER BY duree_indispo_min DESC LIMIT 10 | 3474 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3513,14 +3499,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 2.
 
-**6 appel(s) LLM**, 3286 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 3261 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 111 |
-| `rappel` | aucun outil appelé — passe au planificateur | 310 |
-| `plan` | query sur interventions *(prompt : 2166 tokens estimés, 1919 évalués)* | 899 |
-| `retrieval` | SELECT nature, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY nature; | 1957 |
+| `system` | aucun outil appelé — passe au planificateur | 114 |
+| `rappel` | aucun outil appelé — passe au planificateur | 316 |
+| `plan` | query sur interventions *(prompt : 2166 tokens estimés, 1919 évalués)* | 896 |
+| `retrieval` | SELECT nature, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY nature; | 1927 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3565,14 +3551,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 3.
 
-**6 appel(s) LLM**, 5496 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 4391 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 125 |
-| `rappel` | aucun outil appelé — passe au planificateur | 314 |
-| `plan` | query sur interventions *(prompt : 2267 tokens estimés, 1999 évalués)* | 2534 |
-| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien ORDER BY nombre_interventions DESC LIMIT 5; | 2514 |
+| `system` | aucun outil appelé — passe au planificateur | 113 |
+| `rappel` | aucun outil appelé — passe au planificateur | 305 |
+| `plan` | query sur interventions *(prompt : 2267 tokens estimés, 1999 évalués)* | 1668 |
+| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien ORDER BY nombre_interventions DESC LIMIT 5; | 2297 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3617,14 +3603,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 4.
 
-**6 appel(s) LLM**, 3485 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 5343 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 112 |
-| `rappel` | aucun outil appelé — passe au planificateur | 314 |
-| `plan` | query sur interventions *(prompt : 2344 tokens estimés, 2076 évalués)* | 960 |
-| `retrieval` | SELECT strftime('%Y-%m', date_signalement) AS mois, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY mois ORDER BY mois; | 2090 |
+| `system` | aucun outil appelé — passe au planificateur | 110 |
+| `rappel` | aucun outil appelé — passe au planificateur | 313 |
+| `plan` | query sur interventions *(prompt : 2344 tokens estimés, 2076 évalués)* | 956 |
+| `retrieval` | SELECT strftime('%Y-%m', date_signalement) AS mois, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY mois ORDER BY mois; | 3956 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3668,14 +3654,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 5.
 
-**6 appel(s) LLM**, 4422 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 5411 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 112 |
-| `rappel` | aucun outil appelé — passe au planificateur | 340 |
-| `plan` | query sur interventions *(prompt : 2434 tokens estimés, 2223 évalués)* | 929 |
-| `retrieval` | SELECT station_libelle, COUNT(intervention_id) AS nombre_panne FROM interventions GROUP BY station_libelle ORDER BY nombre_panne DESC LIMIT 10; | 3034 |
+| `system` | aucun outil appelé — passe au planificateur | 142 |
+| `rappel` | aucun outil appelé — passe au planificateur | 484 |
+| `plan` | query sur interventions *(prompt : 2434 tokens estimés, 2223 évalués)* | 1448 |
+| `retrieval` | SELECT station_libelle, COUNT(intervention_id) AS nombre_panne FROM interventions GROUP BY station_libelle ORDER BY nombre_panne DESC LIMIT 10; | 3329 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3716,21 +3702,21 @@ Réponse servie :
 
 Ce qu'on cherche : objet 6.
 
-**6 appel(s) LLM**, 4998 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 8164 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 91 |
-| `rappel` | aucun outil appelé — passe au planificateur | 336 |
-| `plan` | query sur interventions *(prompt : 2550 tokens estimés, 2329 évalués)* | 1867 |
-| `retrieval` | SELECT nature, AVG(duree_indispo_min) AS moyenne_duree_indisponibilite FROM interventions WHERE duree_indispo_min >= 0 GROUP BY nature; | 2696 |
+| `system` | aucun outil appelé — passe au planificateur | 90 |
+| `rappel` | aucun outil appelé — passe au planificateur | 329 |
+| `plan` | query sur interventions *(prompt : 2549 tokens estimés, 2330 évalués)* | 2412 |
+| `retrieval` | SELECT nature, AVG(duree_indispo_min) AS moyenne_duree_indisponibilite FROM interventions WHERE duree_indispo_min >= 0 GROUP BY nature; | 5325 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
 
 | # | outil | arguments |
 |---|---|---|
-| 1 | `final_result` | `capability='query', data_question="Calculer la durée moyenne d'indisponibilité par nature à partir de la source 'interventions'.", reason="L'utilisateur demande une agrégation (moyenne) et un regroupe […]` |
+| 1 | `final_result` | `capability='query', data_question="Calculer la durée moyenne d'indisponibilité (duree_indispo_min) regroupée par nature (nature) dans la source 'interventions'.", reason="L'utilisateur demande une agr […]` |
 | 2 | `get_schema` | `—` |
 | 3 | `run_sql` | `query='SELECT nature, AVG(duree_indispo_min) AS moyenne_duree_indisponibilite FROM interventions WHERE duree_indispo_min >= 0 GROUP BY nature;'` |
 
@@ -3738,13 +3724,13 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 1739 car. |
-| `system` | `_system_node` | `sources_transformees` | 1739 car. |
+| `system` | `_system_node` | `objets_du_fil` | 1737 car. |
+| `system` | `_system_node` | `sources_transformees` | 1737 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 58 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1681 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 1933 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 1933 car. |
-| `plan` | `_peser_le_prompt` | `describe` | 1933 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1679 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 1931 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 1931 car. |
+| `plan` | `_peser_le_prompt` | `describe` | 1931 car. |
 | `plan` | `_plan_node` | `sources_ephemeres` | 58 car. |
 | `retrieval` | `_retrieval_node` | `sources_ephemeres` | 58 car. |
 
@@ -3768,14 +3754,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 7.
 
-**6 appel(s) LLM**, 4865 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 5077 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 123 |
-| `rappel` | aucun outil appelé — passe au planificateur | 333 |
-| `plan` | query sur interventions *(prompt : 2653 tokens estimés, 2418 évalués)* | 1856 |
-| `retrieval` | SELECT * FROM interventions WHERE date_signalement >= '2025-12-01' AND date_signalement <= '2025-12-31' | 2543 |
+| `system` | aucun outil appelé — passe au planificateur | 176 |
+| `rappel` | aucun outil appelé — passe au planificateur | 556 |
+| `plan` | query sur interventions *(prompt : 2652 tokens estimés, 2419 évalués)* | 2517 |
+| `retrieval` | SELECT * FROM interventions WHERE date_signalement >= '2025-12-01' AND date_signalement <= '2025-12-31' | 1819 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3790,13 +3776,13 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 2059 car. |
-| `system` | `_system_node` | `sources_transformees` | 2059 car. |
+| `system` | `_system_node` | `objets_du_fil` | 2057 car. |
+| `system` | `_system_node` | `sources_transformees` | 2057 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 70 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1999 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2238 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2238 car. |
-| `plan` | `_peser_le_prompt` | `describe` | 2238 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 1997 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2236 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2236 car. |
+| `plan` | `_peser_le_prompt` | `describe` | 2236 car. |
 | `plan` | `_plan_node` | `sources_ephemeres` | 70 car. |
 | `retrieval` | `_retrieval_node` | `sources_ephemeres` | 70 car. |
 
@@ -3816,14 +3802,14 @@ Réponse servie :
 
 Ce qu'on cherche : objet 8.
 
-**6 appel(s) LLM**, 3837 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
+**6 appel(s) LLM**, 3017 ms, plan : `query · source=interventions`, source liée après le tour : `interventions`, artefacts rendus : `application/json`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 147 |
-| `rappel` | aucun outil appelé — passe au planificateur | 577 |
-| `plan` | query sur interventions *(prompt : 2789 tokens estimés, 2533 évalués)* | 1515 |
-| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien; | 1589 |
+| `system` | aucun outil appelé — passe au planificateur | 108 |
+| `rappel` | aucun outil appelé — passe au planificateur | 343 |
+| `plan` | query sur interventions *(prompt : 2789 tokens estimés, 2534 évalués)* | 959 |
+| `retrieval` | SELECT technicien, COUNT(intervention_id) AS nombre_interventions FROM interventions GROUP BY technicien; | 1597 |
 | `synthesize` | résumé déterministe (multi-lignes) | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3838,13 +3824,13 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 2488 car. |
-| `system` | `_system_node` | `sources_transformees` | 2488 car. |
+| `system` | `_system_node` | `objets_du_fil` | 2486 car. |
+| `system` | `_system_node` | `sources_transformees` | 2486 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 82 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2426 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2652 car. |
-| `plan` | `fit_to_budget` | `describe_pesee` | 2652 car. |
-| `plan` | `_peser_le_prompt` | `describe` | 2652 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2424 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2650 car. |
+| `plan` | `fit_to_budget` | `describe_pesee` | 2650 car. |
+| `plan` | `_peser_le_prompt` | `describe` | 2650 car. |
 | `plan` | `_plan_node` | `sources_ephemeres` | 82 car. |
 | `retrieval` | `_retrieval_node` | `sources_ephemeres` | 82 car. |
 
@@ -3869,12 +3855,12 @@ Réponse servie :
 
 Ce qu'on cherche : huit objets plus tard, le premier est-il encore atteignable ?.
 
-**4 appel(s) LLM**, 2453 ms, source liée après le tour : `interventions`.
+**4 appel(s) LLM**, 1867 ms, source liée après le tour : `interventions`.
 
 | nœud | détail | ms |
 |---|---|---|
-| `system` | aucun outil appelé — passe au planificateur | 118 |
-| `rappel` | lire_un_artefact — formulé par le modèle | 2332 |
+| `system` | aucun outil appelé — passe au planificateur | 129 |
+| `rappel` | lire_un_artefact — formulé par le modèle | 1734 |
 | `synthesize` | rappel d'artefact | 0 |
 
 Appels d'outil émis par le modèle, dans l'ordre :
@@ -3887,20 +3873,16 @@ Mémoire de conversation injectée dans ce tour :
 
 | nœud | fonction appelante | quoi | taille |
 |---|---|---|---|
-| `system` | `_system_node` | `objets_du_fil` | 2652 car. |
-| `system` | `_system_node` | `sources_transformees` | 2652 car. |
+| `system` | `_system_node` | `objets_du_fil` | 2650 car. |
+| `system` | `_system_node` | `sources_transformees` | 2650 car. |
 | `system` | `_system_node` | `sources_ephemeres` | 94 car. |
-| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2588 car. |
+| `rappel` | `system_prompt` | `catalogue_du_rappel` | 2586 car. |
 
 Chemin : repart d'un objet = **oui**, SQL neuf = **non**, base rematérialisée = **non**.
 
 Réponse servie :
 
-> Je ne peux pas "reprendre" le tableau du tout premier tour sans une instruction spécifique sur ce que vous souhaitez faire avec ce tableau (par exemple, le trier, calculer une moyenne, le filtrer, etc.).
->
-> Le tableau `resultat_1` est le résultat de la requête : « les 10 interventions les plus longues ».
->
-> Veuillez me dire ce que vous souhaitez faire avec ce tableau.
+> Je ne peux pas "reprendre" le tableau sans une instruction spécifique sur ce que vous souhaitez faire avec. Voulez-vous que je calcule quelque chose à partir de ce tableau, que je le filtre, ou que je le présente différemment ?
 
 ## Ce que l'agent SAIT dire de ses objets, mot pour mot
 
@@ -3958,15 +3940,11 @@ Réponse servie :
 
 **Tirage 2** — nœuds `system → rappel → synthesize` :
 
-> Je suis désolé, mais je ne peux pas répondre à cette demande car elle ne correspond pas aux instructions. Je dois répondre en utilisant les outils disponibles ou en fournissant une réponse textuelle basée sur les résultats des outils.
->
-> Si vous souhaitez que je fasse quelque chose avec le tableau `resultat_1` (par exemple, calculer une moyenne, filtrer des données, etc.), veuillez me le demander.
+> Je suis désolé, mais je ne peux pas répondre à cette demande. Elle ne porte pas sur un artefact existant dans le catalogue, ni sur une demande de calcul dérivé à effectuer sur un artefact existant. Elle semble être une instruction de validation ou un retour d'information externe.
 
 **Tirage 3** — nœuds `system → rappel → synthesize` :
 
-> Je suis désolé, mais je ne peux pas répondre à cette demande car elle ne correspond pas aux instructions. Je dois répondre en utilisant les outils disponibles ou en fournissant une réponse textuelle basée sur les résultats des outils.
->
-> Si vous souhaitez que je fasse quelque chose avec le tableau `resultat_1` (par exemple, calculer une moyenne, filtrer des données, etc.), veuillez me le demander.
+> Je suis désolé, mais je ne peux pas répondre à cette demande. Elle ne porte pas sur un artefact existant dans le catalogue, ni sur une demande de calcul dérivé à effectuer sur un artefact existant. Elle semble être une instruction de validation ou un retour d'information externe.
 
 ### C.2 — « quelles données as-tu à ta disposition maintenant ? »
 

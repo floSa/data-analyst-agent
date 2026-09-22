@@ -80,12 +80,55 @@ def test_la_periode_vient_d_un_min_max_sur_la_colonne_de_date(tmp_path: Path):
 
 def test_une_source_sans_colonne_de_date_n_en_invente_pas(tmp_path: Path):
     """« S'il existe une colonne de date » : sinon il n'y a pas de période, et
-    c'est une réponse, pas un manque à combler."""
+    aucune borne n'est inventée pour en simuler une."""
     faits = relever(source(tmp_path, "plat", SANS_DATE))
 
     assert faits.periode is None
-    assert "période" not in faits.en_clair()
+    assert "du " not in faits.en_clair()
     assert "2 ligne(s)" in faits.en_clair()
+
+
+def test_une_source_sans_colonne_de_date_le_CONSTATE(tmp_path: Path):
+    """L'absence de période est un FAIT, et elle se dit.
+
+    Se taire semblait honnête et coûtait une question, mesurée trois tirages sur
+    trois le 2026-09-22 : « sur quelle période portent les données de la source
+    titanic ? » recevait la fiche entière sauf ce point-là, et le modèle comblait
+    le silence par « une période non spécifiée dans sa description ». Il n'avait
+    aucun fait sur ce sujet ; une phrase vague est ce qu'on écrit quand on n'a
+    rien lu. Le relevé, lui, le savait.
+    """
+    faits = relever(source(tmp_path, "plat", SANS_DATE))
+
+    assert faits.sans_periode == "la source ne porte aucune colonne de date"
+    assert "aucune période couverte : la source ne porte aucune colonne de date" in faits.en_clair()
+
+
+def test_une_colonne_de_date_entierement_vide_se_distingue_d_une_source_sans_date(tmp_path: Path):
+    """Les deux absences ne mènent pas à la même suite.
+
+    « Cette source ne date rien » clôt la question — il n'y a rien à aller
+    chercher. « Cette source date, et la colonne est vide » désigne une donnée
+    manquante, donc quelque chose à corriger en amont. Les confondre ferait
+    passer un trou de saisie pour une propriété du schéma.
+    """
+    chemin = tmp_path / "sans_valeur.duckdb"
+    with closing(duckdb.connect(str(chemin))) as connexion:
+        connexion.execute("CREATE TABLE livraisons (livree_le DATE, colis VARCHAR)")
+        connexion.execute("INSERT INTO livraisons VALUES (NULL, 'A'), (NULL, 'B')")
+    faits = relever(DuckDBSource(name="sans_valeur", path=chemin))
+
+    assert faits.periode is None
+    assert faits.sans_periode == "la colonne de date livree_le de livraisons ne porte aucune valeur"
+    assert "aucune période couverte" in faits.en_clair()
+
+
+def test_une_source_qui_a_une_periode_ne_dit_pas_qu_elle_n_en_a_pas(tmp_path: Path):
+    """Le constat d'absence ne parle QUE là où il y a une absence."""
+    faits = relever(source(tmp_path, "ventes", VENTES))
+
+    assert faits.sans_periode == ""
+    assert "aucune période" not in faits.en_clair()
 
 
 def test_une_source_injoignable_dit_pourquoi_et_ne_chiffre_rien(tmp_path: Path):

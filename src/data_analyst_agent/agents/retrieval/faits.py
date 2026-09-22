@@ -9,8 +9,17 @@ module : trois faits par source, tous **lus dans la source elle-même**.
 - le **nombre de tables**, du schéma ;
 - le **nombre de lignes**, d'un ``count(*)`` par table ;
 - la **période couverte**, d'un ``min``/``max`` sur la colonne de date que la
-  source DÉSIGNE (``date_reference``), à défaut la première du schéma — et rien
-  du tout s'il n'y en a aucune.
+  source DÉSIGNE (``date_reference``), à défaut la première du schéma — et le
+  CONSTAT qu'il n'y en a pas quand il n'y en a pas, avec sa raison.
+
+**Une absence se constate.** Ne rien dire de la période d'une source qui n'en a
+pas semblait honnête et coûtait une question, mesurée trois tirages sur trois le
+2026-09-22 : « sur quelle période portent les données de la source titanic ? »
+recevait la fiche entière SAUF ce point-là, et le modèle comblait le silence en
+répondant « une période non spécifiée dans sa description ». Il ne se trompait
+pas sur les faits — il n'en avait aucun sur ce sujet, et une phrase vague est ce
+qu'on écrit quand on n'a rien lu. Le fait manquant était pourtant connu du
+relevé : le schéma ne porte aucune colonne de date, et c'est LA réponse.
 
 **Jamais racontés.** C'est le défaut corrigé par ``acfd8f5`` — « décris le
 dataset iris » répondu de mémoire, avec une jolie prose et zéro requête — et il
@@ -109,6 +118,12 @@ class FaitsDeSource(BaseModel):
     # retomberait sur la première colonne de date exactement comme avant la
     # correction, et ne se verrait nulle part.
     avertissement: str = ""
+    # Pourquoi il n'y a PAS de période, quand il n'y en a pas — la source ne
+    # porte aucune colonne de date, ou celle qu'elle porte est vide. Une absence
+    # se CONSTATE : c'est la règle de tout ce module, et la période était le seul
+    # des trois faits à ne pas la suivre. Elle se taisait, et le modèle comblait
+    # (cf. l'en-tête). Vide = il y a une période, ou rien n'a été lu.
+    sans_periode: str = ""
     echec: str = ""
 
     @property
@@ -124,10 +139,16 @@ class FaitsDeSource(BaseModel):
         return sum(self.lignes_par_table.values())
 
     def en_clair(self) -> str:
-        """Une ligne de français : le volume, et la période s'il y en a une.
+        """Une ligne de français : le volume, et la période — ou son absence.
 
         Vide quand rien n'a été lu **et** qu'il n'y a rien à dire ; l'échec,
         lui, se dit — silencieusement, il se confondrait avec une source vide.
+
+        L'absence de période se dit au même titre que la période, et pour la
+        même raison qu'un échec se dit : un silence n'est pas un fait, c'est un
+        trou, et un trou dans une fiche se remplit par une phrase vague. Elle est
+        écrite sans décoration, comme la période elle-même — ce qui suit le
+        deux-points ne nomme rien qu'une réponse devrait recopier.
 
         Un chiffre estimé porte un ``~``, et le total aussi dès qu'une seule
         table l'est : la précision affichée doit être celle qu'on a, pas celle
@@ -148,6 +169,8 @@ class FaitsDeSource(BaseModel):
                 f" — période couverte : du {self.periode.debut} au {self.periode.fin} "
                 f"(colonne {self.periode.colonne} de {self.periode.table})"
             )
+        elif self.sans_periode:
+            volume += f" — aucune période couverte : {self.sans_periode}"
         return f"{volume} [{self.avertissement}]" if self.avertissement else volume
 
 
@@ -379,6 +402,27 @@ def _periode(adaptateur: DatabaseAdapter, table: str, colonne: str) -> Periode |
     )
 
 
+def _pourquoi_sans_periode(colonne: tuple[str, str] | None, periode: Periode | None) -> str:
+    """La raison qu'il n'y ait pas de période, ``""`` quand il y en a une.
+
+    Deux raisons, et les distinguer n'est pas de la précision pour la précision :
+    « cette source ne date rien » et « cette source date, et la colonne est
+    vide » ne mènent pas à la même suite. La première clôt la question — il n'y
+    a rien à aller chercher ; la seconde désigne une donnée manquante, donc
+    quelque chose à corriger en amont.
+
+    Elle est calculée ici, au relevé, et pas au moment d'écrire la phrase :
+    c'est ici qu'on a le schéma sous la main, et ``en_clair`` n'a jamais rien
+    déduit — elle met en français ce qui a été lu.
+    """
+    if periode is not None:
+        return ""
+    if colonne is None:
+        return "la source ne porte aucune colonne de date"
+    table, nom = colonne
+    return f"la colonne de date {nom} de {table} ne porte aucune valeur"
+
+
 def _lire(source: Source, seuil: int) -> FaitsDeSource:
     """Le relevé lui-même : ouvrir, compter, dater, refermer. Lève si ça se passe mal."""
     with closing(open_source(source)) as adaptateur:
@@ -396,6 +440,7 @@ def _lire(source: Source, seuil: int) -> FaitsDeSource:
         lignes_par_table=lignes,
         estimees=estimees,
         periode=periode,
+        sans_periode=_pourquoi_sans_periode(reperee.colonne, periode),
         avertissement=reperee.avertissement,
     )
 

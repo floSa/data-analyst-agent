@@ -29,11 +29,18 @@ ici en sortent.
 
 **Ce document est tiré du relevé d'empreinte SHA-256 :**
 
-    RELEVÉ : 4f5c2b44d92dd791a032b64eecbd75fd90105097012ed662e9106cda3aa4f074
+    RELEVÉ : 58da235598b075ac4567e9bea117aecbbdc70a5f66e51b2a10119bc58072ec43
 
 Relevé le 2026-09-22, moteur `http://localhost:8100/v1`
 (`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogues `sources/catalogue.yaml`
-(fil A) et `sources/demonstration/catalogue.yaml` (fils B à F). Aucun test ne
+(fil A) et `sources/demonstration/catalogue.yaml` (fils B à F). **Rejoué le
+même jour** après la correction de `surface-conversationnelle.md` §24 — une
+source sans colonne de date le dit désormais dans sa fiche. Les chemins, les
+tours et les parts sont inchangés au tour près ; quatre maxima de contexte
+gagnent six caractères, qui sont ceux du constat ajouté. Les deux questions qui
+ne se négocient pas — « qu'est-ce que tu as en mémoire ? » (B.3) et « quelles
+données as-tu à ta disposition maintenant ? » (C.2) — nomment toujours les
+sources **transformées** avec le type de leurs colonnes, 3/3 chacune. Aucun test ne
 recalcule cette empreinte — contrairement à
 [`parcours-de-l-agent.md`](parcours-de-l-agent.md), qui en a un. C'est une
 différence assumée et non un oubli : verrouiller une prose sur une mesure du
@@ -376,8 +383,8 @@ conversation dans leur prompt :
 
 | nœud | ce qui est injecté | tours | médiane | max |
 |---|---|---|---|---|
-| `plan` | `ConversationWorkspace.describe()` | 30 | 1 188 car. | 2 652 car. |
-| `rappel` | `catalogue_pour_le_prompt()` | 39 | 808 car. | 2 588 car. |
+| `plan` | `ConversationWorkspace.describe()` | 30 | 1 188 car. | 2 658 car. |
+| `rappel` | `catalogue_pour_le_prompt()` | 39 | 808 car. | 2 594 car. |
 | `analysis` | la description des tableaux montés sous `/data/` | 6 | 370 car. | 428 car. |
 
 Un quatrième le reçoit **à disposition**, sans qu'il entre nécessairement dans
@@ -385,8 +392,8 @@ un prompt (§3.3) :
 
 | nœud | ce qui est offert | tours | médiane | max |
 |---|---|---|---|---|
-| `system` | `objets_de_la_conversation()` | 45 | 970 car. | 2 652 car. |
-| `system` | `sources_transformees()` | 45 | 724 car. | 2 652 car. |
+| `system` | `objets_de_la_conversation()` | 45 | 970 car. | 2 658 car. |
+| `system` | `sources_transformees()` | 45 | 724 car. | 2 658 car. |
 
 Rapporté au prompt qui le porte, le catalogue pèse **18 % du prompt du
 planificateur** en médiane, et jusqu'à **32 %** (fil F, tour 8).

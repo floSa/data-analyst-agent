@@ -788,8 +788,17 @@ fil ne lie rien : il est interrogeable, ce n'est pas une source de données.
 Le catalogue YAML ne porte qu'une description écrite à la main. Pour choisir entre
 plusieurs sources il faut savoir laquelle pèse trois cents lignes et laquelle couvre
 2024 : `agents/retrieval/faits.py` **lit** chaque source — nombre de tables, de lignes,
-et la période de sa colonne de date s'il y en a une — et `RelevesDuCatalogue`
-garde le relevé.
+et la période de sa colonne de date, ou le constat qu'il n'y en a pas — et
+`RelevesDuCatalogue` garde le relevé.
+
+- **L'absence de période est un fait, et elle se dit** — au même titre qu'une
+  source injoignable dit la raison de son silence. Se taire coûtait une question
+  de la surface conversationnelle, mesurée trois tirages sur trois : la fiche de
+  `titanic` ne parlait pas de période, et le modèle comblait le trou par « une
+  période non spécifiée dans sa description » (`surface-conversationnelle.md`
+  §24). Deux absences sont distinguées : la source ne porte aucune colonne de
+  date, ou celle qu'elle porte est vide. La première clôt la question ; la
+  seconde désigne une donnée manquante en amont.
 
 - **Quelle** colonne de date : celle que la source **désigne** (`date_reference`,
   §4.4), à défaut la première du schéma. Le défaut ne parie pas sur les noms et

@@ -1328,3 +1328,34 @@ def test_sans_fiche_servie_la_ceinture_ne_reclame_rien():
     faits = "J'ai accès à 2 source(s) de données :\n\n- **ventes** (postgres) — Le carnet."
 
     assert introspection.defaut_de_fondation("Mes sources : `ventes`.", faits, faits) == ""
+
+
+def test_le_constat_d_absence_de_periode_n_exige_rien_de_la_reponse():
+    """Un fait ajouté à une fiche ne doit pas resserrer la ceinture au passage.
+
+    Le constat « aucune période couverte : la source ne porte aucune colonne de
+    date » suit un deux-points, et c'est par là que ``_enumeres`` lit une
+    énumération. Il ne réclame pourtant rien, parce qu'il ne DÉCORE aucun nom —
+    exactement comme la période elle-même, qui écrit « (colonne date_vente de
+    ventes) » sans accents graves.
+
+    La propriété compte : décorer ce nom exigerait de toute réponse qu'elle
+    recopie une colonne dont la question ne parle pas, et le repli partirait à
+    l'utilisateur sur une formulation juste.
+    """
+    faits = (
+        "La source **titanic** (postgres) — Base Titanic multi-tables.\n\n"
+        "2 table(s), 894 ligne(s) (classes : 3, passengers : 891) — aucune période "
+        "couverte : la source ne porte aucune colonne de date"
+    )
+
+    assert introspection._enumeres(faits) == []
+    assert (
+        introspection.defaut_de_fondation(
+            "La source `titanic` ne porte aucune colonne de date : elle ne couvre "
+            "donc aucune période. Elle compte 2 tables et 894 lignes.",
+            faits,
+            faits,
+        )
+        == ""
+    )

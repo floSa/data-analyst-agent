@@ -3487,3 +3487,120 @@ consigne « termine par une phrase courte invitant à la suite » lui fait
 produire « Quelle source souhaitez-vous explorer ? » bien plus souvent que
 « souhaitez-vous que je fasse cela ? ». Le socle tient désormais ce qu'il
 propose quand il propose quelque chose ; il propose rarement quelque chose.
+
+## 24. Le huitième outil, et le fait qui manquait dans la fiche
+
+Le §22.2 avait laissé une question ouverte sans le dire : `titanic` et `iris`
+ne portent **aucune** colonne de date, et rien dans le socle ne le disait. Le
+relevé (`agents/retrieval/faits.py`) lisait pourtant le schéma, constatait
+l'absence, et se taisait. Ce silence a fini par coûter une question.
+
+### 24.1 Ce que C51 a fait basculer
+
+`periode-directe` était verte avant C51. C51 a donné un **huitième** outil à
+l'agent système — `memoire_de_la_conversation`, pour qu'il sache dire ce que le
+fil a fabriqué — et ce point-là est passé à « répondu à côté » : deux campagnes
+de chaque côté de C51, même verdict à chaque fois. L'outil est une demande
+explicite, et il reste. Une tâche a ensuite tenté de raccourcir sa fiche :
+aucun effet, deux tirages. Ce n'était donc pas sa rédaction — c'est qu'il y a
+un outil de plus à choisir.
+
+**Deux campagnes du 2026-09-22 sur `c184e3c`, catalogue par défaut :**
+
+| campagne | questions méta | témoins | la question qui tombe |
+|---|---|---|---|
+| avant, 1ʳᵉ | 35/36 | 4/4 | `periode-directe` |
+| avant, 2ᵉ | 35/36 | 4/4 | `periode-directe`, même verdict |
+
+### 24.2 Ce que le relevé a montré — et qu'on n'a pas deviné
+
+Trois hypothèses se réparent à trois endroits différents, et supposer coûte le
+détour que ce dépôt a déjà payé. La question a donc d'abord été **instrumentée**
+— quel outil est appelé, avec quel argument, ce que l'outil sert, ce que le
+modèle en écrit — sur trois tirages, avant toute réparation.
+
+Les trois tirages sont identiques :
+
+    appels d'outil ÉMIS : sources_de_donnees({"cible": "titanic"})
+
+    ce qu'il a SERVI :
+      La source **titanic** (postgres) — Base Titanic multi-tables (…)
+      2 table(s), 894 ligne(s) (classes : 3, passengers : 891)
+
+    RÉPONSE :
+      La source `titanic` porte sur une période non spécifiée dans sa
+      description, mais elle contient 2 table(s) et 894 ligne(s).
+
+**Le modèle appelle le bon outil, avec le bon argument.** Il ne se trompe pas de
+chemin, et il n'a rien laissé tomber : la fiche qu'il a reçue ne dit **rien** de
+la période. Ce n'était donc ni l'hypothèse du mauvais outil, ni celle de la
+formulation négligente — c'était un **trou dans les faits**, et « non spécifiée
+dans sa description » est ce qu'on écrit quand on n'a rien lu sur un sujet.
+
+**Le huitième outil n'a rien cassé : il a révélé le trou.** Les tableaux des
+§3, §7 et §11 disent par où cette question passait quand elle était verte —
+capacité `query`, chemin « le planificateur ». Le modèle n'appelait alors **aucun** outil
+système ; le tour repartait au planificateur, qui allait lire le schéma pour
+écrire son SQL et rendait « il n'y a aucune colonne de date ou d'heure dans le
+schéma ». La bonne réponse, obtenue en passant par la seule porte qui, à
+l'époque, servait ce fait.
+
+Un outil de plus à choisir a suffi à faire basculer la question vers l'agent
+système — qui l'attrape désormais, et c'est ce qu'on veut : elle porte sur une
+source, pas sur ses lignes. Ce qu'il sert sur ce sujet, lui, était vide.
+
+### 24.3 La réparation : une absence se constate
+
+Le principe est déjà écrit trois fois dans ce dépôt — une source injoignable
+rend la raison de son silence, une conversation sans objet le dit plutôt que de
+rendre une chaîne vide. La période était le seul des trois faits relevés à ne
+pas le suivre. Elle le suit :
+
+    2 table(s), 894 ligne(s) (classes : 3, passengers : 891)
+      — aucune période couverte : la source ne porte aucune colonne de date
+
+Deux absences, distinguées : la source ne date rien, ou la colonne qu'elle porte
+est vide. La première clôt la question ; la seconde désigne une donnée manquante
+à corriger en amont.
+
+**Aucun prompt, aucune fiche d'outil n'a bougé** — les sept empreintes SHA-256
+sont inchangées, et c'est vérifié par `test_aucun_paragraphe_de_prompt_n_a_bouge`
+et `test_aucune_fiche_d_outil_n_a_bouge_au_caractere_pres`. C'est la monnaie
+qu'on cherchait à récupérer : cinq formulations ont été écrites puis retirées
+ici, chacune au prix d'une question de cette batterie. Un fait ajouté à une
+fiche ne parle qu'aux tours où cette fiche est servie ; une phrase de prompt
+parle à tous.
+
+### 24.4 Ce que ça donne, deux campagnes de chaque côté
+
+| campagne | questions méta | témoins | appels LLM (méta + témoins) |
+|---|---|---|---|
+| avant, 1ʳᵉ | 35/36 | 4/4 | 83 + 17 |
+| avant, 2ᵉ | 35/36 | 4/4 | 83 + 17 |
+| après, 1ʳᵉ | **36/36** | 4/4 | 83 + 17 |
+| après, 2ᵉ | **36/36** | 4/4 | 83 + 17 |
+
+**Le coût est identique au chiffre près, des deux côtés.** La réparation ne fait
+appeler aucun outil de plus : elle remplit celui qui était déjà appelé.
+
+La réponse servie, trois tirages sur trois :
+
+> La source `titanic` est une base de données qui ne porte aucune colonne de
+> date, elle ne couvre donc aucune période.
+
+`periode-indirecte` — « de quand datent les données que tu as ? » — reste verte
+et continue de passer par le planificateur : elle n'a pas changé de chemin.
+
+### 24.5 Ce que le huitième outil coûte encore
+
+Rien de mesuré sur cette batterie. Ce qu'il avait coûté, c'était un point que le
+socle tenait par le **mauvais chemin** : une question sur une source partait au
+planificateur, qui la traitait comme un calcul et trouvait la réponse en
+chemin. Le point est maintenant gagné par le chemin qui correspond à la
+question — l'agent système, deux appels LLM, sans plan ni SQL.
+
+Ce que ça enseigne vaut au-delà de ce point-ci : **un outil de plus ne dégrade
+pas une réponse, il change la porte par laquelle elle sort.** Quand une question
+bascule d'un chemin à l'autre, ce qu'il faut regarder n'est pas le prompt qui
+l'a routée, c'est si le nouveau chemin porte les faits que l'ancien portait.
+Ici, il en manquait un.
