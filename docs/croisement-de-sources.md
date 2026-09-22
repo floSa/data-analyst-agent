@@ -217,3 +217,33 @@ clés, les deux dictionnaires entiers ; ce qui manque est ailleurs.
 **La capacité est donc partielle, et le relevé le dit plutôt que de le taire.**
 Un croisement complet sur les six mesurés, et c'est celui qui porte le piège de
 modélisation. Les deux formulations du relevé d'origine ne sont pas réparées.
+
+## Ce qui n'a pas bougé
+
+Campagnes **séquentielles**, jamais de front — le parallélisme coûte un tirage
+sur contention du bac à sable, et c'est documenté
+([sources-metier.md](sources-metier.md)). Lancées dans l'ordre de leur
+EXPOSITION au changement : ce qui touche la source de travail et le montage des
+données d'abord.
+
+| campagne | catalogue | attendu | obtenu |
+|---|---|---|---|
+| questions métier | `sources/metier/` | 12/12 | **36/36 tours** |
+| sources nommées | `sources/metier/` | 60/60 | **60/60** |
+| ouverture de source | `sources/demonstration/` | 48/51 | **48/51** |
+| mémoire de conversation | `sources/demonstration/` | le relevé de C51 | plans conformes |
+| parcours de démonstration | `sources/demonstration/` | 48/48 | **144/144** |
+| surface conversationnelle ×2 | par défaut | 40/40 | **40/40** et **40/40** |
+| question de sens | `sources/demonstration/` | 36/36 | **36/36** |
+| provenance du sens | le sien | 30/30 | **30/30** |
+| fils de prédiction | `sources/metier/` | 8/8 | **8/8** |
+
+`sources-nommees` porte la justification de n'avoir PAS touché à l'agent
+système : « Qu'est-ce que t'appelles source vente, production, stock ? » y fait
+3/3 et reçoit bien ses trois fiches. C'est exactement la question qu'un
+départage côté message — celui qui aurait réparé `vel04-production-ventes` —
+aurait cassée. Une question gagnée contre soixante tours mis en risque.
+
+`memoire-de-conversation` montre `analyze · source=resultat_1` : le chaînage sur
+un tableau du fil est intact, et le montage ciblé qu'il exige n'a pas été
+élargi.
