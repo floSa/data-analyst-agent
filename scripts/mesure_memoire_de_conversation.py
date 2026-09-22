@@ -312,6 +312,14 @@ NOEUD_DE_L_APPELANT = {
 
 # Ce qui entre RÉELLEMENT dans un prompt, et qu'on compte en caractères.
 TEXTES_INJECTES = ("describe", "catalogue_du_rappel", "montage_sandbox")
+# Ce que le nœud SYSTÈME reçoit, et qui n'entre dans un prompt que si le modèle
+# appelle l'outil qui le rend. La différence n'est pas une subtilité : le nœud
+# système porte les 36 questions de la surface conversationnelle, et la plupart
+# de ses tours n'appellent aucun outil de mémoire. Compter ce texte comme
+# « injecté » ferait croire à un coût de contexte que ces tours-là ne paient
+# pas ; ne pas le compter du tout laisserait croire que ce nœud ne voit
+# toujours rien du magasin, ce qui était vrai avant C51 et ne l'est plus.
+TEXTES_OFFERTS = ("objets_du_fil", "sources_transformees")
 # La pesée du budget : le même texte, demandé pour le mesurer et non pour
 # l'envoyer. Compté à part, sinon chaque tour paierait deux à trois fois son
 # catalogue dans le tableau des coûts.
@@ -427,6 +435,28 @@ def poser_les_enveloppes() -> None:
         return catalogue
 
     Orchestrator._effective_catalog = _effective_catalog  # type: ignore[method-assign]
+
+    objets_origine = ConversationWorkspace.objets_de_la_conversation
+
+    def objets_de_la_conversation(self: ConversationWorkspace) -> str:
+        texte = objets_origine(self)
+        MOUCHARD.noter("objets_du_fil", texte)
+        return texte
+
+    ConversationWorkspace.objets_de_la_conversation = objets_de_la_conversation  # type: ignore
+
+    transformees_origine = ConversationWorkspace.sources_transformees
+
+    def sources_transformees(self: ConversationWorkspace) -> str:
+        texte = transformees_origine(self)
+        # `objets_de_la_conversation` l'appelle pour se composer : le noter là
+        # ferait payer deux fois le même texte, comme `describe_pesee` l'aurait
+        # fait pour le catalogue du planificateur.
+        if sys._getframe(1).f_code.co_name != "objets_de_la_conversation":
+            MOUCHARD.noter("sources_transformees", texte)
+        return texte
+
+    ConversationWorkspace.sources_transformees = sources_transformees  # type: ignore
 
     decor_origine = Orchestrator._decor_de_donnees
 
@@ -784,7 +814,28 @@ def _chiffres_de_l_injection(releves: list[Releve]) -> list[str]:
                 f"| `{noeud}` | `{quoi}` | {len(tailles)} | "
                 f"{int(statistics.median(tailles))} car. | {max(tailles)} car. |"
             )
-    vus = {noeud for (noeud, quoi) in par_noeud if quoi in TEXTES_INJECTES}
+    offerts = {
+        (noeud, quoi): tailles
+        for (noeud, quoi), tailles in sorted(par_noeud.items())
+        if quoi in TEXTES_OFFERTS
+    }
+    if offerts:
+        lignes += [
+            "",
+            "Et ce qui est MIS À DISPOSITION d'un nœud sans forcément entrer dans son "
+            "prompt — le texte des objets du fil, que l'agent système ne lit que s'il "
+            "appelle l'outil qui le rend :",
+            "",
+            "| nœud | ce qui est offert | tours concernés | médiane | max |",
+            "|---|---|---|---|---|",
+            *(
+                f"| `{noeud}` | `{quoi}` | {len(t)} | "
+                f"{int(statistics.median(t))} car. | {max(t)} car. |"
+                for (noeud, quoi), t in offerts.items()
+            ),
+        ]
+    portes = set(TEXTES_INJECTES) | set(TEXTES_OFFERTS)
+    vus = {noeud for (noeud, quoi) in par_noeud if quoi in portes}
     jamais = [n for n in NOEUDS_DU_GRAPHE if n not in vus]
     traverses = {n.nom for r in releves for n in r.noeuds}
     lignes += [
