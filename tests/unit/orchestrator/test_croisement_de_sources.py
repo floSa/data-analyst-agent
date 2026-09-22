@@ -569,3 +569,24 @@ def test_le_noeud_du_plan_reprend_le_plan_davance_sans_le_redemander(tmp_path: P
     assert rendu["plan"] is davance
     assert rendu["plan"].source == "ventes, production"  # la règle a canonisé le périmètre
     assert llm.prompts_for(PLANNER) == []  # aucun appel : le plan était déjà là
+
+
+def test_le_noeud_relit_le_perimetre_que_la_regle_a_ecrit(orchestrateur, tmp_path: Path):
+    """Un seul écrit, tous les autres lisent — et c'est ce qui empêche la divergence.
+
+    ``_perimetre_croise`` DÉCIDE, sur l'union des deux désignations ;
+    ``_regle_croiser_les_sources`` ÉCRIT le résultat dans ``plan.source`` ;
+    ``_sources_du_perimetre`` — que les nœuds appellent, sans ``PlanContext`` —
+    relit cela et rien d'autre. Le test tient les trois maillons ensemble : avant
+    la règle, le nœud ne voit rien du champ ; après, il voit exactement ce que la
+    décision a retenu.
+    """
+    plan = Plan(capability="query", source="production", sources=["ventes"])
+    ctx = contexte(declare=deux(tmp_path), question=CROISEMENT)
+    orchestrateur.catalog = Catalog(sources=deux(tmp_path))
+
+    assert orchestrateur._sources_du_perimetre(plan) == []  # avant la règle : un seul nom
+    orchestrateur._regle_croiser_les_sources(plan, ctx)
+
+    assert plan.source == "ventes, production"
+    assert [s.name for s in orchestrateur._sources_du_perimetre(plan)] == ["ventes", "production"]

@@ -2326,10 +2326,18 @@ class Orchestrator:
         """Les sources DÉCLARÉES que le plan croise — [] quand il n'en vise qu'une.
 
         Le pendant de ``_perimetre_croise`` pour les nœuds, qui n'ont pas de
-        ``PlanContext``. Les deux lisent le MÊME champ de la même façon : le
-        périmètre n'est écrit nulle part ailleurs que dans ``plan.source``, donc
-        rien ne peut diverger entre la règle qui l'a posé et le nœud qui
-        l'ouvre.
+        ``PlanContext``.
+
+        **Un seul écrit, tous les autres lisent.** Le périmètre se DÉCIDE dans
+        ``_perimetre_croise``, qui lit l'union de ``plan.sources`` et des noms
+        empaquetés dans ``plan.source`` ; il s'ÉCRIT dans ``plan.source``, et
+        là seulement, par ``_regle_croiser_les_sources``. Les nœuds ne relisent
+        donc jamais la décision — ils relisent ce qu'elle a écrit, et rien ne
+        peut diverger entre la règle qui l'a posée et le nœud qui l'ouvre.
+
+        C'est ce qui permet au champ de périmètre de n'exister QUE dans la
+        décision : ajouter une seconde source de vérité ici ferait deux
+        décomptes du même fait, et celui-ci commande une matérialisation.
         """
         if plan.capability not in self._SOURCE_CAPABILITIES or not plan.source:
             return []
