@@ -8,6 +8,7 @@ suite sur « aucun script pour le prompt système ». Les marqueurs sont mainten
 dérivés des fichiers ; ce fichier vérifie que la dérivation tient.
 """
 
+import hashlib
 import zipfile
 from pathlib import Path
 
@@ -227,3 +228,75 @@ def test_le_prompt_sql_garde_la_consigne_de_classement_comme_economie():
 
     assert "CLASSEMENT" in prompt
     assert "ORDER BY" in prompt
+
+
+# --- l'empreinte : on peut changer un prompt, pas en silence --------------------
+
+# Les empreintes SHA-256 de TOUS les fichiers de `src/data_analyst_agent/prompts/`,
+# au 2026-09-22. Elles ne sont pas là pour empêcher de les modifier : elles sont
+# là pour qu'une modification soit un GESTE — on change le prompt, on met
+# l'empreinte à jour dans le MÊME commit, et le message de commit le dit.
+#
+# Pourquoi ce garde-fou existe, et il est mesuré : cinq formulations ont été
+# écrites dans le prompt de l'agent système pour lui dire ce que deux planchers
+# font désormais tout seuls. Les cinq ont été retirées — chacune coûtait une
+# question de la surface conversationnelle, trois tirages sur trois. Un témoin
+# de quatre lignes VIDES au même endroit ne coûtait rien : ce n'est donc pas la
+# longueur du prompt, c'est son contenu. Un paragraphe ajouté à un prompt est
+# une modification du produit, au même titre qu'une ligne de code.
+#
+# Pourquoi le dictionnaire ENTIER et non un fichier par test : comparer les deux
+# dictionnaires d'un coup fait rougir les trois façons de passer au travers —
+# modifier un prompt, en AJOUTER un que personne ne couvre, en retirer un.
+# C'est le trou par lequel `prompts/rappel.txt` était passé : aucun test ne le
+# nommait, et il a reçu un paragraphe sans que rien ne bronche.
+EMPREINTES_DES_PROMPTS = {
+    "analysis.txt": "9b3c242af88aaca2e9191d6251e11a4b6521fadf5c2c16084109fb60a6954c3e",
+    "planner.txt": "daaf6c8ad0060112f7011c64d3b1df170416497be02cb1aaca306f32c8ee125d",
+    "rappel.txt": "65b0dc0106aeacfd6f3a0929f5370b9c699726ffe011729fd7cdfec15b58fabc",
+    "reparation.txt": "f46ed7dd8f774dd5144ad408d4db334c9523d8772e7b90db75c24b46ac43ddd7",
+    "retrieval.txt": "0059d13d1cee25f8aafe2c6257d02f4252a784e21b567e4e68c8d38686c3ac45",
+    "synthesis.txt": "c09c6fb74cf472e35d83658bd320b8fb527ef278d9d90e27bba2de95012bc423",
+    "systeme.txt": "7694ea81f55286685d618f976105942bdc446cb0ab6d03a454ba0c0d1a5c5ed0",
+}
+
+
+def test_aucun_prompt_n_a_bouge_au_caractere_pres():
+    """Les sept prompts, à l'octet près — et le dossier au complet.
+
+    Ce test remplace une empreinte qui ne gardait RIEN : elle hachait
+    `prompts.SYSTEME`, c'est-à-dire la chaîne « systeme.txt » — le NOM du
+    fichier — et non son contenu. Elle serait restée verte quoi qu'on écrive
+    dans le prompt système, ce qui est précisément ce qu'elle prétendait
+    interdire. Le nom d'un fichier ne change pas quand on édite le fichier.
+
+    La liste est confrontée à ce que porte le DOSSIER, jamais à une liste de
+    constantes écrite à la main : `prompts.py` en déclare sept, mais le tuple
+    `TOUS` de ce fichier n'en énumère que cinq, et c'est par ce genre d'écart
+    qu'un prompt échappe à sa couverture.
+    """
+    reels = {
+        chemin.name: hashlib.sha256(chemin.read_bytes()).hexdigest()
+        for chemin in prompts.PROMPTS_DIR.glob("*.txt")
+    }
+
+    assert reels == EMPREINTES_DES_PROMPTS, (
+        "un prompt a changé, a été ajouté ou retiré. Si c'est voulu : mets son "
+        "empreinte à jour DANS LE MÊME COMMIT, et dis-le dans le message de commit."
+    )
+
+
+def test_l_empreinte_couvre_tout_fichier_de_prompt_du_paquet():
+    """Le témoin de l'exhaustivité, et il vise le mode de panne réel.
+
+    Un prompt ajouté demain ne doit pas pouvoir vivre non couvert. Ce test le
+    dit autrement que le précédent — lui compare des empreintes, celui-ci
+    compare des NOMS — pour que l'échec nomme le fichier oublié plutôt qu'une
+    différence de dictionnaire à déchiffrer.
+    """
+    du_disque = {chemin.name for chemin in prompts.PROMPTS_DIR.glob("*.txt")}
+
+    assert du_disque == set(EMPREINTES_DES_PROMPTS), (
+        f"non couvert(s) par l'empreinte : {sorted(du_disque - set(EMPREINTES_DES_PROMPTS))} ; "
+        f"disparu(s) du dossier : {sorted(set(EMPREINTES_DES_PROMPTS) - du_disque)}"
+    )

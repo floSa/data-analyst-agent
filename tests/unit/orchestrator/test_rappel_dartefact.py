@@ -1151,8 +1151,8 @@ def test_le_catalogue_du_rappel_MARQUE_ce_qui_vient_d_etre_produit(tmp_path: Pat
 
     catalogue = catalogue_pour_le_prompt(ws)
 
-    ligne_recente = next(l for l in catalogue.splitlines() if l.startswith("- resultat_2"))
-    ligne_ancienne = next(l for l in catalogue.splitlines() if l.startswith("- resultat_1"))
+    ligne_recente = next(x for x in catalogue.splitlines() if x.startswith("- resultat_2"))
+    ligne_ancienne = next(x for x in catalogue.splitlines() if x.startswith("- resultat_1"))
     assert "PRODUIT AU TOUR PRÉCÉDENT" in ligne_recente
     assert "PRODUIT AU TOUR PRÉCÉDENT" not in ligne_ancienne
     assert "Le tour précédent vient de produire : resultat_2." in catalogue

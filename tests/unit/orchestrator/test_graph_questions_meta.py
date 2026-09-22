@@ -1321,9 +1321,9 @@ def test_les_trois_voies_se_nomment_et_se_lisent_dans_la_trace():
 
 # --- ce qu'on s'interdit d'écrire, figé ---------------------------------------
 
-# Les empreintes du prompt de l'agent système et des sept fiches d'outils, au
-# 2026-09-17. Elles ne sont pas là pour empêcher de les modifier : elles sont là
-# pour qu'une modification soit un GESTE, avec une campagne à l'appui.
+# Les empreintes des sept fiches d'outils de l'agent système. Elles ne sont pas
+# là pour empêcher de les modifier : elles sont là pour qu'une modification
+# soit un GESTE, avec une campagne à l'appui.
 #
 # Cinq formulations ont déjà été écrites pour dire au modèle ce que les deux
 # planchers font désormais tout seuls — trois dans la démarche du prompt, deux
@@ -1333,7 +1333,13 @@ def test_les_trois_voies_se_nomment_et_se_lisent_dans_la_trace():
 # `volumetrie-globale`, `periode-directe`). Un témoin de quatre lignes VIDES au
 # même endroit ne coûtait rien — ce n'est donc pas la longueur du prompt, c'est
 # son contenu. Une fiche plus attirante attire aussi ce qui ne la regarde pas.
-EMPREINTE_DU_PROMPT_SYSTEME = "2a77a1ae012951c3e5624aefc41f4de84830859afdc18c3852ece825741723f8"
+#
+# L'empreinte du PROMPT système n'est plus ici. Celle qui s'y trouvait ne
+# gardait rien : elle hachait `prompts.SYSTEME`, c'est-à-dire la chaîne
+# « systeme.txt » — le nom du fichier — et non son contenu. Elle serait restée
+# verte quoi qu'on écrive dans le prompt. Les sept prompts du paquet sont
+# désormais couverts, sur leur CONTENU et sur le dossier au complet, par
+# `tests/unit/test_prompts.py`.
 EMPREINTES_DES_FICHES_D_OUTIL = {
     "capacites_de_l_agent": "eb78b85c45d3d067d33da6c14fd4f14e9be2f9010541a62bd80256d92e5b51d2",
     "sources_de_donnees": "9fe6ce293a71bb0049bdcbccf5f7131936eec1794fcbb14bd7baba4dc850442c",
@@ -1347,17 +1353,6 @@ EMPREINTES_DES_FICHES_D_OUTIL = {
 
 def _empreinte(texte: str) -> str:
     return hashlib.sha256(texte.encode("utf-8")).hexdigest()
-
-
-def test_aucun_paragraphe_de_prompt_n_a_bouge():
-    """Le correctif du 2026-09-17 ne touche à AUCUN mot du prompt système.
-
-    Il est mécanique de bout en bout : ce que le message NOMME
-    (`introspection.sources_nommees`), ce qu'une fiche porte de propre
-    (`introspection.marques_des_fiches`), et deux planchers qui ne parlent qu'aux
-    tours où rien n'a été servi. Rien n'est demandé au modèle.
-    """
-    assert _empreinte(prompts.SYSTEME) == EMPREINTE_DU_PROMPT_SYSTEME
 
 
 def test_aucune_fiche_d_outil_n_a_bouge_au_caractere_pres():
