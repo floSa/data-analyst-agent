@@ -44,7 +44,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mesure_surface_conversationnelle import ModeleCompteur
+from mesure_surface_conversationnelle import ModeleCompteur, porte_le_fait
 
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import load_catalog
@@ -306,8 +306,7 @@ def juger(question: Question, reponse: ChatAnswer, texte: str) -> tuple[str, str
     if reponse.error:
         return "échec", f"erreur : {reponse.error}"
     if question.faits:
-        plat = texte.lower()
-        manquants = [f[0] for f in question.faits if not any(t.lower() in plat for t in f)]
+        manquants = [f[0] for f in question.faits if not porte_le_fait(texte, f)]
         if manquants:
             return "échec", f"fait absent : {', '.join(manquants)}"
     else:

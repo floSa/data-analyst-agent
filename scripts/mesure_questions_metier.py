@@ -40,7 +40,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from mesure_surface_conversationnelle import ModeleCompteur, nombres
+from mesure_surface_conversationnelle import ModeleCompteur, nombres, porte_le_fait
 
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import load_catalog
@@ -252,8 +252,7 @@ def juger(
         return "échec", f"chiffre du piège présent : {', '.join(f'{c:g}' for c in presents)}"
     if question.graphique and figures == 0:
         return "échec", "aucune figure produite"
-    plat = texte.lower()
-    absents = [f[0] for f in question.faits if not any(t.lower() in plat for t in f)]
+    absents = [f[0] for f in question.faits if not porte_le_fait(texte, f)]
     if absents:
         return "échec", f"fait(s) absent(s) : {', '.join(absents)}"
     return "conforme", question.attendu

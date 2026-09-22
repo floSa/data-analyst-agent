@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mesure_provenance_du_sens import FAITS_DE_LA_SENTINELLE
-from mesure_surface_conversationnelle import ModeleCompteur
+from mesure_surface_conversationnelle import ModeleCompteur, porte_le_fait
 
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import load_catalog
@@ -349,7 +349,7 @@ def attribue(texte: str) -> bool:
 
 def _porte(texte: str, tournures: tuple[str, ...]) -> bool:
     plat = texte.lower()
-    return any(t.lower() in plat for t in tournures)
+    return porte_le_fait(plat, tournures)
 
 
 def juger(question: Question, reponse: ChatAnswer, texte: str) -> tuple[str, str, list[str]]:

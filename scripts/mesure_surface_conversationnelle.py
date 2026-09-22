@@ -65,6 +65,7 @@ from data_analyst_agent.agents.inference.schemas import SCHEMAS
 from data_analyst_agent.agents.retrieval.catalog import Catalog, load_catalog, open_source
 from data_analyst_agent.config import get_settings
 from data_analyst_agent.llm import build_model
+from data_analyst_agent.orchestrator import introspection
 from data_analyst_agent.orchestrator.graph import Orchestrator
 
 # Le repli du planificateur, reconnu à cette phrase. Elle est le SYMPTÔME que
@@ -715,6 +716,11 @@ def nombres(texte: str) -> list[float]:
     Sert d'oracle à plusieurs runners : une réponse se juge sur les CHIFFRES
     qu'elle porte, et « 1 757 519,23 » comme « 1,757,519.23 » désignent la même
     valeur. Le dernier séparateur suivi d'une ou deux décimales est le décimal.
+
+    **Et « trois » est le nombre 3.** « Elle comprend TROIS tables » porte le
+    même fait que « 3 tables », et l'oracle d'ouverture de source le refusait
+    pour n'avoir pas trouvé le caractère. C'est une normalisation de plus, du
+    même ordre que celle des séparateurs (cf. ``nombres_dits``).
     """
     trouves: list[float] = []
     for brut in NOMBRE.findall(texte):
@@ -733,12 +739,144 @@ def nombres(texte: str) -> list[float]:
             trouves.append(float(nettoye))
         except ValueError:
             continue
-    return trouves
+    return trouves + nombres_dits(texte)
 
 
 def _groupe(nettoye: str) -> bool:
     """Un séparateur de MILLIERS seul (« 1,757,519 » ou « 1.757.519 »)."""
     return bool(re.fullmatch(r"\d{1,3}(?:[.,]\d{3})+", nettoye))
+
+
+# --- les deux oracles qui jugent un FAIT et non son orthographe ---------------
+#
+# Un oracle qui compare des sous-chaînes mesure une TYPOGRAPHIE. Deux l'ont
+# fait, et les deux refusaient des réponses justes :
+#
+#   · le parcours de démonstration rejetait « ne doit pas être prise en compte
+#     dans tout calcul de puissance » — la consigne dite en entier — parce
+#     qu'aucune des dix-sept tournures de sa liste n'en était une sous-chaîne
+#     exacte : « pas prise en compte » y est, mais le « être » de la réponse
+#     tombe au milieu ;
+#   · l'ouverture de source rejetait « Elle comprend TROIS tables » parce
+#     qu'elle cherchait le caractère `3`.
+#
+# Ce qu'on NE fait pas : allonger les listes. Une liste plus longue est la même
+# erreur en plus long, et c'est écrit trois fois dans ce dépôt — un lexique est
+# une liste, et la famille des façons de dire une chose est ouverte. Ce qui
+# change est la COMPARAISON : on replie les deux côtés et on compare des
+# radicaux, exactement comme `introspection._actions` le fait pour les actions
+# qu'une réponse doit porter ; et on lit un nombre écrit en lettres comme le
+# nombre qu'il est.
+
+# Ce qu'on retire d'un mot pour en garder le radical, et le seuil en deçà
+# duquel on n'y touche pas. Les deux valeurs sont celles d'`introspection` —
+# `_TERMINAISON` et `_RADICAL_MINIMAL` — et c'est délibéré : mesurer qu'un fait
+# est dit et exiger qu'il le soit sont la même opération, faite à deux endroits.
+TERMINAISON = 2
+RADICAL_MINIMAL = 5
+
+
+def radicaux(texte: str) -> list[tuple[str, bool]]:
+    """Les mots du texte, repliés, dans l'ordre — avec le fait qu'on les a coupés.
+
+    « prise » et « prises », « écarter » et « écartée » rendent le même jeton.
+    Le booléen dit si le mot a été RACCOURCI, et il décide de la comparaison :
+    un jeton coupé se compare par préfixe — « exclu » doit reconnaître
+    « exclusion » — un mot court se compare entier, sans quoi « pas »
+    reconnaîtrait « passager ».
+
+    L'ordre est gardé parce qu'il sert : une tournure est portée quand ses
+    radicaux se retrouvent DANS L'ORDRE, ce qui distingue « pas prise en
+    compte » d'une réponse où ces trois mots-là se croisent par hasard.
+    """
+    jetons = []
+    for mot in introspection.replie(texte).split():
+        coupe = len(mot) >= RADICAL_MINIMAL
+        jetons.append((mot[:-TERMINAISON] if coupe else mot, coupe))
+    return jetons
+
+
+def porte_le_fait(texte: str, tournures: tuple[str, ...]) -> bool:
+    """Le texte DIT-il la chose, quelle que soit la façon de l'écrire ?
+
+    ``tournures`` reste une disjonction — plusieurs façons de dire, une seule
+    suffit — mais chacune est confrontée par ses RADICAUX pris dans l'ordre, et
+    non comme une sous-chaîne. Une tournure qui ne porte aucun mot (« >= 0 »,
+    « 3 % ») est comparée telle quelle : il n'y a pas de radical à en tirer, et
+    c'est bien son écriture qu'on cherche.
+    """
+    portes = radicaux(texte)
+    plat = texte.lower()
+    return any(_tournure_portee(portes, plat, tournure) for tournure in tournures)
+
+
+def _tournure_portee(portes: list[tuple[str, bool]], plat: str, tournure: str) -> bool:
+    attendus = radicaux(tournure)
+    if not attendus:
+        return tournure.lower() in plat
+    reste = iter(portes)
+    return all(any(_meme_mot(porte, attendu) for porte in reste) for attendu in attendus)
+
+
+def _meme_mot(porte: tuple[str, bool], attendu: tuple[str, bool]) -> bool:
+    """Deux jetons désignent-ils le même mot ?
+
+    Un jeton COUPÉ ne prétend qu'à son début : « exclu » doit reconnaître
+    « exclusion », et « fausse » « fausserait ». Un mot qu'on n'a pas coupé est
+    trop court pour qu'un préfixe veuille dire quoi que ce soit — « pas »
+    reconnaîtrait « passager » — et se compare entier.
+    """
+    jeton, coupe = porte
+    cible, coupee = attendu
+    if coupee or coupe:
+        return jeton.startswith(cible) or cible.startswith(jeton)
+    return jeton == cible
+
+
+# Les nombres écrits EN LETTRES, lus comme des nombres. Ce n'est pas une liste
+# de tournures acceptées : c'est une NORMALISATION, du même ordre que le
+# repliage des accents ou la reconnaissance de « 1 757 519,23 » et de
+# « 1,757,519.23 » comme la même valeur. Une réponse qui écrit « trois tables »
+# porte le fait « 3 tables ».
+#
+# `un` et `une` n'y sont pas, et c'est la seule exclusion : ce sont les articles
+# indéfinis du français, et les lire comme le nombre 1 mettrait un 1 dans
+# presque toutes les réponses. Aucun oracle de ces campagnes n'attend 1.
+NOMBRES_EN_LETTRES = {
+    "zero": 0,
+    "deux": 2,
+    "trois": 3,
+    "quatre": 4,
+    "cinq": 5,
+    "six": 6,
+    "sept": 7,
+    "huit": 8,
+    "neuf": 9,
+    "dix": 10,
+    "onze": 11,
+    "douze": 12,
+    "treize": 13,
+    "quatorze": 14,
+    "quinze": 15,
+    "seize": 16,
+    "vingt": 20,
+    "trente": 30,
+    "quarante": 40,
+    "cinquante": 50,
+    "soixante": 60,
+    "cent": 100,
+    "cents": 100,
+    "mille": 1000,
+}
+
+
+def nombres_dits(texte: str) -> list[float]:
+    """Les nombres écrits en lettres (cf. ``NOMBRES_EN_LETTRES``)."""
+    return [
+        float(NOMBRES_EN_LETTRES[mot])
+        for mot in introspection.replie(texte).split()
+        if mot in NOMBRES_EN_LETTRES
+    ]
 
 
 def une_ligne(texte: str, largeur: int = 320) -> str:

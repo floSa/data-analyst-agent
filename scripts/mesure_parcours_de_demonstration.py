@@ -46,7 +46,7 @@ from mesure_provenance_du_sens import (
     SENTINELLE_N_EST_PAS_UNE_PUISSANCE,
     SENTINELLE_SORT_DES_AGREGATS,
 )
-from mesure_surface_conversationnelle import ModeleCompteur, nombres
+from mesure_surface_conversationnelle import ModeleCompteur, nombres, porte_le_fait
 
 from data_analyst_agent.agents.inference.registry import Registry
 from data_analyst_agent.agents.retrieval.catalog import load_catalog
@@ -427,8 +427,7 @@ def juger(
     if presents:
         return "échec", f"chiffre du voisin : {', '.join(f'{c:g}' for c in presents)}"
     if tour.faits:
-        plat = texte.lower()
-        absents = [f[0] for f in tour.faits if not any(t.lower() in plat for t in f)]
+        absents = [f[0] for f in tour.faits if not porte_le_fait(texte, f)]
         if absents:
             return "échec", f"fait(s) absent(s) : {', '.join(absents)}"
     else:
