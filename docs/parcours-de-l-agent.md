@@ -12,9 +12,19 @@ uv run python scripts/releve_des_parcours.py --markdown docs/releve-des-parcours
 ```
 
 Le relevé obtenu est dans [`docs/releve-des-parcours.md`](releve-des-parcours.md).
-Les chiffres cités ici en sortent. Ils ont été relevés le 2026-09-17 sur le
-catalogue `sources/metier/catalogue.yaml`. Un autre tirage donnera d'autres
-phrases : le modèle n'est pas déterministe. Les chemins, eux, sont stables.
+Les chiffres cités ici en sortent. Un autre tirage donnera d'autres phrases :
+le modèle n'est pas déterministe. Les chemins, eux, sont stables.
+
+**Ce document est tiré du relevé d'empreinte SHA-256 :**
+
+    RELEVÉ : 5700b60a0777c86d1faee384028e74fb4bdaafa9133e3355f539ac306feffa90
+
+Relevé le 2026-09-22 sur le catalogue `sources/metier/catalogue.yaml`.
+Cette ligne n'est pas un ornement : `tests/unit/docs/test_parcours_de_l_agent.py`
+la recalcule, et le test rougit dès que le relevé est régénéré sans que cette
+prose-ci soit reprise. C'est la seule chose qu'une machine sache vérifier
+d'une prose — non qu'elle soit vraie, mais qu'elle ait été relue depuis la
+dernière mesure.
 
 ---
 
@@ -394,6 +404,7 @@ sequenceDiagram
     participant S as Noeud system
     participant R as Noeud rappel
     participant W as Espace de travail du fil
+    participant B as Bac a sable
     participant M as Moteur
     participant Y as Noeud synthesize
 
@@ -404,39 +415,50 @@ sequenceDiagram
     R->>M: question + catalogue des artefacts du fil
     M-->>R: rejouer_un_code(nom='resultat_1', modification='donne-moi les pourcentages')
     R->>W: resultat_1 est-il du code ?
-    W-->>R: non, c est un tableau
-    Note over R,W: rien n est execute — et l artefact EXISTE,<br/>donc son contenu est rendu plutot qu un refus
-    R->>M: ce n est pas du code, voici son contenu
-    M-->>R: la sentinelle AUTRE
-    Note over R: la formulation est disqualifiee :<br/>ce sont les FAITS qui partent
-    R->>Y: le tableau
-    Y-->>U: 318 car., le tableau servi
+    W-->>R: non, c est un tableau — et son CSV est monte sous /data/
+    Note over R,W: un tableau n a pas de code a rejouer,<br/>mais il a une matiere : on ecrit le calcul
+    R->>M: ecris le calcul sur CE tableau, sans reinterroger la source
+    M-->>R: du Python qui lit /data/resultat_1.csv
+    R->>B: execute
+    B-->>R: les cinq pourcentages
+    R->>M: voici ce que le calcul a rendu
+    M-->>R: la phrase
+    R->>Y: la reponse du rappel
+    Y-->>U: 237 car., les pourcentages
 ```
 
-**Trace relevée.** `system` → `rappel` → `synthesize`. **4 appels LLM.** Le
-nœud `rappel` relève « rejouer_un_code — faits servis (sentinelle rendue alors
-qu'un outil a été appelé) ». Le tour ne va pas jusqu'au planificateur : le
-rappel a servi.
+**Trace relevée.** `system` → `rappel` → `synthesize`. **6 appels LLM.** Le
+nœud `rappel` relève « rejeu de resultat_1 — 1 essai(s), 0 figure(s), statut ok
+— retenu sous le nom analyse_1 ». Le tour ne traverse pas le nœud `plan`, mais
+il porte un plan : `analyze · source=ventes`, parce qu'un rejeu EST une analyse
+et que `ChatAnswer.plan` doit le dire.
 
-> resultat_1 (tableau de 5 ligne(s) ; colonnes : raison_sociale,
-> chiffre_affaires) — ce n'est pas du code : rien n'a été exécuté, et voici son
-> contenu :
-> raison_sociale,chiffre_affaires
-> Vélocité Bordeaux,170149.0 […]
+> Voici les pourcentages de chaque raison sociale par rapport au total du
+> chiffre d'affaires : Vélocité Bordeaux représente 26.15%, pedalier-online.fr
+> 19.95%, Cycles de la Rade 19.05%, Atelier du Rayon 18.37%, et Nord Cycles
+> Négoce 16.48%.
 
-**Le modèle demande à REJOUER un tableau.** C'est une erreur de sa part — on ne
-réexécute pas un CSV — et l'outil ne l'exécute pas. Ce qu'il fait à la place :
-il rend le contenu. Un artefact qui existe ne se cache pas derrière un refus ;
-la demande porte sur ce que le tableau contient, et ce contenu part.
+**Le modèle demande à REJOUER un tableau, et c'est le bon geste.** On ne
+réexécute pas un CSV — un tableau n'a pas de code — mais il a une matière, et
+elle est déjà montée sous `/data/` par `_mount_workspace`. L'outil écrit donc
+le Python qui lit CE fichier-là et l'exécute dans le bac à sable. La consigne
+qui l'accompagne porte la clause décisive : « sans réinterroger la source ».
+Sans elle, le code généré repart volontiers du carnet de commandes — il est
+monté lui aussi — et le tour répond à une autre question que celle qu'on a
+posée.
 
-**Puis le modèle renonce**, et rend la sentinelle. La ceinture
-(``defaut_de_formulation``) la disqualifie — un tour où un outil a répondu
-n'est plus « pas pour moi » — et ce sont les faits qui sont servis. C'est ce
-qu'on voit ici : le tableau, sans les pourcentages. Sur un tableau plus court,
-le même tour formule et les calcule ; sur celui-ci, mesuré 5 tirages sur 5, le
-modèle rend d'abord une réponse vide, puis la sentinelle. Ce qui est garanti
-est que **le tableau est retrouvé et servi** — ce qui l'est moins est que le
-modèle sache en tirer un pourcentage.
+**Le calcul s'exécute, et les pourcentages sont justes.** 26,15 + 19,95 +
+19,05 + 18,37 + 16,48 = 100,00. Le chiffre n'est pas formulé par le moteur de
+langage à partir d'un tableau qu'il aurait sous les yeux : il est calculé par
+du code, dans le conteneur, et le moteur ne fait que le rapporter. C'est ce
+que le prompt de rappel exige — tout chiffre dérivé passe par l'outil — et
+c'est ce qui sépare un rejeu d'une lecture à voix haute.
+
+**Le rejeu laisse une trace dans le fil.** Le code écrit ici est retenu sous le
+nom `analyse_1` : il entre au catalogue, et un tour ultérieur peut le reprendre
+à son tour. Aucune figure n'est produite — la demande n'en réclamait pas — donc
+le tour ne rend aucun artefact affichable.
+
 
 ---
 
@@ -448,12 +470,13 @@ modèle sache en tirer un pourcentage.
   lire la structure, et ne ramène aucune ligne.
 - Le nœud `rappel` **n'appelle pas le modèle** quand le fil n'a rien produit.
   Au tour 5, il n'apparaît même pas dans la trace.
-- Le nœud `synthesize` **n'appelle pas le modèle** dans les huit tours. La
-  phrase vient de `system` (tours 1 à 4), d'un résumé déterministe (tour 5), du
-  rendu du modèle de prédiction (tour 7) ou des faits d'un outil de rappel
-  (tour 8).
+- Le nœud `synthesize` **n'appelle le modèle que sur les deux tours qui ont
+  exécuté du Python** — 6 et 8. Ailleurs il ne le paie pas : la phrase vient de
+  `system` (tours 1 à 4), d'un résumé déterministe (tour 5) ou du rendu du
+  modèle de prédiction (tour 7).
 - Le tour 8 **n'atteint pas le planificateur** : le rappel a servi, et le
-  graphe va directement à la synthèse.
+  graphe va directement à la synthèse. Le tour porte quand même un plan
+  (`analyze`), parce qu'un rejeu exécute du code sur une source.
 - **Un seul service d'inférence est appelé, et il est sur cette machine** :
   celui que `DAA_LLM_BASE_URL` désigne, port 8100. Il n'y en a pas d'autre. Le
   relevé le nomme en tête de chaque exécution.
@@ -467,9 +490,9 @@ modèle sache en tirer un pourcentage.
 | 3 | et plus de détails sur ventes ? | `system` → `synthesize` | 2 |
 | 4 | parle-moi un peu de stocks et de titanic | `system` → `synthesize` | 2 |
 | 5 | quel est le chiffre d'affaires par revendeur ? | `system` → `plan` → `retrieval` → `synthesize` | 5 |
-| 6 | fais-moi un graphique de ça | `system` → `rappel` → `plan` → `analysis` → `synthesize` | 7 |
+| 6 | fais-moi un graphique de ça | `system` → `rappel` → `plan` → `analysis` → `synthesize` | 5 |
 | 7 | prédis la survie d'une passagère… | `system` → `rappel` → `plan` → `inference` → `synthesize` | 3 |
-| 8 | reprends le tableau précédent… | `system` → `rappel` → `synthesize` | 4 |
+| 8 | reprends le tableau précédent… | `system` → `rappel` → `synthesize` | 6 |
 
 **27 appels LLM pour huit tours.** Le nœud `system` en coûte un en tête de
 chaque question, y compris celles qui ne le concernent pas : c'est le prix de ne
@@ -478,11 +501,11 @@ pas reconnaître les questions méta par un lexique, et il est assumé
 
 ---
 
-# Trois défauts corrigés, et ce qui reste
+# Quatre défauts corrigés
 
-Ce document décrivait trois défauts relevés ici même. Ils sont corrigés, et le
-relevé ci-dessus est celui d'APRÈS. Ce qui suit dit ce qui a changé, et ce qui
-n'a pas changé.
+Ce document décrivait quatre défauts relevés ici même. Ils sont corrigés, et le
+relevé ci-dessus est celui d'APRÈS. Ce qui suit dit ce qui a changé, et
+comment chacun se mesure.
 
 **Une prédiction en attente ne confisque plus le fil.** Les nœuds `system` et
 `rappel` se retirent quand une prédiction attend des features : c'est
@@ -527,11 +550,37 @@ route `/chat` reporte.
 Avant : `a` 0/3, `d` 0/3, `f` 0/3, `g` 0/3. Après : **8 fils sur 8, 3 tirages
 chacun**.
 
-**Ce qui reste, et qui n'est pas de la mécanique du fil.** Au tour 8, le modèle
-rend la sentinelle au lieu de formuler ; la ceinture sert alors les faits, donc
-le tableau, mais sans les pourcentages. C'est une limite du moteur sur ce
-tableau-là — 5 tirages sur 5 — et non du chemin : le tableau est retrouvé et
-servi à chaque fois.
+**Un chiffre dérivé n'a plus besoin qu'on désigne le tableau.** Le tour 8 le
+montre avec la désignation — « reprends le tableau précédent » — mais le défaut
+était juste à côté : le MÊME message sans elle ne trouvait pas le tableau qui
+venait d'être produit. « donne-moi les pourcentages », « et ça fait combien en
+pourcentage du total ? », « ajoute une colonne avec la part de chacun » : les
+trois partaient au planificateur, qui repartait en `query`, ne rendait aucune
+ligne, et l'utilisateur lisait « je n'ai pas interrogé la source ».
+
+Le fil brut disait où, et ce n'était pas le retrait du nœud : l'agent de rappel
+ÉTAIT appelé, ses deux outils lui étaient offerts, et il répondait la
+sentinelle. Sa démarche ne connaissait qu'une liste de tournures de reprise, et
+aucun de ces trois messages n'en porte. Ce qui lui manquait n'était pas un mot
+de plus dans la liste — trois fois payé sur ce projet — mais un FAIT : lequel
+des artefacts du catalogue vient d'être produit. Il se lit dans le magasin
+(`ConversationWorkspace.produits_au_tour_precedent`), en comparant la question
+qui a produit chaque artefact à celle que le tour d'avant a retenue, sans rien
+demander au vocabulaire du message courant. Le catalogue injecté le marque, et
+la démarche de l'agent ouvre une seconde porte, bornée par la SUFFISANCE de la
+demande : ce qu'on ne comprend pas sans le tour précédent porte sur ce qui
+vient d'être montré ; ce qui se tient debout tout seul reste au planificateur.
+
+Avant : 0/4 des formulations sans désignation atteignaient le rappel. Après :
+4/4, rejeu du tableau, pourcentages justes. La borne est mesurée par ses
+témoins — « combien de clients au total ? », « quelles sources as-tu ? »,
+« fais-moi un histogramme des montants de commande », « quel est le montant
+moyen d'une commande ? » restent au planificateur, 4/4, avec un tableau tout
+frais au catalogue.
+
+Et le garde-fou n'a pas bougé : « je n'ai pas interrogé la source pour cette
+question » reste ce que dit un tour qui n'a rien interrogé. C'est le chemin qui
+a changé, pas ce qu'on s'autorise à affirmer.
 
 ---
 
@@ -546,3 +595,24 @@ l'en empêche : il vérifie que tout nœud cité existe dans le graphe et que to
 nœud du graphe est cité, que tout outil cité existe parmi les outils de l'agent
 système et réciproquement, et que tout fichier cité existe. Un renommage fait
 échouer ce test.
+
+**Et sa limite était béante.** Ces vérifications-là sont restées vertes pendant
+que ce document décrivait, au tour 8, le contraire de ce que le code fait : « ce
+n'est pas du code : rien n'a été exécuté », « le tableau, sans les
+pourcentages », alors que le calcul s'exécutait et que les pourcentages étaient
+justes. Tous les noms cités existaient ; seule la prose était fausse. Un test ne
+lit pas une prose, et il serait malhonnête de prétendre le contraire.
+
+Ce qu'on vérifie à la place est plus modeste, et c'est vérifiable :
+
+1. **La prose déclare le relevé dont elle est tirée**, par l'empreinte SHA-256
+   ci-dessus. Régénérer `docs/releve-des-parcours.md` sans reprendre ce
+   document fait rougir le test. Il ne dit pas que la prose est juste ; il dit
+   qu'elle a été relue depuis la dernière mesure, et c'est exactement ce qui
+   avait manqué.
+2. **Les faits que les deux documents portent tous les deux concordent** : pour
+   chacun des huit tours, les nœuds traversés et le nombre d'appels LLM du
+   tableau « Le coût, en appels LLM » sont comparés à ceux du relevé. Ce sont
+   les seuls énoncés de cette prose qu'une machine sache confronter à une
+   mesure — et ils auraient rougi : le document annonçait 7 appels au tour 6 et
+   4 au tour 8, là où le relevé en comptait 5 et 6.

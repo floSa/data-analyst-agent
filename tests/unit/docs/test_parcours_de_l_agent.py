@@ -16,6 +16,7 @@ sens dans lequel il a été fait.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -121,3 +122,88 @@ CHEMIN_CITE = re.compile(r"`((?:scripts|src|tests|docs|sources)/[\w./-]+)`")
 @pytest.mark.parametrize("cible", sorted(set(CHEMIN_CITE.findall(_texte()))))
 def test_tout_chemin_cite_existe(cible: str):
     assert (RACINE / cible).exists(), f"chemin cité mais absent du dépôt : {cible}"
+
+
+# --- la prose est-elle restée derrière son relevé ? --------------------------
+
+RELEVE = RACINE / "docs" / "releve-des-parcours.md"
+
+# La ligne par laquelle le document déclare DE QUEL relevé il est tiré.
+EMPREINTE_DECLAREE = re.compile(r"^ {4}RELEVÉ : ([0-9a-f]{64})$", re.MULTILINE)
+
+# Une ligne du tableau « Le coût, en appels LLM » du document : le numéro du
+# tour, les nœuds traversés entre accents graves, et le nombre d'appels.
+LIGNE_DE_COUT = re.compile(
+    r"^\| (\d) \| .*? \| ((?:`[a-z_]+`(?: → )?)+) \| (\d+) \|$", re.MULTILINE
+)
+
+# La même chose côté relevé, dans son tableau « Le fil en un coup d'œil » : les
+# nœuds y sont écrits sans accents graves.
+LIGNE_DU_RELEVE = re.compile(r"^\| (\d) \| .*? \| ([a-z_ →]+) \| (\d+) \| .*$", re.MULTILINE)
+
+
+def _empreinte(donnees: bytes) -> str:
+    return hashlib.sha256(donnees).hexdigest()
+
+
+def _parcours(regex: re.Pattern[str], texte: str) -> dict[int, tuple[str, int]]:
+    return {
+        int(numero): (noeuds.replace("`", "").strip(), int(appels))
+        for numero, noeuds, appels in regex.findall(texte)
+    }
+
+
+def test_le_document_declare_le_releve_dont_il_est_tire():
+    """Sans cette déclaration, la vérification suivante n'aurait rien à quoi se tenir."""
+    assert EMPREINTE_DECLAREE.search(_texte()), (
+        "le document ne déclare plus l'empreinte du relevé dont il est tiré "
+        "(ligne « RELEVÉ : <sha256> »)"
+    )
+
+
+def test_la_prose_n_est_pas_restee_derriere_son_releve():
+    """Le relevé a-t-il été régénéré sans que cette prose soit reprise ?
+
+    C'est la seule chose qu'une machine sache vérifier d'une prose : non
+    qu'elle soit vraie, mais qu'elle ait été relue depuis la dernière mesure.
+    Et c'est exactement ce qui a manqué — les vérifications de noms de ce
+    fichier sont restées vertes pendant que le tour 8 décrivait le contraire de
+    ce que le code fait.
+
+    L'empreinte porte sur le CONTENU du relevé, jamais sur sa date de fichier :
+    un `git clone` réécrit les dates de tout le dépôt d'un coup, et un test
+    fondé sur elles rougirait au hasard d'une case cochée par le système de
+    fichiers.
+
+    Réparer ce test se fait en une commande, et c'est le but :
+
+        uv run python scripts/releve_des_parcours.py --markdown docs/releve-des-parcours.md
+
+    puis on relit la prose, et on met la ligne « RELEVÉ : … » à jour.
+    """
+    declaree = EMPREINTE_DECLAREE.search(_texte())
+    assert declaree is not None
+
+    assert declaree.group(1) == _empreinte(RELEVE.read_bytes()), (
+        "docs/releve-des-parcours.md a changé depuis que docs/parcours-de-l-agent.md "
+        "a été écrit : la prose se réclame d'un relevé qui n'est plus celui du dépôt. "
+        "Relis le tour concerné, puis mets la ligne « RELEVÉ : … » à jour."
+    )
+
+
+def test_les_parcours_du_document_sont_ceux_du_releve():
+    """Les seuls énoncés de cette prose qu'une machine sache confronter à une mesure.
+
+    Le tableau des coûts du document et celui du relevé portent les mêmes
+    faits — nœuds traversés, appels LLM — écrits deux fois. Les comparer
+    n'atteste pas la prose alentour, mais il attrape ce que l'empreinte seule
+    laisserait passer : une prose reprise à la main sans qu'on ait relu les
+    chiffres. Ils auraient rougi — le document annonçait 7 appels au tour 6 et
+    4 au tour 8, là où le relevé en comptait 5 et 6.
+    """
+    du_document = _parcours(LIGNE_DE_COUT, _texte())
+    du_releve = _parcours(LIGNE_DU_RELEVE, RELEVE.read_text(encoding="utf-8"))
+
+    assert du_document, "le tableau « Le coût, en appels LLM » est vide ou a changé de forme"
+    assert set(du_document) == set(du_releve)
+    assert du_document == du_releve
