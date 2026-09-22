@@ -120,6 +120,17 @@ RADICAUX_D_ABSENCE = ("aucun", "depourvu")
 # QUESTION.
 RADICAUX_DU_TEMPS = ("date", "period", "temporel", "chronolog", "horodat", "annee", "millesim")
 
+# Ce qui, dans une phrase, dit qu'une colonne RENVOIE à une autre table. Quatre
+# radicaux, et c'est une classe fermée : ce sont les quatre façons de nommer une
+# clé étrangère en français — « clé étrangère », « référence », « renvoie »,
+# « jointe ». Ce n'est pas une liste de tournures : chacun est un mot du
+# vocabulaire du schéma, et la tournure qui les emploie reste libre.
+#
+# Ils servent l'exigence de ``VeriteTerrain.exigence_de_renvoi``, qui remplace
+# l'attendu « classes » — un mot français ordinaire, que toute réponse parlant
+# de la classe des passagers écrit sans avoir lu la moindre clé étrangère.
+RADICAUX_DU_RENVOI = ("etrang", "referen", "renvoi", "joint")
+
 # Ce qu'on retire d'un mot avant de le comparer. La ponctuation colle au mot
 # qu'elle suit — « aucune colonne de date, elle ne couvre… » — et « date, » n'est
 # pas « date ».
@@ -140,6 +151,14 @@ LIBELLES = {
     "erreur": "erreur",
 }
 FAMILLE_TEMOIN = "témoin (données)"
+# La seconde famille de témoins, et elle ne surveille pas le même routeur. Celle
+# du dessus protège le chemin des DONNÉES d'un routeur de questions méta ; celle
+# -ci protège deux questions ordinaires du PLANCHER DES DATES posé en C53, qui
+# sert l'inventaire du catalogue dès qu'un message a l'air de demander QUAND et
+# qu'aucune source n'a de date à donner. « décris le dataset iris » et « quand je
+# te donne un âge, tu prédis quoi ? » ont l'un le mot « dataset », l'autre le mot
+# « quand », et ni l'un ni l'autre ne demande de période.
+FAMILLE_TEMOIN_PLANCHER = "témoin (plancher des dates)"
 
 
 def replie(texte: str) -> str:
@@ -306,6 +325,10 @@ class VeriteTerrain:
     temporelles: dict[str, tuple[str, ...]]  # "source.table" -> colonnes de date
     lignes: dict[str, int]  # "source.table" -> nombre de lignes
     features: dict[str, tuple[str, ...]]  # dataset -> champs du schéma
+    # "source.table.colonne" -> la table que sa clé étrangère POINTE. Lu dans
+    # l'ontologie de la source (``TableInfo.foreign_keys``), donc vrai de la
+    # base et non de la mémoire de qui écrit l'oracle.
+    renvois: dict[str, str]
     ages_max: float  # MAX(age) de passengers, pour un témoin d'agrégat
     survivants: int  # COUNT(survived = 1), pour un témoin de comptage
     colonnes_a_trous: tuple[str, ...]  # colonnes de passengers avec des NULL
@@ -319,6 +342,7 @@ class VeriteTerrain:
         ages_max = 0.0
         survivants = 0
         a_trous: tuple[str, ...] = ()
+        renvois: dict[str, str] = {}
         for source in catalogue.sources:
             with closing(open_source(source)) as adaptateur:
                 schema = adaptateur.schema()
@@ -326,6 +350,8 @@ class VeriteTerrain:
                 for table in schema.tables:
                     cle = f"{source.name}.{table.name}"
                     colonnes[cle] = tuple(c.name for c in table.columns)
+                    for fk in table.foreign_keys:
+                        renvois[f"{cle}.{fk.column}"] = fk.ref_table
                     temporelles[cle] = tuple(
                         c.name
                         for c in table.columns
@@ -361,6 +387,7 @@ class VeriteTerrain:
             ages_max=ages_max,
             survivants=survivants,
             colonnes_a_trous=a_trous,
+            renvois=renvois,
         )
 
     def colonnes_pleines(self, cle_table: str) -> tuple[str, ...]:
@@ -414,6 +441,128 @@ class VeriteTerrain:
             return Exigence("une date", porte_une_date)
         return Exigence("le constat qu'il n'y a aucune date", constate_l_absence_de_date)
 
+    def exigence_de_renvoi(self, cle_de_colonne: str) -> Exigence:
+        """Ce qu'une réponse sur le SENS d'une clé étrangère doit porter.
+
+        La table POINTÉE, nommée, et dans la même phrase un mot qui dit le
+        renvoi. C'est le fait, et il est lu dans l'ontologie de la source : la
+        clé étrangère y est déclarée, avec sa table de destination.
+
+        **Ce qu'elle remplace, et pourquoi.** L'attendu était la chaîne
+        « classes », et « classes » est un mot français ordinaire : « la colonne
+        `class_id` donne les classes des passagers » — une lecture du NOM de la
+        colonne, sans une ligne de schéma — le portait et comptait juste. Un
+        oracle qui accepte un mot que la question suggère ne mesure rien
+        d'autre que la capacité du modèle à conjuguer.
+
+        Ce qui n'est PAS exigé est aussi ce qui la rend juste : ni les autres
+        colonnes de la table pointée, ni ses libellés. La réponse fondée que le
+        système rend — « une clé étrangère qui référence `classes(class_id)`, ce
+        dont le sens de la valeur se lit dans la table `classes` » — n'en cite
+        aucun, et les exiger referait le défaut de C51 dans l'autre sens : une
+        exigence qui refuse une réponse juste.
+
+        La portée est la PHRASE, comme pour le constat d'absence de date, et
+        pour la même raison : c'est là que la négation — ici, la relation —
+        porte.
+        """
+        pointee = self.renvois[cle_de_colonne]
+        return Exigence(
+            f"le renvoi à la table `{pointee}`",
+            lambda texte: porte_un_renvoi(texte, pointee),
+        )
+
+    def exigence_de_volumetrie(self) -> Exigence:
+        """Une TAILLE, c'est-à-dire un compte de lignes lu dans les sources.
+
+        Jugé sur les NOMBRES de la réponse et non sur ses sous-chaînes, et c'est
+        toute la correction. L'attendu était la liste des comptes en chaînes de
+        caractères — ``("3", "891", "150")`` sur le catalogue par défaut — donc
+        cherchés en sous-chaîne : « 342 » portait « 3 », « 8915 » portait
+        « 891 », et n'importe quel nombre d'un chiffre suffisait à faire compter
+        juste une réponse qui n'a lu aucune source. ``nombres`` lit des
+        grandeurs, et 342 n'est pas 3.
+        """
+        attendus = set(self.lignes.values())
+        return Exigence(
+            "un compte de lignes lu dans les sources",
+            lambda texte: bool(attendus & set(nombres(texte))),
+        )
+
+    def exigence_d_attributs(self) -> Exigence:
+        """Les attributs d'UN modèle, ou le choix ENTRE TOUS.
+
+        Deux réponses justes à « de quels attributs as-tu besoin ? », et une
+        seule chose exigée de chacune : qu'elle soit COMPLÈTE. Ou bien la
+        réponse donne les attributs — alors elle les donne tous, une liste
+        tronquée n'étant pas un schéma —, ou bien elle rend la question, et
+        alors elle énumère les modèles entre lesquels choisir, tous, sans quoi
+        le choix qu'elle propose est faux.
+
+        **Ce qu'elle remplace.** ``attendus_parmi=datasets`` : UN nom de modèle,
+        n'importe lequel, en sous-chaîne. Or ces noms sont aussi des noms de
+        SOURCES — `titanic`, `iris` — et le catalogue est dans le prompt de tous
+        les nœuds : une réponse qui parle d'autre chose et cite une source au
+        passage satisfaisait l'oracle. L'exigence porte maintenant sur ce que la
+        réponse FAIT de la question, et non sur la présence d'un mot qu'elle a
+        toutes les raisons d'écrire.
+        """
+        tous = tuple(self.datasets)
+
+        def juge(texte: str) -> bool:
+            plat = replie(texte)
+            donne = any(
+                all(replie(champ) in plat for champ in champs)
+                for champs in self.features.values()
+                if champs
+            )
+            return donne or all(replie(d) in plat for d in tous)
+
+        return Exigence("les attributs d'un modèle, ou le choix entre tous", juge)
+
+    def exigence_de_choix_bref(self, *nommees: str) -> Exigence:
+        """Faire CHOISIR entre les sources nommées, sans dérouler leurs fiches.
+
+        Deux bords, et le second est celui qui manquait. La réponse nomme les
+        sources entre lesquelles la question hésite — sans quoi elle ne fait
+        choisir personne — et elle ne porte AUCUN des comptes de lignes lus dans
+        le catalogue : ces comptes sont la signature de l'inventaire complet,
+        c'est-à-dire des fiches de toutes les sources servies à quelqu'un qui en
+        a nommé deux.
+
+        Le second bord est dérivé, pas seuillé : on ne mesure pas une longueur —
+        un seuil se règle, et un seuil réglé mesure la main qui l'a posé — on
+        constate la présence de faits qui n'appartiennent qu'aux fiches.
+        """
+        volumes = set(self.lignes.values())
+
+        def juge(texte: str) -> bool:
+            plat = replie(texte)
+            return all(replie(n) in plat for n in nommees) and not (volumes & set(nombres(texte)))
+
+        return Exigence(
+            "le choix entre " + ", ".join(nommees) + ", sans les fiches des sources",
+            juge,
+        )
+
+    def exigence_hors_de_l_inventaire(self) -> Exigence:
+        """La réponse n'est PAS l'inventaire du catalogue entier.
+
+        L'oracle des deux témoins du plancher des dates (C53). Ce plancher sert
+        ``introspection.decrire_les_sources`` sur TOUT le catalogue : sa
+        signature est de nommer chaque source déclarée, et aucune réponse
+        légitime à « décris le dataset iris » ou à « quand je te donne un âge,
+        tu prédis quoi ? » n'a de raison de les nommer TOUTES.
+
+        Dérivée du catalogue et non du texte du plancher : c'est la propriété
+        qui tient si la phrase d'en-tête change, et c'est elle qu'on veut
+        surveiller — pas une chaîne qu'on aurait recopiée.
+        """
+        return Exigence(
+            "une réponse à la question, et non l'inventaire du catalogue",
+            lambda texte: not all(_nomme(replie(texte), s) for s in self.sources),
+        )
+
 
 def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
     """Les questions, famille par famille, oracles branchés sur la vérité terrain.
@@ -456,6 +605,25 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             "Liste-moi tes sources de données.",
             attendus_tous=vt.sources,
         ),
+        # --- l'hésitation entre DEUX sources nommées
+        #
+        # « ventes ou production ? » : deux noms, et rien d'autre. Elle appelle
+        # un choix, et un choix se pose en une ligne — les fiches de tout le
+        # catalogue répondent à une autre question. Réparée à C48 et mesurée
+        # nulle part depuis : c'est sur elle que le pilote a relevé, le
+        # 2026-09-22, deux réponses de longueurs incomparables et en a conclu
+        # une régression (cf. §21 de docs/surface-conversationnelle.md).
+        #
+        # Les deux premiers noms du catalogue, pris tels quels : la question
+        # doit se rejouer sur un autre catalogue sans être réécrite, comme le
+        # parcours de `mesure_choix_de_source.py`.
+        QuestionMeta(
+            "choix-entre-deux-sources",
+            "sources",
+            f"{vt.sources[0]} ou {vt.sources[1]} ?",
+            exigence=vt.exigence_de_choix_bref(vt.sources[0], vt.sources[1]),
+            clarification_admise=(vt.sources[0], vt.sources[1]),
+        ),
         # --- quelles tables ?
         QuestionMeta(
             "tables-directe",
@@ -487,8 +655,10 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             "sens-colonne",
             "sens d'une colonne",
             "Que signifie la colonne class_id de la table passengers ?",
-            # la réponse fondée renvoie à la table pointée par la clé étrangère
-            attendus_tous=("classes",),
+            # la réponse fondée renvoie à la table pointée par la clé étrangère,
+            # et c'est ce RENVOI qui est exigé — pas le mot « classes », que
+            # toute réponse française écrit sans avoir lu un schéma.
+            exigence=vt.exigence_de_renvoi(f"{passengers}.class_id"),
         ),
         # --- quels modèles ?
         QuestionMeta(
@@ -521,14 +691,14 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             "features-nue",
             "features",
             "De quels attributs as-tu besoin ?",
-            attendus_parmi=vt.datasets,
+            exigence=vt.exigence_d_attributs(),
             clarification_admise=vt.datasets,
         ),
         QuestionMeta(
             "features-indirecte",
             "features",
             "De quoi as-tu besoin pour prédire ?",
-            attendus_parmi=vt.datasets,
+            exigence=vt.exigence_d_attributs(),
             clarification_admise=vt.datasets,
         ),
         # --- que sais-tu faire ?
@@ -566,6 +736,22 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             # porte sur tout ce que l'agent a, et les deux sources se datent de
             # la même façon. Une clarification n'y porte ni date ni constat.
         ),
+        QuestionMeta(
+            # La paraphrase que personne ne mesurait. Elle part au
+            # planificateur, qui la classe `query` : l'agent SQL reçoit une
+            # question de dates sur un schéma qui n'en porte aucune et rend
+            # « les données ne contiennent pas d'information sur l'année de
+            # collecte, cependant l'âge maximal est de 80 ans ». La première
+            # moitié est le constat dû ; la seconde est hors sujet, et le
+            # chemin est celui que le plancher des dates (C53) existe pour
+            # éviter. Inscrite ici pour que le bruit ait un chiffre — elle
+            # n'est pas réparée, et la colonne « Capacité » du tableau dit
+            # pourquoi : elle atteint un nœud qu'elle n'aurait pas dû atteindre.
+            "periode-paraphrase-annee",
+            "période",
+            "tes données, elles sont de quelle année ?",
+            exigence=vt.exigence_de_periode(*vt.cles_de_table()),
+        ),
         # --- combien de lignes ?
         QuestionMeta(
             "volumetrie-table",
@@ -577,7 +763,7 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             "volumetrie-globale",
             "volumétrie",
             "Quelle est la taille de tes données ?",
-            attendus_parmi=tuple(str(n) for n in vt.lignes.values()),
+            exigence=vt.exigence_de_volumetrie(),
             clarification_admise=vt.sources,
         ),
         # --- LES REFORMULATIONS DU PROPRIÉTAIRE, mesurées en usage réel
@@ -715,6 +901,25 @@ def batterie(vt: VeriteTerrain) -> list[QuestionMeta]:
             capacite_attendue="query",
         ),
         QuestionMeta(
+            # Le mot « dataset » et une source sans aucune colonne de date : le
+            # plancher de C53 sert l'inventaire entier si rien ne l'en empêche.
+            # Ce qui est dû est la fiche de CETTE source-là, avec ce qu'on y a lu.
+            "temoin-dataset-iris",
+            FAMILLE_TEMOIN_PLANCHER,
+            "décris le dataset iris",
+            attendus_tous=("iris",),
+            exigence=vt.exigence_hors_de_l_inventaire(),
+        ),
+        QuestionMeta(
+            # « quand » ouvre une hypothèse, pas une période. Le plancher lit la
+            # QUESTION ; ce témoin dit ce qu'il coûterait s'il la lisait mal.
+            "temoin-quand-je-te-donne-un-age",
+            FAMILLE_TEMOIN_PLANCHER,
+            "quand je te donne un âge, tu prédis quoi ?",
+            attendus_tous=("predi",),
+            exigence=vt.exigence_hors_de_l_inventaire(),
+        ),
+        QuestionMeta(
             "temoin-prediction",
             FAMILLE_TEMOIN,
             "Prédis la survie d'une passagère de 1re classe de 28 ans, tarif 80 livres, "
@@ -747,6 +952,15 @@ def classer(
     comptait « Sur quelle source veux-tu travailler : titanic, iris ? » comme
     une réponse correcte à « quelles sources possèdes-tu ? » — la mesure
     aurait alors déclaré couverte la classe même qu'on cherchait à mesurer.
+
+    **Une clarification ADMISE, elle, n'est pas dispensée de l'oracle**, et
+    c'est une marche corrigée. Elle rendait « correct » sans lire ce que la
+    réponse portait : sur les trois questions qui admettent une clarification,
+    tout ce qui énumérait les choix comptait juste, y compris l'inventaire
+    entier servi à qui demandait la taille de ses données. Ce que
+    ``clarification_admise`` autorise est de RENVOYER la question ; ce qu'elle
+    n'autorise pas est de ne rien porter — l'exigence de la question s'applique
+    ensuite, comme partout ailleurs.
     """
     if erreur:
         return "erreur", []
@@ -761,7 +975,6 @@ def classer(
         )
         if not admise:
             return "a_cote", ["clarification renvoyée au lieu d'une réponse"]
-        return "correct", []
     ok, manquants = question.satisfait(reponse)
     return ("correct" if ok else "a_cote"), manquants
 
@@ -956,6 +1169,28 @@ def _parle_du_temps(mot: str) -> bool:
     return any(mot.startswith(radical) for radical in RADICAUX_DU_TEMPS)
 
 
+def porte_un_renvoi(texte: str, table_pointee: str) -> bool:
+    """Le texte dit-il que la colonne RENVOIE à cette table-là ?
+
+    Le nom de la table et un mot de renvoi, dans la MÊME phrase — la portée est
+    celle du constat d'absence de date, et pour la même raison : une relation se
+    dit dans une phrase, et deux mots qui se croisent à dix lignes d'écart n'en
+    affirment aucune.
+
+    L'ordre ne compte pas ici, et c'est la différence avec le constat d'absence :
+    « référence `classes(class_id)` » et « la table `classes` est référencée par
+    cette colonne » disent la même chose. Une négation nie ce qui la SUIT ; une
+    relation n'a pas de sens de lecture.
+    """
+    for phrase in FIN_DE_PHRASE.split(replie(texte)):
+        mots = [mot.strip(PONCTUATION) for mot in phrase.split()]
+        if not any(any(mot.startswith(r) for r in RADICAUX_DU_RENVOI) for mot in mots):
+            continue
+        if _nomme(phrase, table_pointee):
+            return True
+    return False
+
+
 def constate_l_absence_de_date(texte: str) -> bool:
     """Le texte CONSTATE-t-il qu'il n'y a aucune date ?
 
@@ -1073,6 +1308,17 @@ def _bloc(titre: str, resultats: list[Resultat]) -> list[str]:
     return lignes
 
 
+def _est_temoin(resultat: Resultat) -> bool:
+    """Ce relevé appartient-il à une famille de TÉMOINS ?
+
+    Lu sur le préfixe et non sur une famille unique : il y en a deux, elles
+    surveillent deux routeurs différents (cf. ``FAMILLE_TEMOIN_PLANCHER``), et
+    les compter avec les questions méta diluerait ce qu'elles mesurent tout
+    autant que la première le faisait.
+    """
+    return resultat.question.famille.startswith("témoin")
+
+
 def rapport(resultats: list[Resultat]) -> str:
     """Deux blocs : les questions méta, puis les témoins — jamais mélangés.
 
@@ -1080,8 +1326,8 @@ def rapport(resultats: list[Resultat]) -> str:
     pour ne PAS bouger, et les compter avec le reste diluerait justement ce
     qu'on mesure.
     """
-    meta = [r for r in resultats if r.question.famille != FAMILLE_TEMOIN]
-    temoins = [r for r in resultats if r.question.famille == FAMILLE_TEMOIN]
+    meta = [r for r in resultats if not _est_temoin(r)]
+    temoins = [r for r in resultats if _est_temoin(r)]
     lignes: list[str] = []
     if meta:
         lignes += _bloc("Questions méta", meta)
