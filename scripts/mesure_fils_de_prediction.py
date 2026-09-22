@@ -1,9 +1,18 @@
-"""Six fils où une prédiction en attente croise le reste de la conversation.
+"""Quatorze fils où ce qu'un tour laisse derrière lui change le tour suivant.
 
 Ce runner joue des **FILS**, pas des messages isolés, et c'est sa raison d'être :
 les défauts qu'il mesure n'existent qu'à partir du deuxième tour. Une prédiction
 restée en attente de features change ce que le tour SUIVANT peut faire — et
 c'est ce changement-là qu'on relève.
+
+**Ce qu'un tour laisse derrière lui est de deux natures**, et les deux se
+mesurent ici. Une prédiction en attente de features, qui était le sujet de ce
+runner à sa naissance ; et un TABLEAU produit, qui change tout autant ce que le
+tour suivant peut faire — « donne-moi les pourcentages » n'a de sens qu'après
+lui. Les fils `h-*` et `i-*` portent le second. Ils ont été rangés ici plutôt que
+dans une campagne neuve parce que c'est la seule qui joue des fils avec un oracle
+mécanique : `scripts/mesure_memoire_de_conversation.py` RELÈVE et ne juge pas —
+rien n'y rougit si la réponse cesse de nommer ce que le fil a produit.
 
 Ce qu'il reporte d'un tour au suivant est exactement ce que la route ``/chat``
 reporte (cf. `api/app.py`) : ``source_de_travail``, ``echange_precedent``,
@@ -12,11 +21,11 @@ reporte (cf. `api/app.py`) : ``source_de_travail``, ``echange_precedent``,
 d'appels d'outil sont importés de là plutôt que réécrits, pour que les deux
 runners ne puissent pas diverger sur la façon de tenir un fil.
 
-**Six fils, dont deux témoins.** Les quatre premiers portent les défauts ; les
-deux derniers portent ce qu'on ne doit PAS casser en les réparant — un « oui »
-qui complète une prédiction, et un tableau rappelé sur un fil sans prédiction
-en attente. Un correctif qui verdit a, b, c, d et rougit e ou f n'est pas un
-correctif : c'est un déplacement.
+**Quatorze fils, dont deux témoins.** Les autres portent les défauts ; `e` et
+`f` portent ce qu'on ne doit PAS casser en les réparant — un « oui » qui complète
+une prédiction, et un tableau rappelé sur un fil sans prédiction en attente. Un
+correctif qui verdit a, b, c, d et rougit e ou f n'est pas un correctif : c'est
+un déplacement.
 
 Chaque tour porte son attendu, et l'attendu est une PROPRIÉTÉ de la trace ou de
 la réponse — jamais un texte à comparer. Le moteur ne rend pas deux fois la même
@@ -38,16 +47,20 @@ import json
 import re
 import uuid
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
+from mesure_surface_conversationnelle import nombres
 from releve_des_parcours import Message, ModeleMouchard, Releve, poser
 
 from data_analyst_agent.agents.inference.registry import Registry
-from data_analyst_agent.agents.retrieval.catalog import load_catalog
+from data_analyst_agent.agents.retrieval.catalog import load_catalog, open_source
 from data_analyst_agent.config import get_settings
 from data_analyst_agent.llm import build_model
 from data_analyst_agent.orchestrator.graph import Orchestrator
+from data_analyst_agent.orchestrator.workspace import TYPE_PAR_DEFAUT, TYPES_EN_CLAIR
 
 # --- ce qu'on sait lire dans un tour -----------------------------------------
 
@@ -278,6 +291,100 @@ def la_question_est_traitee_normalement(releve: Releve) -> str:
     return ""
 
 
+# --- la vérité terrain du chaînage : lue dans la source, jamais écrite -------
+
+# La répartition que le premier tour produit, et les parts qu'on en attend. Le
+# SQL est écrit ICI, à côté de l'attendu, comme dans `mesure_questions_metier.py`
+# — un oracle doit dire ce qu'il attend — mais les CHIFFRES, eux, sortent de la
+# base : « 55,56 / 20,00 / 24,44 » recopiés à la main mesureraient la mémoire de
+# qui les a relevés le 2026-09-22, et une graine changée les ferait mentir en
+# silence.
+SQL_DES_PARTS = (
+    "SELECT 100.0 * COUNT(*) / SUM(COUNT(*)) OVER () "
+    "FROM commandes o JOIN clients c ON c.client_id = o.client_id "
+    "GROUP BY c.canal"
+)
+
+# Ce qu'on tolère d'écart sur une part. Le modèle arrondit — « 55,56 », « 55,6 »,
+# « 56 % » portent le même fait — et un oracle qui exigerait la deuxième
+# décimale mesurerait un format d'affichage. Un demi-point sépare encore les
+# trois parts attendues (20,00 / 24,44 / 55,56) sans les confondre.
+TOLERANCE_DE_PART = 0.5
+
+
+@lru_cache(maxsize=1)
+def parts_attendues() -> tuple[float, ...]:
+    """Les trois parts du tableau du fil, lues dans `ventes`.
+
+    Une source injoignable fait échouer la lecture, et c'est voulu : un oracle
+    qui se rabattrait sur une valeur écrite en dur rendrait un verdict sur un
+    catalogue qu'il n'a pas lu — le piège d'instrument le plus cher de ce dépôt.
+    """
+    reglages = get_settings()
+    source = load_catalog(reglages.catalog_path).get("ventes")
+    with closing(open_source(source)) as adaptateur:
+        return tuple(sorted(float(ligne[0]) for ligne in adaptateur.run(SQL_DES_PARTS).rows))
+
+
+# Les types qu'un tableau du fil écrit dans son catalogue, en un mot français.
+# Pris dans le module qui les produit : ce sont des FAITS de l'artefact, au même
+# titre que le nom des colonnes d'une source dans l'autre runner.
+TYPES_DU_FIL = (*(clair for _, clair in TYPES_EN_CLAIR), TYPE_PAR_DEFAUT)
+
+# Le nom du premier tableau d'un fil. Il est posé par le code
+# (`workspace.save_table`) et il ne dépend d'aucun modèle : c'est le seul nom
+# sous lequel l'inventaire du fil peut citer ce qu'on vient de produire.
+PREMIER_TABLEAU = "resultat_1"
+
+
+def les_parts_sont_justes(releve: Releve) -> str:
+    """La réponse porte les TROIS parts, celles que la base donne.
+
+    Les trois, et pas une : une réponse qui en donne deux a fait le calcul à
+    moitié, et la somme à 100 % est ce qui prouve qu'il porte sur le tableau
+    entier. C'est la seule exigence qui distingue « le tableau a été retrouvé »
+    de « le calcul a été fait dessus », et c'est celle qui manquait — `f` mesure
+    la première depuis C45 et n'a jamais rien dit de la seconde.
+    """
+    lus = nombres(releve.reponse)
+    manquantes = [
+        f"{part:.2f}"
+        for part in parts_attendues()
+        if not any(abs(part - lu) <= TOLERANCE_DE_PART for lu in lus)
+    ]
+    if manquantes:
+        return f"parts absentes de la réponse : {', '.join(manquantes)} (lus : {lus[:12]})"
+    return ""
+
+
+def le_calcul_est_rendu(releve: Releve) -> str:
+    """Le tour a CALCULÉ sur le tableau du fil, et rendu des chiffres justes.
+
+    Deux constats, dans cet ordre, parce qu'ils échouent pour deux raisons
+    différentes et qu'un relevé qui les confond ne dit pas quoi réparer : le
+    rappel a-t-il servi l'artefact, et les parts sont-elles celles de la base.
+    """
+    if not _un_rappel_a_servi(releve):
+        return f"aucun outil de rappel n'a servi (nœud rappel : « {_noeud(releve, 'rappel')} »)"
+    return les_parts_sont_justes(releve)
+
+
+def linventaire_du_fil_est_dit(releve: Releve) -> str:
+    """La réponse NOMME le tableau produit, et dit le type de ses colonnes.
+
+    Les deux, parce que le défaut de C51 avait deux moitiés : l'inventaire
+    omettait les tableaux du fil, et la ligne de catalogue d'un tableau ne
+    portait que des noms de colonnes. Un nom sans type ne dit pas ce qu'on peut
+    demander au tableau — c'est la raison pour laquelle le modèle repartait de
+    la base.
+    """
+    if PREMIER_TABLEAU not in releve.reponse:
+        return f"le tableau `{PREMIER_TABLEAU}` du fil n'est pas nommé"
+    if not any(type_ in releve.reponse for type_ in TYPES_DU_FIL):
+        return "aucun type de colonne : " + ", ".join(TYPES_DU_FIL)
+    return ""
+
+
 # --- les fils ------------------------------------------------------------
 
 # La prédiction volontairement INCOMPLÈTE de tous ces fils : `sibsp` et `parch`
@@ -423,6 +530,104 @@ FILS: tuple[Fil, ...] = (
             Tour(RAPPEL, "le tableau est retrouvé et servi", sur_le_tour(le_tableau_est_retrouve)),
         ),
     ),
+    # `g-bis` est à `g` ce que `d-bis` est à `d`, et pour la même raison. `g`
+    # mesure ce que la réparation de C45 livre — la relance ne se répète pas ;
+    # `g-bis` mesure ce que le pilote a demandé et que personne n'inscrivait :
+    # la prédiction ABOUTIT. Les deux sur la même séquence, séparés pour qu'un
+    # échec dise lequel des deux faits a bougé.
+    Fil(
+        cle="g-bis",
+        titre="« sans famille à bord » puis « c'est une femme » : la prédiction aboutit",
+        tours=(
+            Tour(
+                INCOMPLETE + ", sans famille à bord",
+                "les deux compteurs sont lus, pas réclamés",
+                sur_le_tour(les_compteurs_ne_sont_pas_reclames),
+            ),
+            Tour("c'est une femme", "la prédiction aboutit", sur_le_tour(la_prediction_aboutit)),
+        ),
+    ),
+    # --- LE CHAÎNAGE SUR LE DERNIER TABLEAU, réparé à C48 et C49, inscrit ici
+    #
+    # `f` mesure que le tableau est RETROUVÉ ; aucun fil ne mesurait que le
+    # calcul demandé dessus soit FAIT, ni que ses chiffres soient les bons. Les
+    # quatre fils qui suivent le font, sur les quatre formulations réellement
+    # relevées : celle qui désigne le tableau (C48) et les trois qui ne le
+    # désignent pas (C49). Les trois dernières sont le cœur du chaînage — c'est
+    # `_regle_chainer_sur_le_dernier_tableau` qui doit reconnaître qu'un calcul
+    # sans objet porte sur ce que le tour d'avant vient de produire.
+    Fil(
+        cle="h-designe",
+        titre="« reprends le tableau précédent et donne-moi les pourcentages » : parts justes",
+        tours=(
+            Tour(TABLEAU, "un tableau est produit", sur_le_tour(un_tableau_est_produit)),
+            Tour(
+                RAPPEL,
+                "le calcul est fait, les parts sont justes",
+                sur_le_tour(le_calcul_est_rendu),
+            ),
+        ),
+    ),
+    Fil(
+        cle="h-nu",
+        titre="« donne-moi les pourcentages », sans désigner le tableau",
+        tours=(
+            Tour(TABLEAU, "un tableau est produit", sur_le_tour(un_tableau_est_produit)),
+            Tour(
+                "donne-moi les pourcentages",
+                "le calcul est fait, les parts sont justes",
+                sur_le_tour(le_calcul_est_rendu),
+            ),
+        ),
+    ),
+    Fil(
+        cle="h-part-du-total",
+        titre="« et ça fait combien en pourcentage du total ? »",
+        tours=(
+            Tour(TABLEAU, "un tableau est produit", sur_le_tour(un_tableau_est_produit)),
+            Tour(
+                "et ça fait combien en pourcentage du total ?",
+                "le calcul est fait, les parts sont justes",
+                sur_le_tour(le_calcul_est_rendu),
+            ),
+        ),
+    ),
+    Fil(
+        cle="h-colonne-de-part",
+        titre="« ajoute une colonne avec la part de chacun »",
+        tours=(
+            Tour(TABLEAU, "un tableau est produit", sur_le_tour(un_tableau_est_produit)),
+            Tour(
+                "ajoute une colonne avec la part de chacun",
+                "le calcul est fait, les parts sont justes",
+                sur_le_tour(le_calcul_est_rendu),
+            ),
+        ),
+    ),
+    # --- CE QUE LE FIL SAIT DIRE DE LUI-MÊME, réparé à C51, inscrit ici
+    #
+    # Les deux questions vivaient dans `scripts/mesure_memoire_de_conversation.py`
+    # (fils B.3 et C.2), qui RELÈVE et ne juge pas : rien n'y rougit si la
+    # réponse cesse de nommer ce que le fil a produit. Elles n'avaient donc pas
+    # de foyer où être PROTÉGÉES, et c'est ici le seul qui joue des fils avec un
+    # oracle mécanique.
+    Fil(
+        cle="i-inventaire-du-fil",
+        titre="ce que le fil a produit est nommé, avec le type de ses colonnes",
+        tours=(
+            Tour(TABLEAU, "un tableau est produit", sur_le_tour(un_tableau_est_produit)),
+            Tour(
+                "qu'est-ce que tu as en mémoire dans cette conversation ?",
+                "le tableau du fil est nommé, avec le type de ses colonnes",
+                sur_le_tour(linventaire_du_fil_est_dit),
+            ),
+            Tour(
+                "quelles données as-tu à ta disposition maintenant ?",
+                "le tableau du fil est nommé, avec le type de ses colonnes",
+                sur_le_tour(linventaire_du_fil_est_dit),
+            ),
+        ),
+    ),
 )
 
 
@@ -535,7 +740,7 @@ def rapport(joues: list[FilJoue]) -> str:
 
 
 def main() -> None:
-    parseur = argparse.ArgumentParser(description="Six fils où une prédiction croise le reste.")
+    parseur = argparse.ArgumentParser(description="Quatorze fils, et ce qu'un tour laisse.")
     parseur.add_argument("--tirages", type=int, default=3)
     parseur.add_argument("--fils", nargs="*", default=None, help="les clés de fils à jouer")
     parseur.add_argument("--json", type=Path, default=None)
