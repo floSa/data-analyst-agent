@@ -954,9 +954,25 @@ class Orchestrator:
         suivante, aucun nœud et aucune liaison ne peut la reprendre pour un
         choix : il n'y a plus rien à reprendre.
 
-        Un ``plan.source`` qui désigne un **objet du fil** (un tableau
-        intermédiaire) n'est pas effacé : ce n'est pas un choix entre sources
-        ambiguës, c'est un résultat que la conversation vient de produire.
+        **Un ``plan.source`` qui désigne un objet du fil SURVIT à la reposition**,
+        et il faut lire cette phrase avec sa borne, ci-dessous. Ce n'est pas un
+        choix entre sources ambiguës, c'est un résultat que la conversation
+        vient de produire. La branche existait plus bas — ``elif plan.source in
+        declarees``, qui n'efface qu'un nom du catalogue — et elle était
+        INATTEIGNABLE : ``elif ctx.source_de_travail`` s'exécute avant et
+        repose la source liée sans condition, c'est-à-dire à partir du deuxième
+        tour de n'importe quelle conversation. Mesuré 0/81 : le planificateur a
+        désigné un tableau du fil cinq fois, et les cinq fois il a été écrasé
+        (`docs/memoire-de-conversation.md` §3.1).
+
+        **La borne, et elle n'est pas gratuite.** La reposition corrige de
+        vraies erreurs du modèle, et le même relevé en montre une : au tour 3
+        du fil F, `source='resultat_1'` répondait à « les 5 techniciens qui sont
+        intervenus le plus souvent » sur un tableau qui ne porte aucune colonne
+        de technicien. Ce qui départage les deux cas n'est ni la tournure ni la
+        capacité, c'est de savoir si l'objet peut RÉPONDRE — une colonne que la
+        question nomme, que la source porte et que l'objet n'a pas
+        (``_objet_du_fil_designe``). Elle sort d'un fil brut et pas d'un goût.
 
         Après ``_regle_degrader_faute_de_source``, qui peut retirer à ce tour la
         capacité même qui réclame une source.
@@ -967,8 +983,11 @@ class Orchestrator:
             return None
         nommee = introspection.source_nommee(ctx.question, ctx.catalogue_declare)
         declarees = [s.name for s in ctx.catalogue_declare.sources]
+        objet = self._objet_du_fil_designe(plan, ctx)
         if nommee:
             plan.source = nommee
+        elif objet is not None:
+            plan.source = objet.name
         elif ctx.source_de_travail:
             plan.source = ctx.source_de_travail
         elif len(declarees) == 1:
@@ -979,6 +998,60 @@ class Orchestrator:
         elif plan.source in declarees:
             plan.source = None
         return None
+
+    def _objet_du_fil_designe(self, plan: Plan, ctx: PlanContext) -> WorkspaceArtifact | None:
+        """Le tableau du fil que le plan désigne, s'il peut répondre — ``None`` sinon.
+
+        Deux conditions, et la seconde est la borne de
+        ``_regle_source_de_la_conversation`` :
+
+        1. ``plan.source`` porte le nom d'un tableau RÉINJECTÉ ce tour-ci. Un
+           objet évincé du contexte n'est ni monté ni interrogeable ; le
+           désigner ne mènerait qu'à « source introuvable ».
+        2. la question ne réclame aucune colonne que l'objet n'a pas
+           (``introspection.colonne_hors_de_l_objet``).
+
+        **Le prix est une ouverture de source**, et il est payé au même endroit
+        que celui de ``_ce_que_le_schema_en_dit`` : sur le seul tour où la
+        question se pose, c'est-à-dire là où le modèle a désigné un objet du
+        fil — cinq tours sur quatre-vingt-un dans le relevé de C50. Un tour
+        qui ne désigne rien ne lit aucun schéma de plus qu'avant.
+
+        Une source illisible ne disqualifie rien : l'introspection est
+        best-effort ici comme partout (cf. ``low_cardinality_values``), et
+        refuser une désignation parce qu'une base n'a pas répondu ferait
+        dépendre le plan de la disponibilité d'un serveur.
+        """
+        if not plan.source or ctx.workspace is None:
+            return None
+        vise = introspection.replie(plan.source).strip()
+        objet = next(
+            (a for a in ctx.workspace.injected if introspection.replie(a.name).strip() == vise),
+            None,
+        )
+        if objet is None:
+            return None
+        manquante = introspection.colonne_hors_de_l_objet(
+            ctx.question, self._colonnes_de_la_source(ctx), objet.columns
+        )
+        if manquante:
+            logger.info(
+                "objet '%s' désigné mais sans la colonne '%s' : on repose la source liée",
+                objet.name,
+                manquante,
+            )
+            return None
+        return objet
+
+    def _colonnes_de_la_source(self, ctx: PlanContext) -> list[str]:
+        """Les colonnes de la source LIÉE, toutes tables confondues ("" si illisible)."""
+        try:
+            source = ctx.catalogue_declare.get(ctx.source_de_travail or "")
+            with closing(open_source(source)) as adapter:
+                schema = adapter.schema()
+        except Exception:  # best-effort, comme toute introspection ici
+            return []
+        return [colonne.name for table in schema.tables for colonne in table.columns]
 
     def _regle_reprendre_les_features_acquises(self, plan: Plan, ctx: PlanContext) -> str | None:
         """Fusionne à une prédiction ce que les tours précédents ont déjà donné.
@@ -1815,7 +1888,12 @@ class Orchestrator:
         if source is None:
             raise KeyError("aucune source à monter pour rejouer ce code")
         tableau = artefact.est_un_tableau
-        with self._decor_de_donnees(state, source) as (data_files, data_context, avis):
+        # Ce que le rejeu VISE : le tableau qu'on a nommé, et lui seul. Un code,
+        # lui, a été écrit pour le décor d'un autre tour et peut lire n'importe
+        # lequel des fichiers qui y étaient montés : lui retirer un montage,
+        # c'est le faire échouer sur un `FileNotFoundError` que rien n'annonce.
+        objets = [artefact] if tableau else list(self._objets_du_fil(state))
+        with self._decor_de_donnees(state, source, objets) as (data_files, data_context, avis):
             resultat = run_analysis(
                 self._consigne_de_calcul(artefact, modification) if tableau else modification,
                 data_files=data_files,
@@ -2084,9 +2162,30 @@ class Orchestrator:
 
     @staticmethod
     def _mount_workspace(
-        state: OrchestratorState, data_files: dict[Path, str], data_context: str
+        state: OrchestratorState,
+        data_files: dict[Path, str],
+        data_context: str,
+        objets: list[WorkspaceArtifact],
     ) -> tuple[str, list[str]]:
-        """Ajoute les CSV mémorisés aux fichiers montés et les décrit au code généré.
+        """Monte les CSV que CE tour vise, et les décrit au code généré.
+
+        ``objets`` est ce que le tour désigne, et non ce que le fil porte. C'est
+        le correctif du défaut le plus grave du relevé de C50 (§3.2) : les deux
+        fichiers étaient montés côte à côte — la table de la source et le
+        tableau du tour d'avant — et rien ne disait lequel répondait à la
+        question. Le code généré ouvrait le second, et l'agent servait « écran
+        illisible, 3 cas » là où la source en porte 152. Ce n'était pas un
+        chiffre visiblement faux : c'était un chiffre plausible, tiré au sort.
+
+        **L'information ne manquait pas, l'arbitrage manquait.** Les deux
+        fichiers étaient bien annoncés au modèle (``_initial_prompt``), et le
+        seul des deux qualifié l'était par le mot *réutilisable*. Le montage
+        était un décor ; rien ne départageait ses pièces. On ne le départage
+        donc pas par une phrase de plus — cinq ont été écrites puis retirées
+        sur ce projet, chacune au prix d'une question de la surface — on ne
+        monte que ce dont le tour a besoin. Le plan dit ce dont il a besoin :
+        sa source, désormais capable de désigner un objet du fil
+        (``_regle_source_de_la_conversation``).
 
         Rend aussi les NOMS de ceux qui sont eux-mêmes une tranche. Un tableau
         intermédiaire est le produit d'une requête, et une requête est coupée à
@@ -2096,18 +2195,18 @@ class Orchestrator:
         tour d'écart en plus — c'est la même coupe, vue au tour suivant.
         """
         workspace = state.get("workspace")
-        if workspace is None or not workspace.injected:
+        if workspace is None or not objets:
             return data_context, []
-        for host_path, name in workspace.sandbox_files().items():
-            data_files.setdefault(host_path, name)
+        for artefact in objets:
+            data_files.setdefault(workspace.path_of(artefact), artefact.file)
         lines = [
             f"- /data/{a.file} ({a.row_count} lignes{' ; TRONQUÉ' if a.tronque else ''}"
             f" ; colonnes : {', '.join(a.columns)})"
-            for a in workspace.injected
+            for a in objets
         ]
         extra = "Objets intermédiaires de la conversation (réutilisables) :\n" + "\n".join(lines)
         contexte = f"{data_context}\n\n{extra}" if data_context else extra
-        return contexte, [a.name for a in workspace.injected if a.tronque]
+        return contexte, [a.name for a in objets if a.tronque]
 
     # Ce qu'on dit d'une grandeur calculée sur une TRANCHE, d'où qu'elle vienne.
     #
@@ -2165,14 +2264,49 @@ class Orchestrator:
             entier="le résultat entier de la requête qui les a produits",
         )
 
+    @staticmethod
+    def _objets_du_fil(state: OrchestratorState) -> list[WorkspaceArtifact]:
+        """Tous les tableaux réinjectés du fil (le décor d'un rejeu de CODE)."""
+        workspace = state.get("workspace")
+        return list(workspace.injected) if workspace is not None else []
+
+    def _objets_vises(self, state: OrchestratorState, plan: Plan) -> list[WorkspaceArtifact]:
+        """Le tableau du fil que le PLAN désigne — vide quand il désigne la base.
+
+        Le montage suit le plan, et c'est tout le correctif du §3.2 : un tour
+        dont le plan dit `source=interventions` ne voit plus sous ``/data/`` le
+        tableau du tour d'avant, donc ne peut plus répondre avec lui sans le
+        dire. Un tour dont le plan dit `source=resultat_1` — ce que
+        ``_regle_source_de_la_conversation`` laisse désormais passer — voit ce
+        tableau-là, et lui seul.
+
+        Le nom est comparé replié : le plan écrit ce que le modèle a écrit, et
+        une majuscule ou un accent ne doivent pas décider d'un montage.
+        """
+        vise = introspection.replie(plan.source or "").strip()
+        if not vise:
+            return []
+        return [
+            a for a in self._objets_du_fil(state) if introspection.replie(a.name).strip() == vise
+        ]
+
     @contextmanager
-    def _decor_de_donnees(self, state: OrchestratorState, source) -> Iterator[tuple]:
+    def _decor_de_donnees(
+        self, state: OrchestratorState, source, objets: list[WorkspaceArtifact]
+    ) -> Iterator[tuple]:
         """Ce que le code d'analyse voit sous ``/data/``, et ce qu'on lui en dit.
 
         Cède ``(fichiers, contexte, avis)`` : les montages du bac à sable, la
         description qui les accompagne dans le prompt, et l'avis de troncature
         s'il y en a un. Le dossier temporaire où les tables SQL sont
         matérialisées ne vit que le temps du bloc.
+
+        ``objets`` est la liste — souvent vide — des tableaux du fil que ce
+        tour VISE. Elle est passée et non déduite, parce que les deux appelants
+        ne visent pas la même chose : le nœud d'analyse vise ce que le plan
+        désigne, le rejeu vise l'artefact qu'on lui a nommé. La déduire ici
+        reviendrait à remonter tout ce qui traîne, c'est-à-dire au défaut que
+        ``_mount_workspace`` corrige.
 
         Extrait de ``_analysis_node`` parce que le REJEU d'un code en a besoin
         exactement pareil : rejouer ``graphique_1`` sur un bac à sable où
@@ -2212,7 +2346,7 @@ class Orchestrator:
                     data_context = f"{data_context}\n\n{avis}"
             # objets intermédiaires de la conversation : montés aussi pour que le
             # code généré puisse les relire (pd.read_csv('/data/resultat_1.csv'))
-            data_context, tronques = self._mount_workspace(state, data_files, data_context)
+            data_context, tronques = self._mount_workspace(state, data_files, data_context, objets)
             # Les deux coupes se CUMULENT, et elles ne sont pas la même : une
             # table de la source amputée à la matérialisation, et un tableau
             # d'un tour précédent qui était déjà un extrait. Un tour peut porter
@@ -2228,7 +2362,11 @@ class Orchestrator:
         plan = state["plan"]
         workspace = state.get("workspace")
         source = self._resolve_source(plan, self._effective_catalog(state))
-        with self._decor_de_donnees(state, source) as (data_files, data_context, avis):
+        with self._decor_de_donnees(state, source, self._objets_vises(state, plan)) as (
+            data_files,
+            data_context,
+            avis,
+        ):
             # ajustement d'un graphique précédent : on repart de son code
             previous_code = workspace.last_code_for(plan.source) if workspace is not None else None
             outcome = run_analysis(

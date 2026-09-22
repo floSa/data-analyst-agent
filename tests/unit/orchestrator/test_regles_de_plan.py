@@ -206,6 +206,109 @@ def test_une_requete_sans_source_n_est_pas_degradee(orchestrateur: Orchestrator)
     assert plan.capability == "query"
 
 
+# --- 2 bis. la source de la conversation, et ce qui lui survit ------------------
+#
+# La règle repose la source liée sur le plan à chaque tour, et c'est ce qui
+# dispense le planificateur de la redeviner. Elle avait un trou mesuré : elle
+# reposait AUSSI la source quand le modèle avait désigné un tableau du fil,
+# c'est-à-dire qu'elle jetait la seule chose que le modèle avait vue et que la
+# règle ne pouvait pas voir. 0 désignation sur 81 tours survivait
+# (`docs/memoire-de-conversation.md` §3.1) — et la docstring décrivait pourtant
+# l'exception, depuis une branche que rien n'atteignait.
+
+
+def source_avec(nom: str, colonnes: str, tmp_path: Path) -> FileSource:
+    """Une source fichier dont on choisit les COLONNES (la règle les lit)."""
+    chemin = tmp_path / f"{nom}.csv"
+    chemin.write_text(f"{colonnes}\n" + ",".join("1" for _ in colonnes.split(",")) + "\n", "utf-8")
+    return FileSource(name=nom, path=chemin)
+
+
+def fil_avec_un_tableau(tmp_path: Path, colonnes: list[str]) -> ConversationWorkspace:
+    espace = ConversationWorkspace(tmp_path / "ws", "fil-objets")
+    espace.save_table(colonnes, [[1] * len(colonnes)], "le tour d'avant")
+    return espace
+
+
+def test_un_objet_du_fil_designe_par_le_plan_survit_a_la_source_liee(
+    orchestrateur: Orchestrator, tmp_path: Path
+):
+    """« fais-moi un graphique de leur âge » porte sur les lignes qu'on vient d'extraire.
+
+    C'est le cas que le relevé montre trois fois sur trois au fil A : le modèle
+    demande `source='resultat_1'`, et c'est lui qui a raison — le tour d'avant
+    a extrait les passagères survivantes, et « leur âge » est le leur.
+    """
+    plan = Plan(capability="analyze", source="resultat_1")
+    ctx = contexte(
+        declare=[source_avec("titanic", "age,sex", tmp_path)],
+        workspace=fil_avec_un_tableau(tmp_path, ["age", "sex"]),
+        question="fais-moi un graphique de leur âge",
+        source_de_travail="titanic",
+    )
+
+    assert orchestrateur._regle_source_de_la_conversation(plan, ctx) is None
+    assert plan.source == "resultat_1"
+
+
+def test_un_objet_qui_n_a_PAS_la_colonne_demandee_ne_survit_pas(
+    orchestrateur: Orchestrator, tmp_path: Path
+):
+    """La borne, et elle vient d'un fil brut : la règle corrige de vraies erreurs.
+
+    Fil F, tour 3 : `source='resultat_1'` pour « les 5 techniciens qui sont
+    intervenus le plus souvent », sur un tableau de trois colonnes qui n'en
+    porte aucune qui s'appelle `technicien`. Sans borne, la désignation aurait
+    survécu et le tour aurait compté des techniciens dans un tableau qui n'en
+    contient pas.
+    """
+    plan = Plan(capability="query", source="resultat_1")
+    ctx = contexte(
+        declare=[source_avec("interventions", "nature,technicien", tmp_path)],
+        workspace=fil_avec_un_tableau(tmp_path, ["nature"]),
+        question="les 5 techniciens qui sont intervenus le plus souvent",
+        source_de_travail="interventions",
+    )
+
+    assert orchestrateur._regle_source_de_la_conversation(plan, ctx) is None
+    assert plan.source == "interventions"
+
+
+def test_un_objet_evince_du_contexte_ne_se_designe_pas(orchestrateur: Orchestrator, tmp_path: Path):
+    """Un tableau hors fenêtre n'est ni monté ni interrogeable : le désigner ne mène nulle part."""
+    plan = Plan(capability="analyze", source="resultat_1")
+    espace = fil_avec_un_tableau(tmp_path, ["age"])
+    espace.injected = []  # ce que fait la fenêtre quand le fil s'allonge
+    ctx = contexte(
+        declare=[source_avec("titanic", "age", tmp_path)],
+        workspace=espace,
+        question="fais-moi un graphique de leur âge",
+        source_de_travail="titanic",
+    )
+
+    orchestrateur._regle_source_de_la_conversation(plan, ctx)
+
+    assert plan.source == "titanic"
+
+
+def test_une_source_illisible_ne_disqualifie_aucune_designation(
+    orchestrateur: Orchestrator, tmp_path: Path
+):
+    """L'introspection est best-effort ici comme partout : un serveur muet ne décide rien."""
+    plan = Plan(capability="analyze", source="resultat_1")
+    absente = FileSource(name="titanic", path=tmp_path / "jamais-ecrit.csv")
+    ctx = contexte(
+        declare=[absente],
+        workspace=fil_avec_un_tableau(tmp_path, ["age"]),
+        question="fais-moi un graphique de leur âge",
+        source_de_travail="titanic",
+    )
+
+    orchestrateur._regle_source_de_la_conversation(plan, ctx)
+
+    assert plan.source == "resultat_1"
+
+
 # --- 3. reprise des features acquises -------------------------------------------
 
 

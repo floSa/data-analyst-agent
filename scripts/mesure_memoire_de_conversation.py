@@ -408,9 +408,9 @@ def poser_les_enveloppes() -> None:
 
     mount_origine = Orchestrator._mount_workspace
 
-    def _mount_workspace(state, data_files, data_context):
+    def _mount_workspace(state, data_files, data_context, objets):
         avant = len(data_context)
-        contexte, tronques = mount_origine(state, data_files, data_context)
+        contexte, tronques = mount_origine(state, data_files, data_context, objets)
         MOUCHARD.noter("montage_sandbox", contexte[avant:].strip())
         return contexte, tronques
 
@@ -430,10 +430,10 @@ def poser_les_enveloppes() -> None:
 
     decor_origine = Orchestrator._decor_de_donnees
 
-    def _decor_de_donnees(self: Orchestrator, state, source):
+    def _decor_de_donnees(self: Orchestrator, state, source, objets):
         @contextlib.contextmanager
         def enveloppe():
-            with decor_origine(self, state, source) as (fichiers, contexte, avis):
+            with decor_origine(self, state, source, objets) as (fichiers, contexte, avis):
                 if MOUCHARD.actif:
                     memoire = set()
                     workspace = state.get("workspace")

@@ -189,6 +189,46 @@ def source_nommee(question: str, catalogue: Catalog) -> str | None:
     return _nomme_dans(question, [s.name for s in catalogue.sources])
 
 
+def colonne_hors_de_l_objet(
+    question: str, colonnes_de_la_source: list[str], colonnes_de_l_objet: list[str]
+) -> str:
+    """La colonne que la question RÉCLAME et que l'objet du fil n'a pas — "" sinon.
+
+    Ce qui départage « ce tableau répond à la question » de « ce tableau est
+    simplement là ». Le planificateur désigne parfois un tableau déjà produit
+    comme source du tour, et il a parfois raison : « fais-moi un graphique de
+    leur âge » porte sur les lignes qu'on vient d'extraire. Il a parfois tort,
+    et c'est mesuré — « les 5 techniciens qui sont intervenus le plus souvent »
+    désignait un tableau de trois colonnes qui n'en porte aucune qui s'appelle
+    `technicien` (relevé de la mémoire de conversation, fil F tour 3).
+
+    La différence entre les deux ne se lit ni dans la tournure ni dans la
+    politesse : elle se lit dans les COLONNES. Une colonne que la source porte,
+    que la question nomme et que l'objet n'a pas, c'est la preuve que la
+    question sort de l'objet. Aucune, et rien ne dit qu'elle en sort.
+
+    Le pluriel de l'utilisateur comme son singulier (``_singulier``), comme
+    partout ici : la question écrit « techniciens », le schéma écrit
+    `technicien`, et exiger qu'ils coïncident au caractère près ferait dépendre
+    la règle du nombre grammatical.
+
+    Rend le NOM de la colonne fautive et non un booléen : c'est lui qui part
+    dans la trace, et une règle dont on ne peut pas dire pourquoi elle a
+    tranché ne se relit pas.
+    """
+    mots = set(replie(question).split())
+    mots |= {_singulier(mot) for mot in mots}
+    portees = {replie(colonne).strip() for colonne in colonnes_de_l_objet}
+    portees |= {_singulier(nom) for nom in portees}
+    for colonne in colonnes_de_la_source:
+        plat = replie(colonne).strip()
+        if plat in portees or _singulier(plat) in portees:
+            continue
+        if plat in mots or _singulier(plat) in mots:
+            return colonne
+    return ""
+
+
 # Au-delà de trois mots EN PLUS du nom de la source, le message dit autre chose
 # que « celle-là » : il porte une question, et c'est elle qu'il faut traiter.
 # Trois, parce que « va pour titanic, merci » en compte trois et « combien de

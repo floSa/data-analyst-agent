@@ -423,6 +423,47 @@ def test_le_dataset_nomme_et_l_unique_dataset(registre: Registry, tmp_path: Path
     assert introspection.dataset_vise("de quoi as-tu besoin ?", seul) == "inconnu_au_bataillon"
 
 
+# --- un objet du fil peut-il répondre ? ----------------------------------------
+
+
+def test_une_colonne_que_l_objet_porte_ne_le_disqualifie_pas():
+    """« leur âge » sur un tableau qui a la colonne `age` : rien ne sort de l'objet."""
+    assert (
+        introspection.colonne_hors_de_l_objet(
+            "fais-moi un graphique de leur âge", ["age", "sex", "fare"], ["age", "sex"]
+        )
+        == ""
+    )
+
+
+def test_une_colonne_reclamee_et_absente_de_l_objet_le_disqualifie():
+    """Le cas du fil F : cinq techniciens réclamés à un tableau qui n'en porte pas."""
+    assert (
+        introspection.colonne_hors_de_l_objet(
+            "les 5 techniciens qui sont intervenus le plus souvent",
+            ["nature", "technicien", "duree_indispo_min"],
+            ["station_libelle", "nature", "duree_indispo_min"],
+        )
+        == "technicien"
+    )
+
+
+def test_une_question_qui_ne_nomme_aucune_colonne_ne_disqualifie_rien():
+    """Rien ne dit qu'elle sort de l'objet : on ne l'invente pas."""
+    assert (
+        introspection.colonne_hors_de_l_objet(
+            "reprends ça et mets-le en camembert", ["nature", "technicien"], ["nature"]
+        )
+        == ""
+    )
+
+
+def test_le_nombre_grammatical_ne_decide_pas():
+    """La question écrit « natures », le schéma écrit `nature` — et l'inverse."""
+    assert introspection.colonne_hors_de_l_objet("par natures", ["nature"], ["nature"]) == ""
+    assert introspection.colonne_hors_de_l_objet("par nature", ["natures"], ["natures"]) == ""
+
+
 # --- les réponses : rien qui ne soit lu dans un artefact -----------------------
 
 

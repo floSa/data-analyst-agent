@@ -107,10 +107,10 @@ def orchestrateur(llm: ScriptedLLM, registry: Registry, **reglages) -> Orchestra
     )
 
 
-def llm_danalyse() -> ScriptedLLM:
+def llm_danalyse(source: str = "base") -> ScriptedLLM:
     return (
         ScriptedLLM()
-        .script(PLANNER, [plan_response(Plan(capability="analyze", source="base"))])
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source=source))])
         .script(ANALYSIS, [text("```python\nprint('ok')\n```")])
         .script(SYNTHESIS, [text("Voici l'analyse.")])
     )
@@ -277,7 +277,10 @@ def test_un_TABLEAU_INTERMEDIAIRE_coupe_reste_une_tranche_au_tour_suivant(
     base_sql(monkeypatch, {"ventes": [(1, "a")]})
     espion = AnalyseObservee()
     monkeypatch.setattr("data_analyst_agent.orchestrator.graph.run_analysis", espion)
-    llm = llm_danalyse()
+    # Le plan DÉSIGNE le tableau du fil, et c'est ce que « le remonter » veut
+    # dire depuis C51 : un tour qui vise la base ne le monte plus (cf.
+    # `_objets_vises`), donc il n'aurait rien à qualifier de tranche.
+    llm = llm_danalyse(source="resultat_1")
     orch = orchestrateur(llm, registry, retrieval_max_rows=2, workspace_dir=tmp_path)
 
     reponse = orch.ask("trace ce tableau", conversation_id="fil")

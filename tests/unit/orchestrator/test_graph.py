@@ -816,42 +816,69 @@ def test_analyse_en_echec_ne_livre_pas_de_figure_fantome(mini_csv: Path, registr
     assert "n'a pas abouti" in answer.answer
 
 
-def test_code_genere_accede_aux_objets_intermediaires(tmp_path: Path, registry: Registry):
-    """Le CSV mémorisé est monté dans la sandbox et annoncé au code d'analyse."""
-    # pré-remplit la mémoire avec un objet intermédiaire
+def _analyse_sur(source: str, tmp_path: Path, registry: Registry) -> ScriptedLLM:
+    """Un tour d'analyse dont le PLAN vise ``source``, sur un fil qui porte resultat_1."""
     ws = ConversationWorkspace(tmp_path, "c3")
     ws.save_table(["a", "b"], [[1, 2], [3, 4]], "un tableau précédent")
-
-    sandbox = ScriptedSandbox([SandboxResult(status="ok", stdout="ok\n", results=[])])
-    iris = REPO / "sources" / "iris.csv"
     llm = (
         ScriptedLLM()
-        .script(PLANNER, [plan_response(Plan(capability="analyze", source="iris"))])
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source=source))])
         .script(ANALYSIS, [text("```python\nprint('ok')\n```")])
         .script(SYNTHESIS, [text("Analyse faite.")])
     )
-    settings = make_settings(workspace_dir=tmp_path)
-    orchestrator = orchestrator_with(
+    orchestrator_with(
         llm,
-        catalog=Catalog(sources=[FileSource(name="iris", path=iris)]),
+        catalog=Catalog(sources=[FileSource(name="iris", path=REPO / "sources" / "iris.csv")]),
         registry=registry,
-        settings=settings,
-        sandbox=sandbox,
-    )
-    orchestrator.ask("analyse", conversation_id="c3")
-    # le prompt d'analyse mentionne le fichier intermédiaire réutilisable
-    analysis_prompt = llm.prompts_for(ANALYSIS)[0]
-    assert "resultat_1.csv" in analysis_prompt
+        settings=make_settings(workspace_dir=tmp_path),
+        sandbox=ScriptedSandbox([SandboxResult(status="ok", stdout="ok\n", results=[])]),
+    ).ask("analyse", conversation_id="c3")
+    return llm
+
+
+def test_code_genere_accede_a_l_objet_que_le_plan_DESIGNE(tmp_path: Path, registry: Registry):
+    """Le CSV mémorisé est monté dans la sandbox et annoncé au code d'analyse."""
+    llm = _analyse_sur("resultat_1", tmp_path, registry)
+
+    assert "resultat_1.csv" in llm.prompts_for(ANALYSIS)[0]
+
+
+def test_un_tour_qui_vise_la_BASE_ne_voit_pas_le_tableau_d_a_cote(
+    tmp_path: Path, registry: Registry
+):
+    """Le défaut le plus grave du relevé de C50, et il ne se voyait pas.
+
+    Les deux fichiers étaient montés côte à côte — la table de la source et le
+    tableau du tour d'avant — et rien ne disait lequel répondait à la question.
+    Le code généré ouvrait le second : « le nombre d'interventions par nature »
+    rendait « 3 cas » là où la source en porte 152, sans un mot d'avertissement,
+    parce qu'un `LIMIT 10` demandé n'est pas une coupe subie et ne lève aucun
+    drapeau. Un chiffre plausible et faux, tiré au sort entre deux fichiers.
+
+    Ce qui manquait n'était pas l'information — les deux fichiers étaient
+    annoncés au modèle — c'était l'ARBITRAGE. Il est ici : on monte ce que le
+    plan désigne, et rien d'autre.
+    """
+    llm = _analyse_sur("iris", tmp_path, registry)
+    prompt = llm.prompts_for(ANALYSIS)[0]
+
+    assert "/data/iris.csv" in prompt
+    assert "resultat_1" not in prompt
 
 
 def test_le_plafond_de_contexte_vaut_pour_le_planificateur_ET_la_sandbox(
     tmp_path: Path, registry: Registry
 ):
-    """La fenêtre s'applique aux trois axes du MÊME tour, ou pas du tout.
+    """La fenêtre s'applique au planificateur ET à ce qu'un tour peut monter.
 
-    Un objet décrit au planificateur mais absent des montages — ou l'inverse —
+    Un objet décrit au planificateur mais impossible à monter — ou l'inverse —
     donnerait au mieux un « source introuvable », au pire un `FileNotFoundError`
     au milieu du code généré.
+
+    Depuis C51 le montage suit le PLAN et non la fenêtre : ce qui se vérifie
+    ici est donc que la fenêtre borne ce qui est DÉSIGNABLE. Les trois plus
+    anciens ne sont ni décrits au planificateur ni montables ; le désigné, lui,
+    est monté — et il est le seul.
     """
     ws = ConversationWorkspace(tmp_path, "cfen")
     for tour in range(1, 6):
@@ -860,7 +887,7 @@ def test_le_plafond_de_contexte_vaut_pour_le_planificateur_ET_la_sandbox(
     sandbox = ScriptedSandbox([SandboxResult(status="ok", stdout="ok\n", results=[])])
     llm = (
         ScriptedLLM()
-        .script(PLANNER, [plan_response(Plan(capability="analyze", source="iris"))])
+        .script(PLANNER, [plan_response(Plan(capability="analyze", source="resultat_5"))])
         .script(ANALYSIS, [text("```python\nprint('ok')\n```")])
         .script(SYNTHESIS, [text("Analyse faite.")])
     )
@@ -880,7 +907,8 @@ def test_le_plafond_de_contexte_vaut_pour_le_planificateur_ET_la_sandbox(
         assert evince not in analyse
     for garde in ("resultat_4", "resultat_5"):
         assert garde in planificateur
-        assert f"{garde}.csv" in analyse
+    assert "resultat_5.csv" in analyse
+    assert "resultat_4.csv" not in analyse  # monté = désigné, pas « retenu »
     # l'éviction est dite au planificateur, pour qu'il ne propose pas l'invisible
     assert "3 tableau(x) plus ancien(s)" in planificateur
 
