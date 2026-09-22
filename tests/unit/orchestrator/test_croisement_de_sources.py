@@ -609,3 +609,105 @@ def test_la_docstring_du_plan_ne_part_pas_au_modele():
     assert "Décision de routage" in Plan.__doc__
     assert "description" not in schema
     assert "ENSEMBLE" in schema["properties"]["sources"]["description"]
+
+
+# --- la clé qui TRAVERSE le périmètre : prouvée dans les données, ou tue -----------
+
+
+def _deux_fichiers(tmp_path: Path, gauche: str, droite: str) -> list:
+    """Deux sources d'un fichier chacune, `ventes` puis `production`."""
+    un, deux = tmp_path / "un.csv", tmp_path / "deux.csv"
+    un.write_text(gauche, encoding="utf-8")
+    deux.write_text(droite, encoding="utf-8")
+    return [FileSource(name="ventes", path=un), FileSource(name="production", path=deux)]
+
+
+def _cles_traversantes(sources: list) -> list[tuple[str, str, str]]:
+    """(table, colonne, table référencée) pour les clés qui changent de source."""
+    croisement = ouvrir_le_croisement(sources, max_rows=100)
+    try:
+        tables = croisement.adapter.schema().tables
+    finally:
+        croisement.close()
+    return [
+        (t.name, fk.column, fk.ref_table)
+        for t in tables
+        for fk in t.foreign_keys
+        if t.name.split("_")[0] != fk.ref_table.split("_")[0]
+    ]
+
+
+def test_la_cle_qui_relie_les_deux_sources_est_declaree(tmp_path: Path):
+    """Ce que le croisement taisait, et qui lui coûtait un produit cartésien.
+
+    Mesuré le 2026-09-22, catalogue métier : « compare la production et les
+    ventes du VEL-04 » rendait « 27 626 unités produites, 2 751 vendues » là où
+    les oracles disent 727 et 125. Le schéma ne portait AUCUNE clé entre les deux
+    sources — deux sources séparées n'en déclarent pas — et le modèle devinait.
+    """
+    sources = _deux_fichiers(
+        tmp_path,
+        "code_produit,libelle\nVEL-01,Vélo\nVEL-02,VTT\n",
+        "code_produit,fabrique\nVEL-01,9\nVEL-01,4\nVEL-02,7\n",
+    )
+
+    assert _cles_traversantes(sources) == [("production_deux", "code_produit", "ventes_un")]
+
+
+def test_une_homonymie_ne_fait_pas_une_cle(tmp_path: Path):
+    """Même nom des deux côtés ne veut pas dire même chose — l'inclusion tranche.
+
+    `libelle` est unique dans `ventes_produits` (douze libellés de produits) et
+    existe aussi dans `production_ateliers`. « Assemblage final » n'est pas un
+    produit : sans le test d'inclusion, le croisement déclarerait une clé vers
+    une table qui ne contient rien de ce qu'on lui demande.
+    """
+    sources = _deux_fichiers(
+        tmp_path,
+        "libelle,prix\nVélo,100\nVTT,200\n",
+        "libelle,site\nAssemblage final,Nantes\n",
+    )
+
+    assert _cles_traversantes(sources) == []
+
+
+def test_deux_cotes_uniques_ne_departagent_pas(tmp_path: Path):
+    """Qui référence qui ? On ne sait pas, donc on se tait.
+
+    Déclarer une clé dans un sens choisi au hasard serait exactement la devinette
+    qu'on reproche au modèle — à ceci près qu'elle serait écrite dans le schéma,
+    donc invisible.
+    """
+    sources = _deux_fichiers(
+        tmp_path,
+        "code_produit,prix\nVEL-01,100\n",
+        "code_produit,fabrique\nVEL-01,9\n",
+    )
+
+    assert _cles_traversantes(sources) == []
+
+
+def test_aucune_cle_n_est_inventee_a_l_interieur_d_une_source(tmp_path: Path):
+    """Une source déclare ses clés ; en ajouter là où elle s'est tue, c'est la contredire."""
+    fichier = tmp_path / "seul.csv"
+    fichier.write_text("code_produit,vendu\nVEL-01,3\n", encoding="utf-8")
+    autre = tmp_path / "autre.csv"
+    autre.write_text("machine,heures\nM-001,8\n", encoding="utf-8")
+    sources = [FileSource(name="ventes", path=fichier), FileSource(name="production", path=autre)]
+
+    assert _cles_traversantes(sources) == []
+
+
+def test_une_colonne_vide_ne_fonde_aucune_cle(tmp_path: Path):
+    """Rien à inclure n'est pas une inclusion : une colonne vide se tait.
+
+    Sans cette garde, l'inclusion est vraie par vacuité — zéro valeur manquante
+    sur zéro valeur — et le schéma annoncerait une clé que rien ne relie.
+    """
+    sources = _deux_fichiers(
+        tmp_path,
+        "code_produit,libelle\nVEL-01,Vélo\nVEL-02,VTT\n",
+        "code_produit,fabrique\n,9\n,4\n",
+    )
+
+    assert _cles_traversantes(sources) == []

@@ -34,7 +34,12 @@ import pandas as pd
 
 from data_analyst_agent.agents.retrieval.catalog import Source, open_source
 from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter
-from data_analyst_agent.agents.retrieval.sql import QueryResult, SchemaInfo, TableInfo
+from data_analyst_agent.agents.retrieval.sql import (
+    ForeignKeyInfo,
+    QueryResult,
+    SchemaInfo,
+    TableInfo,
+)
 
 
 def prefixer(schema: SchemaInfo, prefixe: str) -> list[TableInfo]:
@@ -72,6 +77,112 @@ def prefixer(schema: SchemaInfo, prefixe: str) -> list[TableInfo]:
             table.model_copy(update={"name": f"{prefixe}_{table.name}", "foreign_keys": cles})
         )
     return tables
+
+
+def _une_cle_naturelle(connection, table: str, colonne: str) -> bool:
+    """La colonne IDENTIFIE-T-ELLE une ligne de cette table ? — sans NULL, sans doublon.
+
+    Le côté RÉFÉRENCÉ d'une clé étrangère doit être unique : c'est ce qui fait la
+    différence entre une jointure et une multiplication. Vérifié dans les données
+    matérialisées, pas déduit d'un nom.
+    """
+    ligne = connection.execute(
+        f'SELECT count(*), count("{colonne}"), count(DISTINCT "{colonne}") FROM "{table}"'
+    ).fetchone()
+    lignes, renseignees, distinctes = ligne
+    return lignes > 0 and renseignees == lignes == distinctes
+
+
+def _valeurs_incluses(connection, table: str, colonne: str, vers: str, vers_colonne: str) -> bool:
+    """TOUTES les valeurs de la colonne se retrouvent-elles en face ?
+
+    L'inclusion est ce qui sépare une vraie clé d'une homonymie. `libelle` existe
+    dans `ventes_produits` (unique, douze libellés de produits) comme dans
+    `production_ateliers` — et « Assemblage final » n'est pas un produit : la
+    coïncidence de nom ne survit pas à l'inclusion.
+
+    Une colonne entièrement vide n'inclut rien de significatif et ne fonde
+    aucune clé : on l'écarte plutôt que de la déclarer sur le vide.
+    """
+    gauche = f'SELECT DISTINCT "{colonne}" AS v FROM "{table}" WHERE "{colonne}" IS NOT NULL'
+    droite = f'SELECT DISTINCT "{vers_colonne}" AS v FROM "{vers}"'
+    manquantes, presentes = connection.execute(
+        f"SELECT count(*) FILTER (WHERE d.v IS NULL), count(*) "
+        f"FROM ({gauche}) s LEFT JOIN ({droite}) d ON d.v = s.v"
+    ).fetchone()
+    return presentes > 0 and manquantes == 0
+
+
+def relier_les_sources(
+    connection, decrites: list[TableInfo], sources: list[str]
+) -> list[TableInfo]:
+    """Les clés qui traversent le périmètre, DÉCLARÉES — et prouvées dans les données.
+
+    **Ce que le croisement taisait, et ce que ça coûtait.** ``prefixer`` a rendu
+    au modèle les clés INTERNES de chaque source. Restait la seule qui compte
+    dans un croisement : celle qui relie les deux. Aucun schéma ne la porte —
+    deux sources séparées ne déclarent pas de contrainte l'une vers l'autre — et
+    le modèle la devine. Mesuré le 2026-09-22, catalogue métier : « compare la
+    production et les ventes du VEL-04 » rend « 27 626 unités produites, 2 751
+    vendues » là où les oracles disent 727 et 125. Un produit cartésien, qui ne
+    lève aucune erreur et rend une phrase parfaitement lisible.
+
+    C'est la propriété que ``duckdb_excel`` revendique — « un schéma en étoile
+    dont on tait les FK oblige le modèle à deviner les jointures » — et le
+    croisement la taisait là où elle manquait le plus.
+
+    **Trois conditions, et les trois se lisent dans les DONNÉES.** Rien ici ne
+    repose sur un nom de colonne, sur une convention ou sur une liste écrite à
+    la main :
+
+    1. la colonne porte le MÊME nom des deux côtés — c'est ce qui la rend
+       candidate, et rien de plus ;
+    2. elle est une clé naturelle d'UN côté, et d'un seul — sans NULL, sans
+       doublon. Deux côtés uniques, ou aucun, et l'on ne sait pas qui référence
+       qui : on se tait plutôt que de choisir ;
+    3. toutes les valeurs de l'autre côté se retrouvent en face. C'est ce qui
+       sépare une clé d'une homonymie.
+
+    **Jamais à l'intérieur d'une source.** Ses clés sont déjà déclarées, et en
+    ajouter une inventée là où le schéma s'est tu serait contredire la source.
+
+    Rend les tables avec les clés ajoutées, dans l'ordre reçu.
+    """
+    # Où chaque nom de colonne apparaît, avec la source qui la porte. Le préfixe
+    # EST le nom de la source : c'est `ouvrir_le_croisement` qui l'a posé.
+    porteuses: dict[str, list[tuple[str, str]]] = {}
+    for table in decrites:
+        source = next((s for s in sources if table.name.startswith(f"{s}_")), "")
+        for colonne in table.columns:
+            porteuses.setdefault(colonne.name, []).append((source, table.name))
+
+    ajouts: dict[str, list[ForeignKeyInfo]] = {}
+    for colonne, lieux in porteuses.items():
+        if len({source for source, _ in lieux}) < 2:
+            continue  # la colonne ne traverse pas le périmètre
+        uniques = [
+            (source, table)
+            for source, table in lieux
+            if _une_cle_naturelle(connection, table, colonne)
+        ]
+        if len(uniques) != 1:
+            continue  # personne ne peut être référencé, ou plusieurs le peuvent
+        (source_cible, cible) = uniques[0]
+        for source, table in lieux:
+            if source == source_cible or table == cible:
+                continue
+            if _valeurs_incluses(connection, table, colonne, cible, colonne):
+                ajouts.setdefault(table, []).append(
+                    ForeignKeyInfo(column=colonne, ref_table=cible, ref_column=colonne)
+                )
+    if not ajouts:
+        return decrites
+    return [
+        t.model_copy(update={"foreign_keys": [*t.foreign_keys, *ajouts[t.name]]})
+        if t.name in ajouts
+        else t
+        for t in decrites
+    ]
 
 
 class AdaptateurCroise:
@@ -160,6 +271,9 @@ def ouvrir_le_croisement(sources: list[Source], *, max_rows: int) -> Croisement:
                 tables.append(cible)
                 if resultat.truncated:
                     tronquees.append(cible)
+    # APRÈS le chargement et AVANT le verrou d'accès externe : relier demande de
+    # LIRE les copies, et `DuckDBAdapter.__init__` ferme la connexion au disque.
+    decrites = relier_les_sources(connection, decrites, [s.name for s in sources])
     return Croisement(
         adapter=AdaptateurCroise(DuckDBAdapter(connection, tables), decrites),
         noms=[s.name for s in sources],
