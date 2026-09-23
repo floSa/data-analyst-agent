@@ -630,3 +630,258 @@ l'ouverture de source, la mémoire de conversation, le parcours de démonstratio
 ni les questions de sens. La seule qui le deviendrait est celle du choix de
 source, si l'on réparait le bord bistable en touchant `_proposer` — et c'est
 justement pourquoi ce bord est laissé tel quel ici.
+
+---
+
+# Le croisement par l'analyse : le calcul était juste, et il restait dedans
+
+Le relevé du pilote, le 2026-09-23 sur `201f035`, catalogue métier, fil lié à
+`ventes` : « compare le chiffre d'affaires par produit avec les quantités
+fabriquées » rend « L'analyse n'a pas abouti : le code produit n'a pas pu
+s'exécuter après 3 tentative(s). » Trois lectures s'offraient, et elles ne se
+réparent pas au même endroit : les deux sources ne sont pas montées ensemble
+pour l'analyse ; elles le sont mais le code ne sait pas quel fichier porte
+quoi ; elles le sont, il le sait, et la jointure manque de la clé que C56
+déclare pour le chemin SQL.
+
+**Aucune des trois.** Le relevé a été refait sur ce dépôt, en espionnant le bac
+à sable pour voir CE QUE LE CODE TENTE et ce qu'il rend.
+
+## Ce que le code généré tente, et ce qu'il en advient
+
+Quatre tirages de la phrase du pilote, dans SA condition — fil lié à `ventes`,
+catalogue métier, moteur `google/gemma-4-E4B-it-qat-w4a16-ct` sur
+`http://localhost:8100/v1` :
+
+```
+système → plan → analysis → synthesize
+analysis : 1 essai(s), 1 figure(s), statut ok
+```
+
+**4 tirages sur 4, le code s'exécute au PREMIER essai.** Il n'y a pas de
+deuxième tentative, donc pas de troisième, donc pas d'échec de la boucle de
+correction. Et le code qu'il écrit lit les bons fichiers, du premier coup :
+
+```python
+df_ventes_lignes_commande = pd.read_csv("/data/ventes_lignes_commande.csv")
+df_ventes_commandes = pd.read_csv("/data/ventes_commandes.csv")
+df_production_ordres_fabrication = pd.read_csv("/data/production_ordres_fabrication.csv")
+...
+df_ca_produit_facture = df_ca_produit[df_ca_produit["statut"] != "ANN"]
+...
+df_comparison = pd.merge(ca_par_produit, quantite_fabrique_par_produit, on="code_produit")
+```
+
+Les deux sources sont montées ensemble, préfixées ; le code sait quel fichier
+porte quoi ; il filtre les annulées ; il joint sur `code_produit`. Les trois
+hypothèses tombent une par une, et la troisième tombe deux fois — la clé du
+croisement est bien DÉCLARÉE au chemin SQL, vérifiée hors moteur :
+
+```
+production_ordres_fabrication
+    FK code_produit -> ventes_produits.code_produit
+```
+
+## Le défaut est en aval : ce chemin n'a pas de tableau
+
+Le calcul aboutit. Ce que l'utilisateur reçoit, lui, est ceci :
+
+> La comparaison révèle que 4 produits vendus n'ont pas été enregistrés comme
+> produits, notamment les accessoires (ACC-01 à ACC-04). Pour les produits
+> listés, les ventes dépassent largement la production pour les vélos.
+
+Une phrase juste, et **pas un seul des chiffres calculés**. La cause tient en
+une dissymétrie entre les deux chemins :
+
+| | chemin SQL (`query`) | chemin d'analyse (`analyze`) |
+|---|---|---|
+| ce qui est calculé | des lignes | un `DataFrame`, imprimé |
+| ce qui est SERVI | l'artefact `application/json`, rendu en tableau | une figure PNG |
+| ce que dit la phrase | elle commente le tableau | elle résume, **seule** |
+
+Le chemin SQL sert ses lignes, et sa phrase n'a qu'à les commenter. Le chemin
+d'analyse rend une image — qui ne se lit pas au chiffre près — et une synthèse
+de 1 à 4 phrases, à qui on demande de résumer et qui résume. Le `stdout` du
+conteneur, où le tableau est imprimé en toutes lettres, n'allait qu'au modèle de
+synthèse. Il n'est jamais ressorti.
+
+**Ce n'est donc pas le croisement qui échoue, c'est la restitution de
+l'analyse** — et le défaut ne tient pas à ce qu'il y ait deux sources. Une
+analyse mono-source perd ses chiffres exactement pareil.
+
+## Ce qui répare : on sert ce que le code a imprimé
+
+`_avec_ce_que_le_code_a_imprime` ajoute le `stdout` de l'exécution sous la
+phrase de synthèse, tel quel, dans un bloc.
+
+**Servi, et non redemandé au modèle.** Une consigne de plus dans le prompt de
+synthèse — « cite tous les chiffres » — aurait dépendu d'un modèle qui obéit, et
+un chiffre resservi par un modèle est un chiffre qu'il peut abîmer. Le `stdout`
+est ce que le code a produit : il est vrai sans qu'on lui fasse confiance. C'est
+le choix déjà fait pour le pied du dictionnaire, et pour le résumé déterministe
+multi-lignes.
+
+Trois cas où l'on ne fait rien, ou le moins possible : une sortie vide (une
+analyse qui ne trace qu'une figure garde sa réponse au caractère près), une
+sortie que la phrase contient déjà (on ne sert pas deux fois le même
+paragraphe), et une sortie trop longue (coupée à 3 000 caractères, et la coupe
+se dit — un extrait servi comme un tout est le défaut qu'on ferme partout
+ailleurs).
+
+## Une phrase parasite, et pourquoi on ne la corrige pas dans un prompt
+
+Le même relevé porte un second défaut, sur l'autre chemin. La réponse qui
+MARCHE — « est-ce qu'on vend plus que ce qu'on produit ? », 1 828 unités
+vendues, annulées exclues — s'ouvrait par :
+
+> Je m'excuse pour la confusion. J'ai déjà exécuté les deux requêtes
+> nécessaires dans mes étapes précédentes.
+
+Les chiffres qui suivent sont justes. C'est la forme qui fuit : le modèle
+raconte sa boucle interne à quelqu'un qui n'a demandé aucune requête, n'en a vu
+aucune, et n'a rien à excuser.
+
+**D'où elle sort.** `RetrievalResult.summary` est le DERNIER message d'un agent
+à outils, écrit après une boucle d'appels ; `_synthesize_query` le sert tel quel
+quand le résultat tient en une ligne — c'est-à-dire exactement le cas d'un
+agrégat comme celui-ci. Les autres cas sont déterministes et ne peuvent pas
+fuir.
+
+**Pourquoi pas une consigne de plus.** Une phrase ajoutée au prompt de l'agent
+SQL ou à une fiche d'outil aurait tenu sur la tournure qu'on lui aurait
+montrée — ce dépôt a déjà payé ce pari deux fois — et l'empreinte SHA-256 qui
+couvre les sept prompts et les huit fiches n'aurait plus attesté d'un socle
+stable. On coupe donc **ce qui est servi**, et non ce qui est demandé :
+`orchestrator/recit.py`.
+
+**Deux garde-fous, parce que le remède serait sinon pire que le mal.** Une
+phrase qui porte un CHIFFRE n'est jamais coupée — « j'ai exécuté une requête qui
+rend 1 828 unités » porte 1 828, et 1 828 est la réponse. Et l'on ne coupe qu'en
+TÊTE, en s'arrêtant à la première phrase qui n'est pas du récit ; si tout le
+texte en est, on le rend intact, parce qu'une réponse vide serait une régression
+et non une correction.
+
+Le marqueur est double, et il faut les deux : une première personne (`je`,
+`j'`, `mes`…) ET un mot de la mécanique du tour (`étape`, `requête`, `outil`,
+`exécuter`, `excuser`, `précédent`…). « Les deux requêtes nécessaires ont été
+exécutées » décrit le TRAVAIL et non le narrateur : sans première personne, on
+ne coupe pas.
+
+## Le relevé : le score ne bouge pas, et ce qu'il cache bouge beaucoup
+
+```
+DAA_CATALOG_PATH=sources/metier/catalogue.yaml \
+  uv run python scripts/mesure_croisement_de_sources.py --tirages 1
+```
+
+Moteur : `http://localhost:8100/v1` (`google/gemma-4-E4B-it-qat-w4a16-ct`).
+Catalogue : `sources/metier/catalogue.yaml`. Quatorze questions, un tirage.
+
+**5/14 → 5/14.** Le total est le même, et il faut le dire ainsi : **ce commit ne
+répare pas la campagne.** Ce qu'il répare est en dessous.
+
+| question | fil | avant | après | ce qui décide, après |
+|---|---|---|---|---|
+| `produites-vs-vendues` | vierge | 0/1 | **0/1** | 689, 727 rendus ; 123, 125 absents |
+| `ca-produit-vs-fabrique` | vierge | 0/1 | **0/1** | 461 absent |
+| `vel04-production-ventes` | vierge | 0/1 | **0/1** | 727, 125 absents (chemin SQL) |
+| `produites-vs-vendues-fil-lie` | `ventes` | 0/1 | **0/1** | 689, 727, 123, 125 absents |
+| `ca-produit-vs-fabrique-fil-lie` | `ventes` | 0/1 | **0/1** | 461 absent |
+| quatre questions sur fil vierge | vierge | 0/1 | **0/1** | aucune donnée regardée |
+| `vend-plus-quon-produit` (×2 fils) | les deux | 1/1 | **1/1** | — |
+| **les trois témoins** | | 1/1 | **1/1** | — |
+
+**Les trois témoins restent verts**, et c'est la moitié du relevé : la réponse
+s'allonge sur le chemin d'analyse, et rien n'a bougé sur les chemins qui ne
+passent pas par lui. `vend-plus-quon-produit` — le chemin SQL, 1 828 unités
+vendues, annulées exclues — est conforme sur les deux fils, avant comme après.
+
+### Ce que le score cache
+
+Voici `produites-vs-vendues`, APRÈS, telle que l'utilisateur la reçoit :
+
+```
+--- Comparaison des Quantités Produites vs Vendues par Produit ---
+Code Produit    |      Vendu |    Produit |      Écart
+ACC-03          |        298 |          0 |        298
+VEL-08          |        175 |        556 |       -381
+VEL-01          |        141 |        689 |       -548
+VEL-07          |        137 |        461 |       -324
+VEL-04          |        131 |        727 |       -596
+```
+
+La table entière, les douze produits, 689 et 727 et 461 compris. Et **141 et
+131 pour VEL-01 et VEL-04** : ce sont exactement les deux chiffres du piège du
+dictionnaire — les quantités vendues SANS le filtre des annulées, là où les
+oracles attendent 123 et 125.
+
+Le tour d'avant rendait, sur le même défaut : « les ventes dépassent largement
+la production pour les vélos ». Juste, invisible, invérifiable. **Le même
+chiffre faux, le même tour, et il se voit maintenant.** C'est la propriété que
+ce dépôt poursuit depuis C51 — « un chiffre faux et plausible, donc
+invisible » — appliquée au chemin qui ne l'avait pas.
+
+### Ce qui reste, et où ça se répare
+
+Deux causes distinctes, toutes deux dans le code que le modèle ÉCRIT, et toutes
+deux désormais lisibles dans la réponse :
+
+1. **Le filtre des annulées est oublié sur les quantités.** Le dictionnaire de
+   `ventes` est bien injecté — le même tour l'applique correctement au chiffre
+   d'affaires, et rate la quantité. `produites-vs-vendues`.
+2. **Le code imprime un EXTRAIT là où la question demande chaque produit.**
+   `ca-produit-vs-fabrique` rend un « Top 5 par quantité fabriquée » où VEL-07
+   et ses 461 unités arrivent septièmes : le chiffre n'est pas perdu en route,
+   il n'est jamais calculé pour l'affichage.
+
+La seconde se réparerait dans la règle 2 de `prompts/analysis.txt` (« Termine
+par des print(...) explicites des valeurs demandées ») — ce qui demande de
+mettre à jour l'empreinte SHA-256 du prompt dans le même commit, et rend dues
+les cinq campagnes qui passent par l'analyse. Ce n'est pas fait ici.
+
+**Et quatre questions sur fil vierge n'atteignent toujours pas le croisement**
+(`system → plan → synthesize`, l'inventaire servi) : c'est le bord que C57 a
+laissé, le planificateur qui rend `source=''`. Inchangé, et inchangé
+volontairement.
+
+### Les campagnes dues
+
+Séquentielles, jamais de front. Moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue imprimé en tête de chaque
+relevé.
+
+| campagne | catalogue | repère (C57) | relevé du 2026-09-23 |
+|---|---|---|---|
+| croisement de sources (1 tirage) | `sources/metier/` | 5/14 avant ce commit | **5/14** |
+| surface conversationnelle (1ʳᵉ passe) | par défaut | 43/44 | **43/44** |
+| surface conversationnelle (2ᵉ passe) | par défaut | 44/44 | **43/44** |
+| questions métier (3 tirages) | `sources/metier/` | 35/36 | **33/36** |
+
+**Les deux passes de la surface conversationnelle ont le même et unique écart :
+`choix-entre-deux-sources` (« titanic ou iris ? »).** C'est le bord bistable que
+C57 a laissé en l'état, tombé sur sa face rouge aux deux passes. Les 43 autres
+questions sont conformes des deux côtés, et les six témoins sur les DONNÉES sont
+6/6 aux deux passes — dont « quand je te donne un âge, tu prédis quoi ? », qui
+repart bien en prédiction.
+
+**`questions-metier` rend 33/36, et l'écart entier est `ca-par-canal`**, qui
+passe de 2/3 à 0/3. C'est la question que C57 signalait déjà comme
+instable — « une analyse mono-source dont le code n'aboutit pas dans le
+délai ». Les onze autres questions sont 3/3.
+
+Elle a été sondée, essai par essai, et la cause n'est ni les données ni le
+délai :
+
+```
+analysis : 3 essai(s), 0 figure(s), statut error
+essai 1  ImportError  from matplotlib.ticker import Func
+essai 2  ImportError  from matplotlib.ticker import Func as MatplotlibFunc
+essai 3  ImportError  Import tabulate failed   (DataFrame.to_markdown)
+```
+
+Deux essais sur trois répètent le même symbole inventé — `matplotlib.ticker`
+n'expose pas de `Func` — et le troisième bute sur `tabulate`, qui n'est pas dans
+l'image du bac à sable alors que `to_markdown()` est une tournure naturelle. Le
+correctif de ce commit ne peut rien pour ces tours : il sert ce que le code a
+imprimé, et ce code-là n'a rien imprimé. Ce qui les réparerait est ailleurs —
+la liste des bibliothèques de `prompts/analysis.txt`, ou l'image du bac à sable.
