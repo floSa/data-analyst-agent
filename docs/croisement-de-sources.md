@@ -604,3 +604,29 @@ toujours pas le croisement (`system → plan → synthesize`, aucune donnée
 regardée), et `produites-vs-vendues` l'atteint avec des chiffres faux. La
 capacité reste partielle ; ce commit répare l'écart entre le banc et le chemin
 normal, pas la capacité entière.
+
+### Les quatre campagnes dues, et ce qu'elles disent
+
+| campagne | catalogue | repère | relevé du 2026-09-23 |
+|---|---|---|---|
+| surface conversationnelle (1ʳᵉ passe) | par défaut | 42/44 | **43/44** |
+| surface conversationnelle (2ᵉ passe) | par défaut | 42/44 | **44/44** |
+| fils de prédiction | `sources/metier/` | 13/14 | **13/14** |
+| croisement de sources | `sources/metier/` | 12/42 | **20/42** |
+| questions métier | `sources/metier/` | 36/36 | **35/36** |
+
+**`fils-de-prediction` est au repère exact** : le seul fil qui ne tient pas est
+`i-inventaire-du-fil`, 0/3, sur le même tour et la même cause qu'avant — le
+tableau `resultat_1` du fil n'est pas nommé. Les treize autres tiennent 3/3.
+
+**`questions-metier` rend 35/36, et l'écart est celui que C56 avait déjà
+relevé** : `ca-par-canal`, au troisième tirage, une analyse mono-source dont le
+code n'aboutit pas dans le délai (58 s). Elle ne passe ni par le plan
+multi-source, ni par le croisement, ni par la seconde lecture — et les deux
+autres tirages de la même question sont conformes. 210 appels LLM pour 36 tours.
+
+**Aucune autre campagne n'est due** : rien de ce qui a bougé ne touche
+l'ouverture de source, la mémoire de conversation, le parcours de démonstration
+ni les questions de sens. La seule qui le deviendrait est celle du choix de
+source, si l'on réparait le bord bistable en touchant `_proposer` — et c'est
+justement pourquoi ce bord est laissé tel quel ici.
