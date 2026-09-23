@@ -3219,7 +3219,54 @@ class Orchestrator:
             f"Figures produites : {figures}"
         )
         agent = Agent(system_prompt=prompts.gabarit(prompts.SYNTHESIS))
-        return agent.run_sync(context, model=self.model).output
+        phrase = agent.run_sync(context, model=self.model).output
+        return self._avec_ce_que_le_code_a_imprime(phrase, analysis.execution.stdout)
+
+    # Ce qu'on sert du `stdout` d'une analyse. Assez pour une comparaison par
+    # produit — douze lignes et leurs colonnes tiennent largement dedans —
+    # sans qu'une boucle bavarde puisse remplir la fenêtre de chat.
+    _IMPRIME_MAX_CARACTERES = 3000
+
+    @classmethod
+    def _avec_ce_que_le_code_a_imprime(cls, phrase: str, stdout: str) -> str:
+        """La phrase du modèle, PUIS ce que le code a réellement imprimé.
+
+        **Le défaut que ceci ferme est mesuré**, 2026-09-23, catalogue métier,
+        sur les croisements qui passent par l'analyse. « compare les quantités
+        produites et les quantités vendues par produit » : le code s'exécute au
+        premier essai, joint `ventes_lignes_commande` à
+        `production_ordres_fabrication` sur `code_produit`, filtre les annulées,
+        et IMPRIME le tableau des douze produits. L'utilisateur, lui, reçoit
+        « les ventes dépassent largement la production pour les vélos » — une
+        phrase juste, sans un seul des chiffres calculés. Sur six croisements
+        passés par l'analyse, aucun ne rendait ses chiffres.
+
+        **La cause n'est ni le montage ni la jointure**, qui sont bons : c'est
+        que ce chemin n'a PAS d'équivalent du tableau. Le chemin SQL sert ses
+        lignes en artefact `application/json` et la phrase n'a qu'à les
+        commenter ; le chemin d'analyse rend une figure — une image ne se lit
+        pas au chiffre près — et une synthèse de 1 à 4 phrases, à qui on demande
+        de résumer et qui résume. Le calcul était juste, et il restait dans le
+        conteneur.
+
+        **Servi tel quel, et non redemandé au modèle.** Une consigne de plus
+        dans le prompt de synthèse aurait dépendu d'un modèle qui obéit, et le
+        chiffre resservi par un modèle est un chiffre qu'il peut abîmer. Le
+        `stdout` est ce que le code a produit : il est vrai sans qu'on lui fasse
+        confiance. C'est le choix déjà fait pour le pied du dictionnaire.
+
+        Vide, déjà contenu dans la phrase, ou trop long : dans les trois cas on
+        fait le moins possible — rien, rien, et une coupe qui se dit.
+        """
+        imprime = stdout.strip()
+        if not imprime or imprime in phrase:
+            return phrase
+        if len(imprime) > cls._IMPRIME_MAX_CARACTERES:
+            imprime = (
+                f"{imprime[: cls._IMPRIME_MAX_CARACTERES]}\n"
+                f"[…] sortie coupée à {cls._IMPRIME_MAX_CARACTERES} caractères."
+            )
+        return f"{phrase}\n\nCe que le code a calculé :\n\n```\n{imprime}\n```"
 
     @staticmethod
     def _format_prediction(outcome: InferenceOutcome) -> str:

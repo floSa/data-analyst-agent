@@ -213,7 +213,10 @@ def test_aucun_avis_quand_rien_n_est_coupe(registry: Registry, monkeypatch):
     etape = next(s for s in reponse.trace if s.node == "analysis")
     assert etape.truncated is False
     assert etape.truncation == ""
-    assert reponse.answer == "Voici l'analyse."
+    # La phrase de synthèse ouvre la réponse, et rien ne s'y greffe SAUF ce que
+    # le code a imprimé — qui n'est pas un avis mais le calcul lui-même.
+    assert reponse.answer.startswith("Voici l'analyse.")
+    assert "Données tronquées" not in reponse.answer
 
 
 # --- la tranche se qualifie elle-même, PARTOUT où elle sort ---------------------
@@ -305,4 +308,5 @@ def test_un_tableau_intermediaire_ENTIER_ne_se_qualifie_de_rien(
 
     etape = next(s for s in reponse.trace if s.node == "analysis")
     assert etape.truncated is False
-    assert reponse.answer == "Voici l'analyse."
+    assert reponse.answer.startswith("Voici l'analyse.")
+    assert "Données tronquées" not in reponse.answer
