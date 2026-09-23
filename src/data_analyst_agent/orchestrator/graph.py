@@ -85,6 +85,7 @@ from data_analyst_agent.orchestrator.rappel import (
     designation_dun_artefact_passe,
     run_rappel,
 )
+from data_analyst_agent.orchestrator.recit import sans_le_recit_des_etapes
 from data_analyst_agent.orchestrator.systeme import (
     ResultatSysteme,
     ontologies_visees,
@@ -3157,7 +3158,12 @@ class Orchestrator:
             if result.truncated:
                 phrase += " (résultat tronqué par la limite de lignes)"
             return phrase, "résumé déterministe (multi-lignes)"
-        return retrieval.summary, "résumé de la récupération"
+        # Le résumé est le DERNIER message d'un agent à outils, et il lui arrive
+        # de raconter sa boucle avant d'en venir aux chiffres. On retire ce
+        # récit de tête ici, sur ce qui est SERVI : une consigne de plus dans le
+        # prompt de l'agent SQL n'aurait tenu que sur la phrase montrée, et
+        # l'empreinte des sept prompts n'aurait plus rien attesté (cf. `recit`).
+        return sans_le_recit_des_etapes(retrieval.summary), "résumé de la récupération"
 
     @staticmethod
     def _sur_quoi_classe(sql: str | None) -> str:
