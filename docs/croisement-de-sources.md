@@ -521,3 +521,86 @@ avant tout changement, en rend 1/3. Un score de banc à trois tirages n'est pas
 une constante, et une ligne qui bouge d'un tirage ne prouve rien à elle seule.
 C'est pourquoi ce relevé dit le **genre** de l'échec, qui lui a bougé de sept
 questions à trois.
+
+## Le banc et le chemin normal ne posaient pas la même question
+
+Le banc rend `vend-plus-quon-produit` à 3/3. Le pilote, sur le chemin qu'un
+utilisateur emprunte — catalogue métier, fil déjà lié à `ventes`, conversation
+neuve, deux tirages — obtient :
+
+    system → plan → retrieval → synthesize
+    plan : query sur `ventes`      retrieval : 0 requête(s), aucune n'a abouti
+    « Le dictionnaire indique que la table `production` n'est pas disponible
+      dans cette source… il est impossible de comparer. »
+
+**Ce que le banc posait et que le chemin normal ne pose pas : rien. C'est
+l'inverse.** Le chemin normal pose une chose de plus — `source_de_travail`. Le
+3/3 cité est celui de la variante à fil **vierge** ; la variante à fil lié
+existe au banc depuis C56 (`vend-plus-quon-produit-fil-lie`) et elle y était
+**0/3**. Les deux mesures sont justes, elles portent sur deux conditions, et
+**celle du pilote est celle que l'utilisateur rencontre** : dès qu'une source
+est liée au fil, l'API la repasse à chaque tour. Le 12/42 se relit donc en
+séparant les deux familles, et ce sont les lignes `-fil-lie` qui disent ce que
+vaut la capacité en service.
+
+### Le mécanisme : une phrase au singulier
+
+Un fil lié fait ajouter au prompt du planificateur, par `_contexte_de_source` :
+
+> CONTEXTE DE CONVERSATION : cette conversation travaille sur la source
+> 'ventes'. Prends-la comme `source`, sauf si le message en désigne
+> explicitement une autre.
+
+Le modèle l'applique. Et `production` n'est **pas** désignée explicitement dans
+« est-ce qu'on vend plus que ce qu'on produit ? » : elle l'est par un verbe. Le
+plan ressort avec un seul nom, `plan.sources` reste vide, et `_perimetre_croise`
+n'a rien à croiser — l'union des deux désignations est vide des deux côtés.
+
+### Ce qui répare : on retire la phrase, une fois
+
+`_relire_sans_la_source_du_fil` repose la même question sans le contexte de
+source, et ne garde la seconde lecture **que** si elle désigne un périmètre.
+Même discipline que `_relire_sans_la_clause_dabsence` : la première lecture
+décide, la seconde ne peut qu'ajouter ce que la clause avait fait tomber. On ne
+réécrit pas la phrase — on la retire pour une lecture, ce qui ne demande au
+modèle aucune formulation nouvelle.
+
+**Quatre conditions bornent le coût à un appel LLM** sur les seuls tours où le
+plan ne fait qu'échoer ce qu'on vient de lui dire : un fil lié ; une capacité
+qui interroge une source ; un plan qui désigne exactement la source du fil et
+rien d'autre ; et une seconde lecture qui, elle, désigne un périmètre. Une
+source **imposée** par l'appelant (`source=`) la ferme, comme elle ferme la
+cession du plancher : quelqu'un a tranché, et élargir contre cette décision
+serait la défaire en silence.
+
+### Le relevé, après la seconde lecture
+
+Mesuré le 2026-09-23, catalogue métier, trois tirages par question, moteur
+`http://localhost:8100/v1` (`google/gemma-4-E4B-it-qat-w4a16-ct`).
+
+**12/42 → 20/42.** Et le total dit moins que le déplacement qu'il cache : ce
+sont les lignes `-fil-lie`, celles du chemin normal, qui bougent.
+
+| question | fil | avant (C56) | après | ce qui décide |
+|---|---|---|---|---|
+| `vend-plus-quon-produit-fil-lie` | `ventes` | 0/3 | **3/3** | — |
+| `ca-produit-vs-fabrique-fil-lie` | `ventes` | 0/3 | **3/3** | — |
+| `produites-vs-vendues-fil-lie` | `ventes` | 0/3 | **0/3** | atteinte ; chiffres faux |
+| `vend-plus-quon-produit` | vierge | 3/3 | **3/3** | — |
+| `ca-produit-vs-fabrique` | vierge | — | **2/3** | « annulée » non dit une fois |
+
+**Les deux phrases du pilote, dans SA condition, passent de 0/3 à 3/3.** C'est
+exactement ce que la seconde lecture devait rendre, et rien d'autre : sur fil
+vierge, où elle ne se déclenche pas, les scores sont inchangés.
+
+**Les trois témoins restent verts 3/3** : « Quel chiffre d'affaires avons-nous
+réalisé en 2025 ? » se joue sur `ventes` seule, « Que signifie le statut ANN ? »
+reste une question de sens, et « ventes ou production ? » rend toujours la
+question du choix sans rien croiser. La relecture ne leur a rien pris : aucune
+n'a de périmètre à désigner, donc aucune ne garde la seconde lecture.
+
+**Ce qui n'est pas réparé, et il faut le dire.** Quatre questions n'atteignent
+toujours pas le croisement (`system → plan → synthesize`, aucune donnée
+regardée), et `produites-vs-vendues` l'atteint avec des chiffres faux. La
+capacité reste partielle ; ce commit répare l'écart entre le banc et le chemin
+normal, pas la capacité entière.

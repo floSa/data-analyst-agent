@@ -711,3 +711,95 @@ def test_une_colonne_vide_ne_fonde_aucune_cle(tmp_path: Path):
     )
 
     assert _cles_traversantes(sources) == []
+
+
+# --- la source du fil, et la seconde lecture qui la retire -----------------------
+
+
+def test_la_source_du_fil_est_relue_quand_le_plan_ne_fait_que_l_echoer(tmp_path: Path):
+    """Le relevé du pilote : fil lié à `ventes`, et le croisement ne se déclenchait pas.
+
+    Le banc pose ces questions sur un fil VIERGE ; l'utilisateur, lui, les pose
+    sur un fil déjà lié. La phrase que `_contexte_de_source` ajoute alors au
+    prompt est au singulier — « Prends-la comme `source` » —, le plan ne porte
+    qu'un nom, et il n'y a rien à croiser. On retire la phrase, une fois.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="ventes")),
+            plan_response(Plan(capability="query", sources=["ventes", "production"])),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(
+        _etat("est-ce qu'on vend plus que ce qu'on produit ?", source_in="ventes")
+    )
+
+    assert rendu["plan"].source == "ventes, production"
+    assert "seconde lecture sans la source du fil" in rendu["trace"][0].detail
+
+
+def test_une_seconde_lecture_sans_perimetre_laisse_le_premier_plan(tmp_path: Path):
+    """L'autre bord : la relecture ne PEUT que croiser, jamais changer d'avis.
+
+    Un tour ordinaire sur un fil lié — « combien on a vendu ce mois-ci ? » —
+    paie la relecture et garde son plan. C'est ce qui rend le chemin sûr : ce
+    qui se troque est un périmètre manquant, jamais une source contre une autre.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="ventes")),
+            plan_response(Plan(capability="query", source="production")),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat("combien on a vendu ?", source_in="ventes"))
+
+    assert rendu["plan"].source == "ventes"
+    assert "seconde lecture" not in rendu["trace"][0].detail
+
+
+def test_un_plan_qui_designe_deja_deux_sources_ne_se_relit_pas(tmp_path: Path):
+    """Rien à reprendre : le planificateur a vu le périmètre malgré la phrase."""
+    llm = ScriptedLLM().script(
+        PLANNER, [plan_response(Plan(capability="query", sources=["ventes", "production"]))]
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat(CROISEMENT, source_in="ventes"))
+
+    assert rendu["plan"].source == "ventes, production"
+    assert len(llm.prompts_for(PLANNER)) == 1
+
+
+def test_une_source_imposee_ferme_la_seconde_lecture(tmp_path: Path):
+    """`source=` est un paramètre d'API : on ne l'élargit pas en silence.
+
+    Le même garde-fou que sur la cession du plancher, et pour la même raison :
+    c'est le seul autre endroit où un périmètre s'ouvrirait sans que personne
+    l'ait demandé.
+    """
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", source="ventes"))])
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(
+        _etat(CROISEMENT, source_in="ventes", source_name="ventes"),
+    )
+
+    assert rendu["plan"].source == "ventes"
+    assert len(llm.prompts_for(PLANNER)) == 1
+
+
+def test_un_fil_vierge_ne_paie_aucune_seconde_lecture(tmp_path: Path):
+    """Sans source de travail, il n'y a pas de phrase à retirer — donc rien à relire."""
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", source="ventes"))])
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat("combien on a vendu ?", source_in=None))
+
+    assert rendu["plan"].source == "ventes"
+    assert len(llm.prompts_for(PLANNER)) == 1

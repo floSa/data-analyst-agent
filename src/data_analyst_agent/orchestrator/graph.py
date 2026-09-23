@@ -1658,6 +1658,13 @@ class Orchestrator:
                 **mesures,
             )
         ctx = self._contexte_du_plan(state)
+        # La source du fil est une phrase du prompt, et elle est au SINGULIER :
+        # un tour qui croise deux sources ressort avec la seule source liée.
+        # On la retire, une fois, et on ne garde la relecture que si elle
+        # désigne un périmètre (cf. ``_relire_sans_la_source_du_fil``).
+        sans_le_fil = self._relire_sans_la_source_du_fil(plan, ctx, state, mesures)
+        if sans_le_fil is not None:
+            plan = sans_le_fil
         question = self._appliquer_les_regles(plan, ctx)
         relue = self._relire_sans_la_clause_dabsence(plan, ctx, system_prompt, state, mesures)
         if relue:
@@ -1666,6 +1673,8 @@ class Orchestrator:
         if question is not None:
             return self._clarify(plan, question, start, **mesures) | {"source_out": retenue}
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
+        if sans_le_fil is not None:
+            detail += " — seconde lecture sans la source du fil"
         if relue:
             detail += f" — seconde lecture sans « {relue} »"
         return {
@@ -1674,6 +1683,69 @@ class Orchestrator:
             "avis_de_source": avis,
             "trace": [self._step("plan", detail, start, **mesures)],
         }
+
+    def _relire_sans_la_source_du_fil(
+        self, plan: Plan, ctx: PlanContext, state: OrchestratorState, mesures: dict
+    ) -> Plan | None:
+        """Repose la MÊME question sans la source du fil — ``None`` s'il n'y a rien à reprendre.
+
+        **Le banc et le chemin normal ne posaient pas la même question, et c'est
+        tout l'écart.** « est-ce qu'on vend plus que ce qu'on produit ? » rend
+        3/3 au banc, sur un fil VIERGE ; le pilote, sur le chemin qu'un
+        utilisateur emprunte — un fil déjà lié à `ventes` —, obtient
+        ``plan : query sur ventes`` puis ``retrieval : 0 requête(s)``, et « la
+        table `production` n'est pas disponible dans cette source ».
+
+        **Ce que le fil lié ajoute est une phrase, et elle est au singulier.**
+        ``_contexte_de_source`` dit au planificateur : « cette conversation
+        travaille sur la source 'ventes'. Prends-la comme `source`, sauf si le
+        message en désigne explicitement une autre. » Le modèle l'applique, et
+        `production` n'est pas désignée EXPLICITEMENT — elle l'est par le verbe
+        « produit ». Le plan ne porte donc qu'un nom, ``plan.sources`` reste
+        vide, et ``_perimetre_croise`` n'a rien à croiser. Les deux mesures sont
+        justes ; celle qui décrit ce que l'utilisateur rencontre est celle du
+        pilote.
+
+        **On ne répare pas en réécrivant cette phrase** — ni elle ni aucune
+        autre du prompt : on la RETIRE, une fois, pour une seconde lecture. Le
+        planificateur a déjà dit ce qu'il voyait avec elle ; on lui demande ce
+        qu'il voit sans, et on ne garde la seconde lecture QUE si elle désigne
+        un périmètre. Même discipline que
+        ``_relire_sans_la_clause_dabsence`` : la première lecture décide, la
+        seconde ne peut qu'ajouter ce que la clause avait fait tomber.
+
+        **Quatre conditions, et il les faut toutes** — c'est ce qui borne le
+        coût à un appel LLM sur les seuls tours où le plan ne fait qu'ÉCHOER ce
+        qu'on vient de lui dire :
+
+        1. un fil lié — sans source de travail, il n'y a pas de phrase à retirer ;
+        2. une capacité qui interroge une source ;
+        3. le plan désigne EXACTEMENT la source du fil, et rien d'autre : ni un
+           périmètre dans ``sources``, ni un second nom empaqueté dans
+           ``source``. Un plan qui a déjà vu deux sources n'a rien à relire, et
+           un plan qui en désigne une AUTRE a désobéi à la phrase — donc il l'a
+           lue, et la retirer n'apprendrait rien ;
+        4. la seconde lecture désigne un périmètre. Sinon on garde le premier
+           plan, et le tour se déroule comme si cette méthode n'existait pas.
+
+        **Une source IMPOSÉE par l'appelant la ferme**, comme elle ferme
+        ``_le_plancher_cede_au_perimetre`` : ``source=`` est un paramètre
+        d'API, quelqu'un a tranché, et ouvrir un périmètre contre cette
+        décision serait la défaire en silence. La source du fil, elle, n'est pas
+        une décision sur CE tour : c'est le souvenir du précédent.
+        """
+        if ctx.source_imposee or not ctx.source_de_travail:
+            return None
+        if plan.capability not in self._SOURCE_CAPABILITIES or plan.sources:
+            return None
+        designee = introspection.sources_nommees(plan.source or "", ctx.catalogue_declare)
+        if len(designee) != 1 or designee[0].name != ctx.source_de_travail:
+            return None
+        prompt, _ = self._peser_le_prompt({**state, "source_in": None})
+        second = self._demander_un_plan(prompt, state, dict(mesures))
+        if second is None or not self._perimetre_croise(second, ctx):
+            return None
+        return second
 
     def _relire_sans_la_clause_dabsence(
         self,
