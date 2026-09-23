@@ -314,6 +314,58 @@ def demande_une_periode(question: str) -> bool:
     )
 
 
+# Ce par quoi un message demande une PRÉDICTION. Un seul radical, et il couvre
+# la famille entière — « prédis », « prédire », « prédit », « prédiction »,
+# « prédictif » : le verbe et ses dérivés partagent leur début, et c'est
+# justement ce qu'un radical sait dire qu'une liste de formes ne dirait pas.
+#
+# Il ne sert JAMAIS seul (cf. ``modele_designe_par_ses_features`` et la règle
+# qui l'emploie) : un mot n'a pas à décider d'un routage, et celui-ci se
+# contente d'écarter les tours où la question ne parle pas de prédire.
+RADICAUX_DE_LA_PREDICTION = ("predi",)
+
+
+def demande_une_prediction(question: str) -> bool:
+    """Le message parle-t-il de PRÉDIRE — le verbe, ou le nom de l'acte ?
+
+    Même lecture que ``demande_une_periode``, et même portée : un mot ne classe
+    rien tout seul. Celui-ci est la première des deux conditions d'une règle du
+    plan, la seconde étant qu'un modèle du registre soit désigné par les
+    attributs que le message nomme.
+    """
+    return any(
+        mot.strip(_PONCTUATION).startswith(radical)
+        for mot in replie(question).split()
+        for radical in RADICAUX_DE_LA_PREDICTION
+    )
+
+
+def modele_designe_par_ses_features(question: str, datasets: list[str]) -> str | None:
+    """Le modèle dont le message NOMME des attributs, s'il n'y en a qu'un.
+
+    **Un modèle se désigne aussi par ce qu'il attend**, et pas seulement par son
+    nom. « quand je te donne un âge, tu prédis quoi ? » ne nomme aucun dataset ;
+    il nomme ``age``, que le schéma de ``titanic`` déclare et qu'aucun autre ne
+    déclare — ``california_housing`` porte ``house_age``, qui est un autre mot.
+
+    **Lu dans les schémas de features, jamais dans une table écrite à la main.**
+    ``SCHEMAS`` est la source de vérité des attributs (CADRAGE §7-③) : un modèle
+    ajouté au registre est désigné par ses champs sans qu'on touche ici, et un
+    champ renommé cesse de désigner le sien le jour où il est renommé.
+
+    ``None`` dès que PLUSIEURS modèles sont désignés, comme ``_nomme_dans`` :
+    deux cibles ne font pas une cible, et en choisir une serait deviner.
+    """
+    plat = replie(question)
+    designes = [
+        dataset
+        for dataset in datasets
+        if dataset in SCHEMAS
+        and any(f" {champ} " in plat for champ in SCHEMAS[dataset].model_fields)
+    ]
+    return designes[0] if len(designes) == 1 else None
+
+
 def dataset_vise(question: str, registre: Registry) -> str | None:
     """Le modèle que la question nomme, ou l'unique modèle du registre."""
     nom = _nomme_dans(question, registre.datasets)

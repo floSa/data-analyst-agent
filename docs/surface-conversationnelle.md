@@ -4066,3 +4066,109 @@ Quarante-quatre questions : trente-huit méta et six témoins. Deux campagnes le
 La seule qui manque, les deux fois, est `choix-entre-deux-sources` (§26.4) : le
 plan sort à `source=''` et l'inventaire est servi à qui hésitait entre deux
 noms. C'est le bord bistable du §26, compté.
+
+## 28. Un témoin qui tenait à une phrase que personne n'avait envoyée
+
+`temoin-quand-je-te-donne-un-age` a été inscrit par C55 pour surveiller le
+plancher des dates : « quand » ouvre une hypothèse aussi bien qu'une période, et
+`RADICAUX_DU_TEMPS` l'exclut délibérément. Quelques heures plus tard, C56 l'a
+fait passer au rouge — 2/2, deux campagnes, déterministe — **sans toucher au
+plancher qu'il surveille**.
+
+### Le fil brut des deux côtés
+
+Relevé le 2026-09-23, catalogue par défaut, conversation neuve :
+
+| | sur `f5651f7` (avant C56) | sur `85104d4` (après C56) |
+|---|---|---|
+| nœuds | `system → plan → inference → synthesize` | `system → plan → synthesize` |
+| système | aucun outil appelé — passe au planificateur | **idem** |
+| plan | `predict`, `dataset='titanic'` | `query`, aucune source |
+| synthèse | inférence | **clarification** |
+| réponse | « Je ne peux pas encore lancer la prédiction titanic : sex manquante… » | « J'ai accès à 2 source(s) de données : titanic… iris… » |
+
+Le plancher des dates ne s'est déclenché ni avant ni après : la trace le dit
+(`aucun outil appelé`), et l'inventaire n'arrive pas par lui. Il arrive par
+`_regle_choisir_la_source`, qui pose le catalogue en question dès qu'une
+`query` ressort sans source. **L'oracle `exigence_hors_de_l_inventaire` a donc
+attrapé ce qu'il devait attraper, par une porte qu'il ne surveillait pas.**
+
+### La cause est le contrat de sortie, et il y en a deux
+
+C56 a changé trois choses. La troisième — la clé de jointure déclarée
+(`9f87d81`) — ne touche pas ce chemin. Les deux autres touchent toutes deux le
+JSON Schema que le planificateur lit : le champ `Plan.sources` (`2fa8c8b`) et le
+retrait de la `description` que pydantic tirait de la docstring (`aa0c1c4`).
+
+Les quatre cases, mesurées ensemble, planificateur seul, prompt composé comme le
+nœud du plan le compose, trois tirages par case, la même question :
+
+| champ `sources` | description tirée de la docstring | capacité rendue |
+|---|---|---|
+| absent | présente | `predict`, `dataset='titanic'` — **3/3** |
+| absent | absente | `query`, sans source — **3/3** |
+| présent | présente | `query`, `source='titanic'` — **3/3** |
+| présent | absente (le contrat d'aujourd'hui) | `query`, sans source — **3/3** |
+
+**Le vert d'avant tenait à la CONJONCTION des deux**, et l'une d'elles était une
+phrase écrite pour qui lit le code, promue en texte de schéma par pydantic sans
+que personne l'ait décidé. Retirer l'une OU l'autre suffisait à le perdre. Ce
+n'est donc pas « C56 a cassé un témoin » : c'est « un témoin reposait sur un
+équilibre que personne ne tenait ».
+
+L'ordre de déclaration n'y est pour rien — `sources` déclaré en dernier rend
+`query` 3/3 lui aussi. Et on ne répare pas en rendant une phrase au schéma :
+`aa0c1c4` a mesuré ce que cette phrase-là coûte au croisement (6/6 dans chaque
+sens), et une troisième rédaction, c'est chercher celle qui plaît au modèle du
+jour.
+
+### Ce qui répare : une règle du plan, deux conditions
+
+`_regle_relire_une_requete_en_prediction` relit en `predict` une `query` qui
+ressort **sans source**, quand deux conditions sont réunies :
+
+1. le message parle de prédire (`introspection.demande_une_prediction`, un
+   radical, `predi`) ;
+2. il nomme les attributs d'**un** modèle du registre, et d'un seul
+   (`modele_designe_par_ses_features`, lu dans `SCHEMAS`). « un âge » désigne
+   `titanic`, qui déclare `age` ; `california_housing` déclare `house_age`, qui
+   est un autre mot.
+
+Aucune ne suffit seule, et c'est ce qui tient les voisines : « quel est l'âge du
+passager le plus âgé ? » nomme l'attribut et ne parle pas de prédire ; « quelle
+est la précision de tes prédictions ? » parle de prédire et ne nomme aucun
+attribut.
+
+**Le prix est borné par l'endroit où la règle est posée** : juste avant
+`_regle_choisir_la_source`, elle ne voit que les tours qu'on allait renvoyer en
+proposition. Ce qui se troque est une question posée à l'utilisateur contre une
+réponse — jamais une réponse contre une autre. Un périmètre croisé la ferme, une
+source retenue la ferme, un catalogue d'une seule source la ferme.
+
+Ni prompt ni fiche d'outil n'a bougé.
+
+### Le relevé de la surface, deux passes
+
+Mesuré le 2026-09-23, catalogue par défaut (`sources/catalogue.yaml` —
+`titanic`, `iris`), moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), conversation neuve par question.
+
+| passe | questions méta | témoins | total |
+|---|---|---|---|
+| 1 | 37/38 | 6/6 | **43/44** |
+| 2 | 38/38 | 6/6 | **44/44** |
+
+**`temoin-quand-je-te-donne-un-age` est vert 2/2**, et par le chemin d'avant :
+`predict` sur `titanic`, puis la relance de slot-filling — « Je ne peux pas
+encore lancer la prédiction titanic : sex manquante… ». La réponse est celle du
+2026-09-22 sur `f5651f7`, au mot près.
+
+**Le seul rouge est `choix-entre-deux-sources`, et il est rouge une passe sur
+deux** : le bord bistable que C55 avait décrit est toujours là, et il est
+confirmé bistable. À la passe où il tombe, le planificateur laisse `source`
+vide et `_regle_choisir_la_source` sert l'inventaire entier, fiches comprises ;
+à l'autre, il empaquette les deux noms et la question du choix part en une
+ligne. **Ce bord n'est pas réparé ici**, et le dire vaut mieux que de l'arrondir
+— la réparation qui s'impose (ne proposer QUE les sources que le message nomme,
+comme le fait déjà `_plancher_des_sources_nommees`) touche `_proposer`, donc
+`mesure_choix_de_source` et `mesure_ambiguite_de_source`, qui deviendraient dues.

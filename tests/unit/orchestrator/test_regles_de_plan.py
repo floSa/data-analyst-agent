@@ -123,6 +123,11 @@ def test_l_ordre_des_regles_est_explicite_et_verrouille():
     doit venir après le choix du modèle et la reprise des features (il se
     déclenche sur leur absence).
 
+    Une sixième : la relecture d'une requête en prédiction vient juste AVANT le
+    choix de la source — c'est le tour qu'elle intercepte, celui qu'on allait
+    renvoyer en proposition — et avant le choix du modèle, qui a besoin du
+    dataset qu'elle pose.
+
     Une cinquième depuis : la lecture de « sans famille à bord » vient après le
     choix du modèle — elle a besoin du dataset résolu pour savoir quel schéma
     interroger — et avant le chaînage sur le dernier tableau, qui ne se
@@ -135,6 +140,7 @@ def test_l_ordre_des_regles_est_explicite_et_verrouille():
         "_regle_source_de_la_conversation",
         "_regle_reprendre_les_features_acquises",
         "_regle_normaliser_le_nom_de_source",
+        "_regle_relire_une_requete_en_prediction",
         "_regle_choisir_la_source",
         "_regle_choisir_le_modele",
         "_regle_lire_labsence_daccompagnants",
@@ -742,3 +748,137 @@ def test_la_regle_ne_s_applique_qu_aux_capacites_de_prediction(orchestrateur: Or
     )
 
     assert plan.features == {}
+
+
+# --- une requête sans source, sur un message qui prédit ------------------------
+
+
+def deux_sources(tmp_path: Path) -> list[FileSource]:
+    return [source("titanic", tmp_path), source("iris", tmp_path)]
+
+
+def test_le_temoin_de_c55_repasse_par_la_prediction(orchestrateur: Orchestrator, tmp_path: Path):
+    """« quand je te donne un âge, tu prédis quoi ? » — le témoin rouge 2/2 après C56.
+
+    Le contrat de sortie ne rend plus `predict` sur cette phrase, et le tour
+    servait l'inventaire du catalogue à qui demandait ce qu'on lui prédit. Les
+    deux conditions sont réunies : le message parle de prédire, et `age` est un
+    attribut du seul schéma `titanic`.
+    """
+    plan = Plan(capability="query")
+
+    assert (
+        orchestrateur._regle_relire_une_requete_en_prediction(
+            plan,
+            contexte(
+                declare=deux_sources(tmp_path),
+                question="quand je te donne un âge, tu prédis quoi ?",
+            ),
+        )
+        is None
+    )
+    assert plan.capability == "predict"
+    assert plan.dataset == "titanic"
+
+
+def test_un_attribut_nomme_sans_prediction_ne_change_rien(
+    orchestrateur: Orchestrator, tmp_path: Path
+):
+    """« quel est l'âge du passager le plus âgé ? » est une requête, et le reste.
+
+    C'est le témoin de l'autre bord : `age` est bien un attribut de `titanic`,
+    et il ne fait pas d'une question de données une prédiction.
+    """
+    plan = Plan(capability="query")
+
+    orchestrateur._regle_relire_une_requete_en_prediction(
+        plan,
+        contexte(
+            declare=deux_sources(tmp_path), question="quel est l'âge du passager le plus âgé ?"
+        ),
+    )
+
+    assert plan.capability == "query"
+    assert plan.dataset is None
+
+
+def test_parler_de_prediction_sans_nommer_d_attribut_ne_change_rien(
+    orchestrateur: Orchestrator, tmp_path: Path
+):
+    """Un mot ne classe rien tout seul : il faut qu'un modèle soit désigné."""
+    plan = Plan(capability="query")
+
+    orchestrateur._regle_relire_une_requete_en_prediction(
+        plan,
+        contexte(
+            declare=deux_sources(tmp_path), question="quelle est la précision de tes prédictions ?"
+        ),
+    )
+
+    assert plan.capability == "query"
+
+
+def test_une_source_deja_retenue_ferme_la_relecture(orchestrateur: Orchestrator, tmp_path: Path):
+    """Le tour aboutit déjà : rien n'allait être renvoyé en proposition."""
+    plan = Plan(capability="query", source="titanic")
+
+    orchestrateur._regle_relire_une_requete_en_prediction(
+        plan,
+        contexte(
+            declare=deux_sources(tmp_path), question="quand je te donne un âge, tu prédis quoi ?"
+        ),
+    )
+
+    assert plan.capability == "query"
+
+
+def test_un_perimetre_croise_ferme_la_relecture(orchestrateur: Orchestrator, tmp_path: Path):
+    """Un tour qui confronte deux sources a son chemin, et ce n'est pas celui-ci."""
+    plan = Plan(capability="query", sources=["titanic", "iris"])
+
+    orchestrateur._regle_relire_une_requete_en_prediction(
+        plan,
+        contexte(
+            declare=deux_sources(tmp_path), question="quand je te donne un âge, tu prédis quoi ?"
+        ),
+    )
+
+    assert plan.capability == "query"
+
+
+def test_un_catalogue_d_une_seule_source_ferme_la_relecture(
+    orchestrateur: Orchestrator, tmp_path: Path
+):
+    """Une seule source déclarée : ``_regle_choisir_la_source`` n'a rien à proposer."""
+    plan = Plan(capability="query")
+
+    orchestrateur._regle_relire_une_requete_en_prediction(
+        plan,
+        contexte(
+            declare=[source("titanic", tmp_path)],
+            question="quand je te donne un âge, tu prédis quoi ?",
+        ),
+    )
+
+    assert plan.capability == "query"
+
+
+def test_deux_modeles_designes_ne_departagent_pas(tmp_path: Path):
+    """Deux cibles ne font pas une cible : on ne choisit pas à la place du modèle."""
+    orchestrateur = Orchestrator(
+        model=ScriptedLLM().model(),
+        catalog=Catalog(sources=[]),
+        registry=registre(tmp_path / "registre_2", DEUX_MODELES_YAML),
+        settings=Settings(_env_file=None),
+    )
+    plan = Plan(capability="query")
+
+    orchestrateur._regle_relire_une_requete_en_prediction(
+        plan,
+        contexte(
+            declare=deux_sources(tmp_path),
+            question="si je te donne un age et un sepal_length, tu prédis quoi ?",
+        ),
+    )
+
+    assert plan.capability == "query"

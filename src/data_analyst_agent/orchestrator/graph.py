@@ -1237,6 +1237,67 @@ class Orchestrator:
         plan.source = resolved
         return None
 
+    def _regle_relire_une_requete_en_prediction(self, plan: Plan, ctx: PlanContext) -> str | None:
+        """``query`` sans source sur un message qui PRÉDIT : c'est une prédiction.
+
+        **Ce qui est réparé, et ce qui l'avait cassé.** « quand je te donne un
+        âge, tu prédis quoi ? » sortait du planificateur en ``predict`` avec
+        ``dataset='titanic'`` ; elle en sort en ``query`` sans source, et la
+        règle suivante sert alors l'inventaire du catalogue à qui demandait ce
+        qu'on lui prédit. Le témoin qui le garde est rouge 2/2.
+
+        **La cause est le CONTRAT de sortie, et il y en a deux, chacune
+        suffisante.** Mesuré le 2026-09-23, catalogue par défaut, planificateur
+        seul, trois tirages par case, la même question et le même prompt :
+
+        | contrat | capacité rendue |
+        |---|---|
+        | sans ``sources``, avec la description tirée de la docstring | `predict` **3/3** |
+        | sans ``sources``, sans cette description | `query` **3/3** |
+        | avec ``sources``, avec cette description | `query` **3/3** |
+        | avec ``sources``, sans cette description (celui d'aujourd'hui) | `query` **3/3** |
+
+        Le vert d'avant tenait donc à la CONJONCTION de deux propriétés du
+        schéma, dont l'une — une docstring promue en ``description`` par
+        pydantic — n'avait été décidée par personne. Retirer l'une OU l'autre
+        suffit à le perdre, et l'ordre de déclaration du champ n'y change rien
+        (``sources`` en dernier : `query` 3/3 aussi). On ne répare donc pas en
+        rendant une phrase au schéma : ce serait rouvrir ce que `aa0c1c4` a
+        mesuré et fermé, et chercher la rédaction qui plaît au modèle du jour.
+
+        **DEUX conditions, et aucune ne suffit seule.** Le message parle de
+        prédire ; et il nomme les attributs d'UN modèle du registre, lus dans
+        ``SCHEMAS``. « quel est l'âge du passager le plus âgé ? » nomme ``age``
+        et ne parle pas de prédire ; « quelle est la précision de tes
+        prédictions ? » parle de prédire et ne nomme aucun attribut. Ni l'une ni
+        l'autre n'atteint cette règle.
+
+        **Le prix est borné par l'endroit où elle est posée.** Elle ne voit que
+        les tours que ``_regle_choisir_la_source`` allait renvoyer en
+        proposition — ``query``, aucune source retenue, plusieurs sources
+        déclarées. Un tour qui aboutit ne passe jamais ici : ce qui est troqué
+        est une question posée à l'utilisateur contre une réponse, jamais une
+        réponse contre une autre. Et le périmètre croisé la ferme
+        (``plan.sources``) : un tour qui confronte deux sources a déjà son
+        chemin, et ce n'est pas celui-ci.
+
+        Ni prompt ni fiche d'outil n'a bougé.
+        """
+        if plan.capability != "query" or plan.source or plan.sources:
+            return None
+        if len(ctx.catalogue_declare.sources) <= 1:
+            return None
+        if not introspection.demande_une_prediction(ctx.question):
+            return None
+        dataset = introspection.modele_designe_par_ses_features(
+            ctx.question, self.registry.datasets
+        )
+        if dataset is None:
+            return None
+        plan.capability = "predict"
+        plan.dataset = dataset
+        return None
+
     def _regle_choisir_la_source(self, plan: Plan, ctx: PlanContext) -> str | None:
         """Aucune source retenue et le catalogue en contient plusieurs : on PROPOSE.
 
@@ -1383,6 +1444,7 @@ class Orchestrator:
         _regle_source_de_la_conversation,
         _regle_reprendre_les_features_acquises,
         _regle_normaliser_le_nom_de_source,
+        _regle_relire_une_requete_en_prediction,
         _regle_choisir_la_source,
         _regle_choisir_le_modele,
         _regle_lire_labsence_daccompagnants,
