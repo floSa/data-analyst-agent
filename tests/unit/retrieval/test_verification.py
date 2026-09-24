@@ -22,6 +22,7 @@ from data_analyst_agent.agents.retrieval.agent import run_retrieval
 from data_analyst_agent.agents.retrieval.catalog import FiltreDesSommes
 from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter
 from data_analyst_agent.agents.retrieval.verification import (
+    lire_les_portees,
     somme_multipliee,
     somme_sql_sans_son_filtre,
     sonde_de_l_adaptateur,
@@ -255,6 +256,106 @@ def test_une_source_seule_garde_ses_noms_de_tables():
 def test_le_doute_se_tait(lire_la_base, sql):
     """Une table inconnue, une sous-requête, une expression : rien n'est affirmé."""
     assert lire_la_base(sql) == (None, None)
+
+
+# --- chaque somme est jugée dans SA portée ------------------------------------
+#
+# Avant C62, les deux propriétés ne lisaient que le niveau zéro de la requête.
+# Or la relance contre la multiplication pousse le modèle vers des sous-requêtes
+# agrégées — c'est la forme RÉPARÉE —, et une somme écrite là n'était plus vue
+# du tout. Sur « pour le VEL-02, combien fabriqués et combien vendus ? », un
+# tirage sur sept servait 147 vendus au lieu de 130 : le chiffre sans le filtre
+# des annulées, sans un mot d'avertissement.
+
+DEUX_SOUS_REQUETES = """
+SELECT
+  (SELECT SUM(quantite_produite) FROM production_ordres_fabrication
+   WHERE code_produit = 'VEL-01') AS fabrique,
+  (SELECT SUM(T3.quantite) FROM ventes_lignes_commande T3
+   JOIN ventes_produits T2 ON T3.produit_id = T2.produit_id
+   WHERE T2.code_produit = 'VEL-01') AS vendu
+"""
+
+
+def test_une_somme_en_sous_requete_est_jugee(lire_la_base):
+    """La forme du défaut : deux sommes en sous-requête, dont une sans son filtre."""
+    _, manquant = lire_la_base(DEUX_SOUS_REQUETES)
+    assert manquant is not None
+    assert "`quantite` (sommée dans `ventes_lignes_commande`)" in manquant.pour_le_modele()
+
+
+SOUS_REQUETE_FILTREE = """
+SELECT
+  (SELECT SUM(T3.quantite) FROM ventes_lignes_commande T3
+   JOIN ventes_commandes c ON c.commande_id = T3.commande_id
+   WHERE c.statut <> 'ANN') AS vendu
+"""
+
+
+def test_le_filtre_pose_dans_la_sous_requete_qui_somme_suffit(lire_la_base):
+    """Le filtre compte là où il agit : dans la portée qui somme."""
+    assert lire_la_base(SOUS_REQUETE_FILTREE) == (None, None)
+
+
+WITH_NON_FILTRE = """
+WITH v AS (SELECT produit_id, SUM(quantite) AS q FROM ventes_lignes_commande GROUP BY produit_id)
+SELECT * FROM v
+"""
+
+
+def test_une_somme_dans_un_with_est_jugee(lire_la_base):
+    assert lire_la_base(WITH_NON_FILTRE)[1] is not None
+
+
+WITH_MULTIPLIE = """
+WITH x AS (
+  SELECT SUM(o.quantite_produite) AS fabrique, SUM(lc.quantite) AS vendu
+  FROM production_ordres_fabrication o
+  JOIN ventes_produits p ON p.code_produit = o.code_produit
+  JOIN ventes_lignes_commande lc ON lc.produit_id = p.produit_id
+  JOIN ventes_commandes c ON c.commande_id = lc.commande_id
+  WHERE c.statut <> 'ANN')
+SELECT * FROM x
+"""
+
+
+def test_une_somme_multipliee_ecrite_dans_un_with_est_signalee(lire_la_base):
+    """Deux tables de faits jointes par le produit, à l'abri d'un ``WITH``."""
+    multiplication, manquant = lire_la_base(WITH_MULTIPLIE)
+    assert multiplication is not None
+    assert multiplication.table_sommee == "production_ordres_fabrication"
+    assert "ventes_lignes_commande" in multiplication.multiplicatrices
+    assert manquant is None  # le filtre est posé là où la somme se fait
+
+
+CTE_PUIS_FILTRE_EXTERIEUR = """
+WITH lignes AS (
+  SELECT lc.quantite, c.statut FROM ventes_lignes_commande lc
+  JOIN ventes_commandes c ON c.commande_id = lc.commande_id)
+SELECT SUM(quantite) AS vendu FROM lignes WHERE statut <> 'ANN'
+"""
+
+
+def test_un_cte_puis_un_filtre_exterieur_ne_declenche_rien(lire_la_base):
+    """La requête est juste, et le module n'en juge rien : il ne connaît pas `lignes`.
+
+    Le nom d'un ``WITH`` n'est pas une table du schéma : sa portée n'a pas de
+    cardinalité à mesurer, et elle est comptée dans ``Lecture.illisibles`` —
+    le module se tait, et il dit combien de fois.
+    """
+    assert lire_la_base(CTE_PUIS_FILTRE_EXTERIEUR) == (None, None)
+    lecture = lire_les_portees(CTE_PUIS_FILTRE_EXTERIEUR, {"ventes_lignes_commande": "x"})
+    assert lecture.portees == []
+    assert lecture.illisibles == 1
+
+
+def test_une_portee_sans_somme_n_est_pas_comptee_illisible(lire_la_base):
+    """Un ``SELECT *`` sur un ``WITH`` n'a rien à faire juger : il n'est pas un manque."""
+    lecture = lire_les_portees(
+        WITH_NON_FILTRE, {"ventes_lignes_commande": "ventes_lignes_commande"}
+    )
+    assert len(lecture.portees) == 1
+    assert lecture.illisibles == 0
 
 
 # --- ce que la récupération en fait : une relance bornée, puis un avertissement

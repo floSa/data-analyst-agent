@@ -35,85 +35,40 @@ somme aussi ``quantite`` sans écarter les commandes annulées. Rien n'est réé
 ici — la déclaration est celle de C60, et ``FiltreMonte`` dit sous quel nom ses
 tables sont montées.
 
+**Chaque somme est jugée dans SA portée** (C62). Les deux propriétés ne
+lisaient d'abord que le niveau zéro de la requête. Or la relance contre la
+multiplication pousse le modèle vers des sous-requêtes agrégées — c'est la forme
+RÉPARÉE —, et une somme écrite là, ou dans un ``WITH``, n'était plus vue du
+tout : sur « pour le VEL-02, combien fabriqués et combien vendus ? », un tirage
+sur sept servait 147 vendus quand le juste est 130, sans un mot. Le SQL est donc
+découpé en portées — la requête principale, chaque sous-requête, chaque ``WITH``
+—, et chacune est pesée avec SES tables, SES jointures et SES sommes. Un filtre
+compte là où il agit : dans la portée qui somme, ou dans une portée qui
+l'enferme, jamais dans une portée sœur.
+
 **Un comptage n'est jamais touché**, par construction : les deux propriétés
-exigent un ``SUM(`` au niveau zéro de la requête. « combien de commandes »
-rend 180, pas 164, et ``COUNT(*)`` sur une jointure de dimension ne déclenche
-rien.
+exigent un ``SUM(``. « combien de commandes » rend 180, pas 164, et
+``COUNT(*)`` sur une jointure de dimension ne déclenche rien.
 
 **Partout où il doute, ce module se tait.** Une table qu'il ne reconnaît pas
-dans le schéma, une sous-requête en guise de table, deux ``FROM`` de niveau
-zéro, une colonne dont la base ne peut pas dire si elle est unique : il rend
-``None``. Un doute coûte au pire le chiffre d'avant ; un faux positif coûterait
-un aller-retour de modèle et pourrait pousser à corriger une requête juste.
+dans le schéma — le nom d'un ``WITH`` en est une —, une sous-requête en guise de
+table, un SQL que l'analyseur refuse, une colonne dont la base ne peut pas dire
+si elle est unique : il rend ``None``. Un doute coûte au pire le chiffre
+d'avant ; un faux positif coûterait un aller-retour de modèle et pourrait
+pousser à corriger une requête juste. ``Lecture.illisibles`` compte les portées
+sommantes ainsi manquées : le silence est mesurable.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
+
+import sqlglot
+from sqlglot import exp
 
 from data_analyst_agent.agents.analysis.consigne import FiltreMonte
-from data_analyst_agent.agents.retrieval.lecture import (
-    fin_de_parenthese,
-    masquer,
-    premier_au_niveau_zero,
-    profondeurs,
-    toutes_au_niveau_zero,
-)
-
-_MOT_FROM = re.compile(r"\bfrom\b", re.IGNORECASE)
-_MOT_WHERE = re.compile(r"\bwhere\b", re.IGNORECASE)
-_MOT_OU = re.compile(r"\bor\b", re.IGNORECASE)
-_SOMME = re.compile(r"\bsum\s*\(", re.IGNORECASE)
-
-# Ce qui ferme la clause FROM dans une requête de haut niveau.
-_FIN_DU_FROM = re.compile(
-    r"\b(?:where|group|having|order|limit|offset|fetch|window|union|intersect|except)\b",
-    re.IGNORECASE,
-)
-_FIN_DU_WHERE = re.compile(
-    r"\b(?:group|having|order|limit|offset|fetch|window|union|intersect|except)\b",
-    re.IGNORECASE,
-)
-
-# Ce qui introduit une table dans la clause FROM.
-_ENTREE_DE_TABLE = re.compile(r"\b(?:from|join)\b[ \t\r\n]+", re.IGNORECASE)
-_MOT_ON = re.compile(r"\bon\b", re.IGNORECASE)
-_MOT_USING = re.compile(r"\busing\b[ \t\r\n]*\(", re.IGNORECASE)
-
-_NOM = r'(?:"[^"]+"|[\w$]+)'
-_TABLE = re.compile(rf"^({_NOM}(?:\.{_NOM})*)[ \t\r\n]*(?:(?i:as)[ \t\r\n]+)?({_NOM})?")
-_EGALITE = re.compile(rf"({_NOM})\.({_NOM})[ \t\r\n]*=[ \t\r\n]*({_NOM})\.({_NOM})")
-_COLONNE = re.compile(rf"(?:({_NOM})\.)?({_NOM})")
-
-# Les mots qui ne peuvent pas être l'alias d'une table : ils ouvrent la suite de
-# la clause. Sans cette liste, « FROM commandes JOIN … » lirait « JOIN » comme
-# l'alias de `commandes`.
-_PAS_UN_ALIAS = {
-    "on",
-    "using",
-    "join",
-    "inner",
-    "left",
-    "right",
-    "full",
-    "cross",
-    "natural",
-    "outer",
-    "where",
-    "group",
-    "having",
-    "order",
-    "limit",
-    "offset",
-    "fetch",
-    "window",
-    "union",
-    "intersect",
-    "except",
-    "lateral",
-}
 
 
 def _sans_guillemets(nom: str) -> str:
@@ -170,178 +125,251 @@ class Egalite:
 
 @dataclass(frozen=True)
 class Requete:
-    """Ce qu'on a su lire d'une requête : ses tables, ses égalités, ses sommes.
+    """Une PORTÉE lue : ses tables, ses égalités, ses sommes, ce qui la contraint.
 
-    Construite par ``lire``, qui rend ``None`` dès qu'elle doute. Un objet ici
-    veut donc dire « tout ce qui suit est lu, pas deviné ».
+    Une portée est un ``SELECT`` et un seul : la requête principale, une
+    sous-requête du ``SELECT``, du ``FROM`` ou du ``WHERE``, le corps d'un
+    ``WITH``. Les tables d'une portée sont celles de SON ``FROM``, ses sommes
+    celles qui s'ouvrent chez elle, et ses jointures les siennes : c'est là, et
+    nulle part ailleurs, que se joue la multiplication d'une somme.
+
+    ``contexte`` est le texte contre lequel on cherche un filtre : la portée
+    elle-même, et les conditions des portées qui l'enferment — un ``WHERE``
+    extérieur restreint bien les lignes qu'une sous-requête du ``FROM`` a
+    rendues. Le texte d'une portée SŒUR n'y est pas : le filtre posé dans une
+    sous-requête ne filtre pas celle d'à côté.
     """
 
     tables: dict[str, Table]
     egalites: list[Egalite]
     # (alias, colonne) pour chaque colonne sommée, dans l'ordre d'écriture.
     sommees: list[tuple[str, str]]
+    contexte: str = ""
 
 
-def lire(sql: str, tables_connues: Mapping[str, str]) -> Requete | None:
-    """Les tables, les jointures et les sommes de cette requête — ``None`` au moindre doute.
+@dataclass(frozen=True)
+class Lecture:
+    """Ce qu'on a su lire d'un SQL : ses portées sommantes, et celles qu'on a manquées.
+
+    ``illisibles`` ne compte QUE les portées qui somment : une portée sans
+    ``SUM(`` n'a rien à faire juger, et la manquer ne coûte rien. Ce compte est
+    la mesure honnête du silence de ce module — il se tait, et il dit combien
+    de fois.
+    """
+
+    portees: list[Requete] = field(default_factory=list)
+    illisibles: int = 0
+
+
+def lire_les_portees(sql: str, tables_connues: Mapping[str, str]) -> Lecture:
+    """Chaque ``SELECT`` du SQL, lu dans SA portée — les sommantes seulement.
+
+    L'arbre est celui de ``sqlglot`` (pur Python, licence MIT) et non la lecture
+    maison de ``lecture.py``. Celle-ci repère des mots-clés hors parenthèses :
+    elle voit le niveau zéro, et rien d'autre. Or une somme écrite en
+    sous-requête ou dans un ``WITH`` est justement hors du niveau zéro — c'est
+    même la forme vers laquelle la relance contre la multiplication pousse le
+    modèle. Tenir les portées à la parenthèse près demande un arbre ; le faire à
+    la main redonnerait un analyseur SQL, en moins sûr. ``lecture.py`` reste ce
+    qu'il est, et ``classement`` continue de s'en servir.
 
     ``tables_connues`` vient du SCHÉMA de la source : nom en minuscules -> nom
-    réel. Il sert à deux choses, et les deux comptent. Il résout la casse — le
-    modèle écrit ``Commandes``, Postgres range ``commandes`` — et il ARRÊTE la
-    lecture sur une table qu'il ne connaît pas : une sous-requête nommée, un
-    ``VALUES``, une fonction de table n'ont pas de cardinalité à mesurer, et
-    conclure sur leur compte serait conclure sur rien.
+    réel. Il résout la casse — le modèle écrit ``Commandes``, Postgres range
+    ``commandes`` — et il ARRÊTE la lecture d'une portée dont une table lui est
+    inconnue : le nom d'un ``WITH``, une fonction de table, un ``VALUES`` n'ont
+    pas de cardinalité à mesurer, et conclure sur leur compte serait conclure
+    sur rien.
     """
-    if not sql or not sql.strip() or not _SOMME.search(sql):
-        return None
-    masque = masquer(sql)
-    niveaux = profondeurs(masque)
-    departs = toutes_au_niveau_zero(_MOT_FROM, masque, niveaux)
-    if len(departs) != 1:
-        return None  # aucune table, ou une union : on ne sait pas lire, on ne juge pas
-    debut = departs[0].start()
-    arret = premier_au_niveau_zero(_FIN_DU_FROM, masque, niveaux, departs[0].end(), len(masque))
-    fin = arret if arret is not None else len(masque)
-    tables = _tables_du_from(masque, niveaux, debut, fin, tables_connues)
+    if not sql or not sql.strip():
+        return Lecture()
+    try:
+        arbre = sqlglot.parse_one(sql)
+    except Exception:  # SQL invalide : le moteur le dira, il n'y a rien à ajouter
+        return Lecture()
+    if arbre is None:
+        return Lecture()
+    portees: list[Requete] = []
+    illisibles = 0
+    for select in arbre.find_all(exp.Select):
+        sommes = list(_sommes_de_la_portee(select))
+        if not sommes:
+            continue  # rien à juger ici : un comptage, une projection, un rapprochement
+        lue = _lire_une_portee(select, sommes, tables_connues)
+        if lue is None:
+            illisibles += 1
+            continue
+        portees.append(lue)
+    return Lecture(portees=portees, illisibles=illisibles)
+
+
+def _lire_une_portee(
+    select: exp.Select, sommes: list[exp.Sum], tables_connues: Mapping[str, str]
+) -> Requete | None:
+    tables = _tables_de_la_portee(select, tables_connues)
     if tables is None:
         return None
-    egalites = _egalites(masque, niveaux, debut, fin, tables)
-    egalites += _egalites_du_where(masque, niveaux, fin, tables)
-    sommees = _colonnes_sommees(masque, niveaux, tables)
+    sommees = _colonnes_sommees(sommes, tables)
     if sommees is None:
         return None
-    return Requete(tables=tables, egalites=egalites, sommees=sommees)
+    return Requete(
+        tables=tables,
+        egalites=_egalites(select, tables),
+        sommees=sommees,
+        contexte=_contexte(select),
+    )
 
 
-def _tables_du_from(
-    masque: str,
-    niveaux: list[int],
-    debut: int,
-    fin: int,
-    tables_connues: Mapping[str, str],
+def _descendre(noeud) -> Iterator[exp.Expression]:
+    """Les nœuds de CETTE portée : on s'arrête à l'entrée d'une portée fille."""
+    if isinstance(noeud, list):
+        for element in noeud:
+            yield from _descendre(element)
+        return
+    if not isinstance(noeud, exp.Expression):
+        return
+    if isinstance(noeud, exp.Select | exp.Subquery):
+        return
+    yield noeud
+    for valeur in noeud.args.values():
+        yield from _descendre(valeur)
+
+
+def _sommes_de_la_portee(select: exp.Select) -> Iterator[exp.Sum]:
+    """Les ``SUM(`` qui s'ouvrent dans cette portée, et non dans une de ses filles."""
+    for valeur in select.args.values():
+        for noeud in _descendre(valeur):
+            if isinstance(noeud, exp.Sum):
+                yield noeud
+
+
+def _sources(select: exp.Select) -> list[exp.Expression]:
+    """Le ``FROM`` de la portée et ses ``JOIN``, dans l'ordre d'écriture."""
+    depart = select.args.get("from_") or select.args.get("from")
+    sources = [depart.this] if depart is not None else []
+    return sources + [jointure.this for jointure in select.args.get("joins") or []]
+
+
+def _tables_de_la_portee(
+    select: exp.Select, tables_connues: Mapping[str, str]
 ) -> dict[str, Table] | None:
-    """Les tables de la clause FROM, par alias — ``None`` si l'une ne se lit pas.
+    """Les tables de la portée, par alias — ``None`` si l'une ne se lit pas.
 
     L'alias est la clé parce que c'est sous lui que la requête désigne ses
     colonnes. Une table sans alias est sa propre clé : ``FROM commandes`` se
     référence ``commandes.statut``.
     """
     tables: dict[str, Table] = {}
-    for entree in toutes_au_niveau_zero(_ENTREE_DE_TABLE, masque, niveaux, debut, fin):
-        reste = masque[entree.end() : fin]
-        if reste.lstrip().startswith("("):
-            return None  # une sous-requête en guise de table : rien à mesurer
-        trouve = _TABLE.match(reste)
-        if trouve is None:
-            return None
-        nom = _sans_guillemets(trouve.group(1)).rsplit(".", 1)[-1]
+    for source in _sources(select):
+        if not isinstance(source, exp.Table):
+            return None  # une sous-requête, un VALUES, une fonction : rien à mesurer
+        nom = _sans_guillemets(source.name)
         reel = tables_connues.get(nom.lower())
         if reel is None:
             return None  # une table que le schéma ne porte pas : on se tait
-        alias = trouve.group(2)
-        if alias is None or _sans_guillemets(alias).lower() in _PAS_UN_ALIAS:
-            alias = nom
-        tables[_sans_guillemets(alias).lower()] = Table(alias=_sans_guillemets(alias), nom=reel)
+        alias = _sans_guillemets(source.alias) or nom
+        tables[alias.lower()] = Table(alias=alias, nom=reel)
     return tables or None
 
 
-def _egalites(
-    masque: str, niveaux: list[int], debut: int, fin: int, tables: dict[str, Table]
-) -> list[Egalite]:
-    """Les égalités de colonnes écrites dans les ``ON`` de la clause FROM.
+def _egalites(select: exp.Select, tables: dict[str, Table]) -> list[Egalite]:
+    """Les égalités de colonnes qui relient les tables de cette portée.
 
-    Seulement au niveau zéro : ``ON t.code = (SELECT …)`` ne relie rien qu'on
-    sache lire, et c'est exactement le cas qui produit le pire des résultats —
-    une table qu'aucune égalité ne rattache, donc appariée à tout le reste.
+    Les ``ON`` des jointures, et le ``WHERE`` — la jointure à l'ancienne, par
+    virgules. Le ``WHERE`` est écarté dès qu'un ``OR`` le traverse : une égalité
+    sous un ``OR`` n'est pas une condition de jointure, et la lire comme telle
+    ferait passer pour saine une requête qui ne l'est pas.
 
     Un ``USING (colonne)`` relie la table qu'il suit à celle d'avant : il ne
     nomme pas les deux côtés, et c'est la seule lecture que la syntaxe permette.
+
+    Une égalité dont un côté n'est pas une colonne qualifiée d'une table de la
+    portée n'est pas retenue : ``ON t.code = (SELECT …)`` ne relie rien qu'on
+    sache lire, et c'est exactement le cas qui produit le pire des résultats —
+    une table qu'aucune égalité ne rattache, donc appariée à tout le reste.
     """
     trouvees: list[Egalite] = []
-    for marque in toutes_au_niveau_zero(_MOT_ON, masque, niveaux, debut, fin):
-        borne = premier_au_niveau_zero(_ENTREE_DE_TABLE, masque, niveaux, marque.end(), fin) or fin
-        trouvees += _egalites_du_texte(masque[marque.end() : borne], tables)
     ordre = list(tables.values())
-    for marque in toutes_au_niveau_zero(_MOT_USING, masque, niveaux, debut, fin):
-        colonne = masque[marque.end() : fin_de_parenthese(masque, marque.end() - 1)]
-        rang = sum(
-            1
-            for e in toutes_au_niveau_zero(_ENTREE_DE_TABLE, masque, niveaux, debut, fin)
-            if e.start() < marque.start()
-        )
-        if rang < 2 or rang > len(ordre):
-            continue
-        nom = _sans_guillemets(colonne)
-        if not re.fullmatch(r"[\w$]+", nom):
-            continue
-        trouvees.append(
-            Egalite(ordre[rang - 1].alias.lower(), nom, ordre[rang - 2].alias.lower(), nom)
-        )
+    for rang, jointure in enumerate(select.args.get("joins") or [], start=1):
+        trouvees += _egalites_du_texte(jointure.args.get("on"), tables)
+        utilisees = jointure.args.get("using") or []
+        if rang < len(ordre):
+            for colonne in utilisees:
+                nom = _sans_guillemets(colonne.name)
+                trouvees.append(
+                    Egalite(ordre[rang].alias.lower(), nom, ordre[rang - 1].alias.lower(), nom)
+                )
+    clause = select.args.get("where")
+    if clause is not None and not any(isinstance(n, exp.Or) for n in _descendre(clause)):
+        trouvees += _egalites_du_texte(clause, tables)
     return trouvees
 
 
-def _egalites_du_where(
-    masque: str, niveaux: list[int], depuis: int, tables: dict[str, Table]
-) -> list[Egalite]:
-    """Les égalités de colonnes du ``WHERE`` — la jointure à l'ancienne, par virgules.
-
-    Écartées dès qu'un ``OR`` traverse la clause : une égalité sous un ``OR``
-    n'est pas une condition de jointure, et la lire comme telle ferait passer
-    pour saine une requête qui ne l'est pas.
-    """
-    marque = premier_au_niveau_zero(_MOT_WHERE, masque, niveaux, depuis, len(masque))
-    if marque is None:
-        return []
-    arret = premier_au_niveau_zero(_FIN_DU_WHERE, masque, niveaux, marque, len(masque))
-    texte = masque[marque : arret if arret is not None else len(masque)]
-    if _MOT_OU.search(texte):
-        return []
-    return _egalites_du_texte(texte, tables)
-
-
-def _egalites_du_texte(texte: str, tables: dict[str, Table]) -> list[Egalite]:
-    """Les ``a.x = b.y`` d'un fragment, au niveau zéro de CE fragment."""
-    niveaux = profondeurs(texte)
+def _egalites_du_texte(noeud, tables: dict[str, Table]) -> list[Egalite]:
+    """Les ``a.x = b.y`` d'un fragment, sans descendre dans une portée fille."""
     trouvees = []
-    for marque in toutes_au_niveau_zero(_EGALITE, texte, niveaux):
-        gauche, col_g, droite, col_d = (_sans_guillemets(g) for g in marque.groups())
-        if gauche.lower() in tables and droite.lower() in tables:
-            trouvees.append(Egalite(gauche.lower(), col_g, droite.lower(), col_d))
+    for egalite in _descendre(noeud):
+        if not isinstance(egalite, exp.EQ):
+            continue
+        gauche, droite = egalite.this, egalite.expression
+        if not isinstance(gauche, exp.Column) or not isinstance(droite, exp.Column):
+            continue
+        cle_g, cle_d = (
+            _sans_guillemets(gauche.table).lower(),
+            _sans_guillemets(droite.table).lower(),
+        )
+        if cle_g in tables and cle_d in tables:
+            trouvees.append(
+                Egalite(cle_g, _sans_guillemets(gauche.name), cle_d, _sans_guillemets(droite.name))
+            )
     return trouvees
 
 
 def _colonnes_sommees(
-    masque: str, niveaux: list[int], tables: dict[str, Table]
+    sommes: list[exp.Sum], tables: dict[str, Table]
 ) -> list[tuple[str, str]] | None:
-    """``(alias, colonne)`` de chaque ``SUM(colonne)`` de la requête — ``None`` au doute.
-
-    Le ``SUM`` doit s'ouvrir au niveau zéro : celui d'une sous-requête agrège
-    déjà dans son propre périmètre, et c'est précisément la forme JUSTE qu'on
-    demande au modèle d'écrire. La signaler serait refuser la réparation.
+    """``(alias, colonne)`` de chaque ``SUM(colonne)`` de la portée — ``None`` au doute.
 
     Une somme dont on ne sait pas de quelle table elle sort — une expression,
-    une colonne non qualifiée alors que la requête porte plusieurs tables —
+    une colonne non qualifiée alors que la portée porte plusieurs tables —
     rend ``None`` : elle décide du verdict, et un verdict sur une table devinée
     ne vaut rien.
     """
     sommees: list[tuple[str, str]] = []
-    for marque in toutes_au_niveau_zero(_SOMME, masque, niveaux):
-        ouvrante = masque.index("(", marque.start())
-        argument = masque[ouvrante + 1 : fin_de_parenthese(masque, ouvrante)].strip()
-        trouve = _COLONNE.fullmatch(argument)
-        if trouve is None:
+    for somme in sommes:
+        argument = somme.this
+        if not isinstance(argument, exp.Column):
             return None  # SUM(a * b), SUM(CASE …) : on ne sait pas de qui c'est la somme
-        alias, colonne = trouve.group(1), _sans_guillemets(trouve.group(2))
-        if alias is not None:
-            cle = _sans_guillemets(alias).lower()
-            if cle not in tables:
+        colonne = _sans_guillemets(argument.name)
+        alias = _sans_guillemets(argument.table).lower()
+        if alias:
+            if alias not in tables:
                 return None
-            sommees.append((cle, colonne))
+            sommees.append((alias, colonne))
             continue
         if len(tables) != 1:
             return None  # colonne non qualifiée et plusieurs tables : on ne devine pas
         sommees.append((next(iter(tables)), colonne))
     return sommees or None
+
+
+def _contexte(select: exp.Select) -> str:
+    """La portée, plus les conditions des portées qui l'enferment.
+
+    Ce qui restreint réellement les lignes que cette portée somme : ce qu'elle
+    écrit elle-même, et les ``ON`` et ``WHERE`` de ses parents. Pas le texte
+    d'une portée sœur — le filtre d'une sous-requête ne filtre pas sa voisine.
+    """
+    morceaux = [select.sql()]
+    parent = select.parent
+    while parent is not None:
+        if isinstance(parent, exp.Select):
+            for jointure in parent.args.get("joins") or []:
+                if jointure.args.get("on") is not None:
+                    morceaux.append(jointure.args["on"].sql())
+            if parent.args.get("where") is not None:
+                morceaux.append(parent.args["where"].sql())
+        parent = parent.parent
+    return "\n".join(morceaux)
 
 
 # --- ① la somme multipliée par une jointure ----------------------------------
@@ -393,13 +421,11 @@ def somme_multipliee(
     entre une table de dimension et une table qui démultiplie, et c'est la seule
     façon de la faire — aucun nom de colonne ne la porte.
     """
-    lue = lire(sql, tables_connues)
-    if lue is None:
-        return None
-    for alias, colonne in lue.sommees:
-        verdict = _multipliee(lue, alias, colonne, sonde)
-        if verdict is not None:
-            return verdict
+    for lue in lire_les_portees(sql, tables_connues).portees:
+        for alias, colonne in lue.sommees:
+            verdict = _multipliee(lue, alias, colonne, sonde)
+            if verdict is not None:
+                return verdict
     return None
 
 
@@ -502,13 +528,19 @@ def somme_sql_sans_son_filtre(
     """
     if not filtres:
         return None
-    lue = lire(sql, tables_connues)
-    if lue is None:
-        return None
+    for lue in lire_les_portees(sql, tables_connues).portees:
+        manquant = _sans_son_filtre(lue, filtres)
+        if manquant is not None:
+            return manquant
+    return None
+
+
+def _sans_son_filtre(lue: Requete, filtres: Sequence[FiltreMonte]) -> SommeSqlNonFiltree | None:
+    """La même règle, pesée dans UNE portée : ses sommes, et ce qui la contraint."""
     sommees = {(lue.tables[a].nom.lower(), c.lower()) for a, c in lue.sommees}
     for monte in filtres:
         regle = monte.filtre
-        if re.search(rf"\b{re.escape(regle.exclure)}\b", sql):
+        if re.search(rf"\b{re.escape(regle.exclure)}\b", lue.contexte):
             continue
         concernees = [
             (monte.table(table), colonne)
