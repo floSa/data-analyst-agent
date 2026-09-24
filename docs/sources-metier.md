@@ -1060,6 +1060,99 @@ le correctif, à la ligne près — et il n'a pas été poursuivi ici. `N5` est 
 documenté comme bascule 3/3 ↔ 0/3 d'une campagne à l'autre sur un socle
 identique ; `N1`, `N3` et `W3` sont la dette de routage déjà inscrite ; `N4` et
 `S4` échouent tous deux sur le même oracle, « fait absent : écarter ».
+## « Fais-moi un graphique » : la boucle de correction recevait la trace, pas le nom
+
+`ca-par-canal` passait 12/12 le 2026-09-22 au matin ; le 24, 0/3, avec
+`TypeError: object of type 'int' has no len()` et aucune figure. Relevé en
+espionnant chaque essai — le code envoyé au bac à sable, l'erreur qu'il rend, et
+le message que la boucle renvoie au modèle. **Les trois tirages sont identiques
+au caractère près**, code, erreurs et messages : à ce réglage du moteur, trois
+tirages en sont un.
+
+| essai | ce que le code tente | ce qui meurt |
+|---|---|---|
+| 1 | `from matplotlib.ticker import Func` | `ImportError: cannot import name 'Func'` |
+| 2 | `from matplotlib.ticker import Func as MatplotlibFunc` | la même |
+| 3 | `plt.ScalarFormatter().set_powerlimits(0)` | `TypeError: object of type 'int' has no len()` |
+
+Et chacun des trois codes finit par `print(ca_par_canal.to_markdown(...))`, que
+`tabulate` absent aurait tué au quatrième.
+
+**Le calcul, lui, était juste dès l'essai 1** — annulées écartées, `commandes`
+jointe à `clients` seule, `montant_total_eur` sommé : le dictionnaire faisait son
+travail. Ce qui meurt est la mise en forme de l'axe des ordonnées.
+
+**La trace arrivait entière** au modèle, à chaque essai : type, ligne fautive,
+message. Elle ne suffisait pas, et le deuxième essai le montre : réimporter
+`Func` sous un alias, c'est ce qu'on écrit quand on sait que le nom est faux et
+qu'on ne sait pas lequel est juste. Rien ne pouvait le lui dire — ni CPython ni
+IPython ne proposent de voisin sur un `from … import` raté (vérifié dans
+l'image : aucun « Did you mean »), et le bac à sable n'a pas de réseau.
+
+### Ce qui est ajouté : un fait calculé, pas une phrase
+
+[`agents/analysis/diagnostic.py`](../src/data_analyst_agent/agents/analysis/diagnostic.py)
+lit la trace et, pour trois familles d'erreur seulement, joint un **diagnostic**
+après elle :
+
+- **un nom absent d'un module** (`cannot import name`, `module … has no
+  attribute`) : les noms voisins, demandés AU NOYAU de la session, dans le
+  module réellement installé — `Func` → `FuncFormatter`. Difflib seul ne le
+  trouve pas (ratio 0,47), l'inclusion si ;
+- **un module absent** : il ne peut pas être installé ;
+- **une dépendance optionnelle absente** (`` `Import tabulate` failed ``, relevé
+  tel quel) : la méthode pandas qui l'appelle ne marchera à aucun essai.
+
+Aucun prompt ni aucune fiche n'est touché : l'empreinte ne bouge pas. Pour toute
+autre erreur le message renvoyé est celui d'avant, au caractère près.
+
+### Avant, après — trois tirages, même moteur, même catalogue
+
+| | essai 1 | essai 2 | essai 3 | figure |
+|---|---|---|---|---|
+| avant | `Func` | `Func` sous alias | `set_powerlimits(0)` | **0/3** |
+| après | `Func` → diagnostic `FuncFormatter` | `FuncFormatter` ✓, `to_markdown` → diagnostic `tabulate` | tableau écrit à la main ✓ | **3/3** |
+
+Magasin 862 229 €, en ligne 331 499 €, grossiste 303 015 € : les trois chiffres
+de l'oracle, sur les trois tirages. **Chaque diagnostic est suivi du premier
+coup** — mais la figure sort au troisième et dernier essai. La marge est nulle,
+et il faut le savoir.
+
+### L'image : `tabulate` manque, et ce n'est pas lui qui décide ici
+
+`tabulate` est la dépendance optionnelle de `DataFrame.to_markdown`. pandas est
+annoncé au modèle, la méthode existe, et elle meurt : 3 codes sur 3 l'appellent.
+**Proposé, pas installé** : `tabulate` (MIT, pur Python, sans dépendance) dans
+[`requirements.in`](../src/data_analyst_agent/sandbox/image/requirements.in),
+puis recompilation et reconstruction de l'image — une décision d'exploitation,
+qui change le bac à sable du service installé.
+
+Mesuré avant de le proposer, sur une image d'essai à part (l'étiquette `0.1`
+intacte) : **3/3 figures, et toujours au troisième essai.** Une fois
+`to_markdown` disponible, le modèle lui passe `float_format=` — l'argument de
+`to_string`, pas le sien — et meurt dessus. Ajouter `tabulate` retire un
+échec banal ; il n'ajoute pas de marge à cette question.
+
+### Les campagnes, séquentielles
+
+Moteur `google/gemma-4-E4B-it-qat-w4a16-ct` sur `http://localhost:8100/v1`,
+image du bac à sable `data-analyst-agent-sandbox:0.1` inchangée.
+
+| campagne | catalogue | avant | après |
+|---|---|---|---|
+| questions métier, 3 tirages | `sources/metier/` | 33/36 | **36/36** — `ca-par-canal` 0/3 → 3/3 |
+| croisement de sources, 1 tirage | `sources/metier/` | 5/14 | **7/14** — `ca-produit-vs-fabrique`, vierge et fil lié, 0/1 → 1/1 |
+| parcours de démonstration, 3 tirages | `sources/demonstration/` | 144/144 | **144/144**, 612 appels |
+
+Le chemin SQL du croisement rend toujours **1 828 unités vendues, annulées
+exclues** (`vend-plus-quon-produit`, 1/1 sur les deux fils). Le gain de
+`ca-produit-vs-fabrique` (461 arrive dans la réponse) n'a pas été sondé essai
+par essai : à un tirage, il ne se distingue pas encore d'une bascule. Ce qui reste
+rouge dans le croisement ne bouge pas, et reste nommé plus haut dans
+[`croisement-de-sources.md`](croisement-de-sources.md) : le filtre des annulées
+oublié sur les quantités (VEL-01 141, VEL-04 131), et quatre questions où le plan
+ne désigne aucune donnée.
+
 ## Où ça vit
 
 | Quoi | Où |
@@ -1073,6 +1166,7 @@ identique ; `N1`, `N3` et `W3` sont la dette de routage déjà inscrite ; `N4` e
 | La propriété « une fiche citée porte un fait » | [`tests/unit/orchestrator/test_introspection.py`](../tests/unit/orchestrator/test_introspection.py) |
 | Les deux planchers, leurs bords, et les empreintes | [`tests/unit/orchestrator/test_graph_questions_meta.py`](../tests/unit/orchestrator/test_graph_questions_meta.py) |
 | Le tour de réparation, et les trois voies | [`src/data_analyst_agent/orchestrator/systeme.py`](../src/data_analyst_agent/orchestrator/systeme.py) (`servir_la_reponse`) |
+| Le diagnostic joint à une trace d'erreur du code généré | [`src/data_analyst_agent/agents/analysis/diagnostic.py`](../src/data_analyst_agent/agents/analysis/diagnostic.py) |
 | Ce qu'on lui dit, et à lui seul | [`src/data_analyst_agent/prompts/reparation.txt`](../src/data_analyst_agent/prompts/reparation.txt) |
 | Comment écrire un dictionnaire | [`rediger-un-dictionnaire-de-source.md`](rediger-un-dictionnaire-de-source.md) |
 | L'autre catalogue, qui reste | [`sources-de-demonstration.md`](sources-de-demonstration.md) |
