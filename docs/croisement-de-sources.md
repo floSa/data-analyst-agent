@@ -1649,3 +1649,116 @@ chiffre multiplié, avertissements compris.
 - **Le chiffre faux muet n'a pas de mesure de bout en bout** : il est tenu par
   les tests, forme par forme. Une campagne qui le ferait sortir à coup sûr
   demanderait de fixer la forme du SQL, donc de mesurer le banc.
+
+## La requête renvoyée à l'identique après un échec (C65)
+
+C64 laissait une impasse ouverte, et l'avait nommée : la remarque contre la
+multiplication pousse le modèle vers la forme réparée — deux sous-requêtes déjà
+agrégées —, il re-somme le résultat déjà agrégé, la base refuse, et il n'en
+sort plus. `total-fabrique-vs-total-vendu` rendait 180 669 / 20 557 avec trois
+avertissements là où les oracles disent **4 413** fabriquées et **1 828**
+vendues.
+
+### Étape 1 — le relevé, essai par essai
+
+Moteur : vLLM, `http://localhost:8100/v1`, `google/gemma-4-E4B-it-qat-w4a16-ct`.
+Catalogue : `sources/metier/catalogue.yaml`. Conversation neuve, `source_de_travail=""`,
+trois passes. Le déroulé est le même aux trois, à un essai près.
+
+| essai | ce que le modèle écrit | ce que la base rend |
+|---|---|---|
+| 1 | `FULL OUTER JOIN … ON T1.code_produit = T2.produit_id` | `Conversion Error: Could not convert string 'VEL-08' to INT64` |
+| 2 | la même, `ON T1.code_produit = T2.code_produit` | `Binder Error: Table "T2" does not have a column named "code_produit"` — `Candidate bindings: "produit_id"` |
+| 3 | jointure par `ventes_produits`, `GROUP BY 1, 2` | `Binder Error: GROUP BY clause cannot contain aggregates!` |
+| 4 | la même sans le `GROUP BY` | **réussit** — 180 669 / 20 557, et reçoit les deux remarques de C61 |
+| 5 | deux sous-requêtes agrégées, `SUM(T1.quantite_produite)` par-dessus | `Binder Error: Values list "T1" does not have a column named "quantite_produite"` — **aucun candidat nommé** |
+| 6 | la même, `SUM(quantite_produite)` non qualifié | `Referenced column "quantite_produite" not found in FROM clause!` — `Candidate bindings: "total_produit"` |
+| 7 à 9 | **la MÊME requête que l'essai 6, à l'identique** | la même erreur, trois fois de plus, jusqu'à `retrieval_request_limit` |
+
+Les deux `COUNT(*)` qu'on lit entre les essais 4 et 5 dans la trace brute ne
+sont pas du modèle : c'est la sonde de cardinalité qui mesure, dans la base, la
+multiplication de l'essai 4.
+
+Deux réponses aux deux questions posées :
+
+- **l'erreur de binder ne dit pas toujours ce qui manque.** Celle de l'essai 5
+  — celle qui ouvre la boucle — ne nomme aucun candidat. Le schéma ne le dit pas
+  davantage : une sous-requête agrégée n'est dans aucun schéma ;
+- **une requête renvoyée à l'identique reçoit exactement ce qu'elle a reçu la
+  première fois.** Rien, dans ce que le modèle lit, ne distingue « corrige » de
+  « tu viens d'écrire exactement ceci ».
+
+### La cause, telle que mesurée
+
+Le modèle ne boucle pas faute de savoir quoi faire : il boucle faute de savoir
+**ce que sa propre sous-requête expose**, et faute de savoir qu'il se répète.
+Ce sont deux faits, pas deux tournures, et ni l'un ni l'autre ne regarde la
+question.
+
+### La réparation
+
+`agents/retrieval/diagnostic` ajoute deux faits au texte d'erreur rendu par
+`run_sql`, sans jamais le remplacer. ① Une requête dont la signature — le texte
+aux blancs près, casse et guillemets conservés — a déjà échoué dans ce tour le
+reçoit. ② Une erreur qui porte sur une colonne reçoit, relation par relation,
+les colonnes que la requête expose réellement : celles du schéma pour une table,
+les alias de la projection pour une sous-requête ou un `WITH`, et rien du tout
+pour une étoile qu'on refuse de déplier.
+
+**Une seule rédaction a été écrite, et elle n'a pas eu de concurrente à
+départager** : les deux faits ont suffi, mesurés 3/3 du premier coup. Le
+troisième recours prévu — réécrire la phrase de la remarque de multiplication,
+muette sur le cas sans clé de regroupement — **n'a pas été exercé**. Il n'y
+avait rien à mesurer entre deux rédactions d'un texte qu'on n'a pas eu à
+toucher, et `SommeMultipliee.pour_le_modele` est inchangée au caractère près.
+
+| rédaction | score sur `total-fabrique-vs-total-vendu` |
+|---|---|
+| aucune — l'état de C64 | 0/3 (180 669 / 20 557) |
+| les deux faits, première et seule rédaction | **3/3** (4 413 / 1 828) |
+
+### L'avant/après
+
+| | chiffres servis | appels LLM par tour | essais SQL |
+|---|---|---|---|
+| avant (`670c27a`) | 180 669 / 20 557, 3 passes sur 3 | 13 | 9, dont 4 identiques |
+| après | **4 413 / 1 828**, 3 passes sur 3 | **9** | 4 |
+
+Le fait ② est celui qui décide, et la chaîne se lit essai par essai : l'essai 2
+reçoit `T1 expose of_id, code_of, code_produit, … ; T2 expose ligne_id,
+commande_id, produit_id, quantite, …`, l'essai 3 cesse d'inventer
+`T2.code_produit` et passe par `ventes_produits`, l'essai 4 écrit deux
+sous-requêtes indépendantes et rend 4 413 / 1 828 — sans une remarque et sans un
+avertissement. Le fait ① n'a **jamais eu à se déclencher** dans les trois passes
+d'après : la boucle ne s'ouvre plus. Il reste, parce que la propriété est vraie
+quelle que soit la question et que rien ne garantit que ce soit la dernière
+forme d'impasse.
+
+### Les campagnes
+
+Toutes séquentielles. Catalogue lu en tête de chacune :
+`sources/metier/catalogue.yaml`, moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`).
+
+| campagne | repère | ce tour |
+|---|---|---|
+| `vel01-fabrique-vendu` + `vel04-production-ventes`, 3 tirages | 3/3 et 3/3 | **6/6** — 689/123 et 727/125 |
+| croisement complet, 1 tirage | 13/17 | **13/17** |
+| `scripts/mesure_questions_metier.py`, 1 tirage | 12/12 | **12/12** |
+| `uv run pytest -p no:randomly` | 1 621 verts | **1 621 verts** |
+
+Les quatre rouges du croisement sont `fabrique-vendu-stock` (131, le piège des
+annulées sur trois sources), `produites-vs-vendues-fil-lie` (689 et 727
+absents), `vel01-fabrique-vendu` et `vendus-sans-fabriquer` (aucune donnée
+regardée sur ce tirage). `total-fabrique-vs-total-vendu`, rouge à C64, est vert.
+`vel01-fabrique-vendu` est vert 3 fois sur 3 dans sa campagne dédiée ci-dessus :
+son rouge ici est un tirage de routage, pas le chemin SQL.
+
+### Ce qui reste
+
+- **Le fait ① n'a pas de mesure de bout en bout.** La boucle qu'il ferme ne
+  s'ouvre plus sur cette question ; il est tenu par les tests, essai par essai.
+- **`fabrique-vendu-stock` garde son 131** : trois sources, et le filtre des
+  annulées perdu sur la troisième.
+- **`produites-vs-vendues-fil-lie` ne rend toujours pas 689 et 727** — le
+  périmètre s'ajoute au fil, la question reste servie sur `ventes` seule.

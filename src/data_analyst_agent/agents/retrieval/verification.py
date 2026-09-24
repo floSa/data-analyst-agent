@@ -83,7 +83,7 @@ from sqlglot import exp
 from data_analyst_agent.agents.analysis.consigne import FiltreMonte
 
 
-def _sans_guillemets(nom: str) -> str:
+def sans_guillemets(nom: str) -> str:
     return nom.strip().strip('"').strip("`")
 
 
@@ -254,7 +254,7 @@ def _sommes_de_la_portee(select: exp.Select) -> Iterator[exp.Sum]:
                 yield noeud
 
 
-def _sources(select: exp.Select) -> list[exp.Expression]:
+def sources_de_la_portee(select: exp.Select) -> list[exp.Expression]:
     """Le ``FROM`` de la portée et ses ``JOIN``, dans l'ordre d'écriture."""
     depart = select.args.get("from_") or select.args.get("from")
     sources = [depart.this] if depart is not None else []
@@ -271,14 +271,14 @@ def _tables_de_la_portee(
     référence ``commandes.statut``.
     """
     tables: dict[str, Table] = {}
-    for source in _sources(select):
+    for source in sources_de_la_portee(select):
         if not isinstance(source, exp.Table):
             return None  # une sous-requête, un VALUES, une fonction : rien à mesurer
-        nom = _sans_guillemets(source.name)
+        nom = sans_guillemets(source.name)
         reel = tables_connues.get(nom.lower())
         if reel is None:
             return None  # une table que le schéma ne porte pas : on se tait
-        alias = _sans_guillemets(source.alias) or nom
+        alias = sans_guillemets(source.alias) or nom
         tables[alias.lower()] = Table(alias=alias, nom=reel)
     return tables or None
 
@@ -306,7 +306,7 @@ def _egalites(select: exp.Select, tables: dict[str, Table]) -> list[Egalite]:
         utilisees = jointure.args.get("using") or []
         if rang < len(ordre):
             for colonne in utilisees:
-                nom = _sans_guillemets(colonne.name)
+                nom = sans_guillemets(colonne.name)
                 trouvees.append(
                     Egalite(ordre[rang].alias.lower(), nom, ordre[rang - 1].alias.lower(), nom)
                 )
@@ -326,12 +326,12 @@ def _egalites_du_texte(noeud, tables: dict[str, Table]) -> list[Egalite]:
         if not isinstance(gauche, exp.Column) or not isinstance(droite, exp.Column):
             continue
         cle_g, cle_d = (
-            _sans_guillemets(gauche.table).lower(),
-            _sans_guillemets(droite.table).lower(),
+            sans_guillemets(gauche.table).lower(),
+            sans_guillemets(droite.table).lower(),
         )
         if cle_g in tables and cle_d in tables:
             trouvees.append(
-                Egalite(cle_g, _sans_guillemets(gauche.name), cle_d, _sans_guillemets(droite.name))
+                Egalite(cle_g, sans_guillemets(gauche.name), cle_d, sans_guillemets(droite.name))
             )
     return trouvees
 
@@ -413,8 +413,8 @@ def _colonnes_sommees(
         if not colonnes:
             return None  # SUM(1) : aucune colonne atteinte, rien à juger
         for argument in colonnes:
-            colonne = _sans_guillemets(argument.name)
-            alias = _sans_guillemets(argument.table).lower()
+            colonne = sans_guillemets(argument.name)
+            alias = sans_guillemets(argument.table).lower()
             if alias:
                 if alias not in tables:
                     return None

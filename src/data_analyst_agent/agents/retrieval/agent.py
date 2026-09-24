@@ -29,6 +29,13 @@ from data_analyst_agent.agents.dictionnaire import (
     preparer,
 )
 from data_analyst_agent.agents.retrieval.classement import grandeurs_non_projetees
+from data_analyst_agent.agents.retrieval.diagnostic import (
+    DEJA_ECHOUEE,
+    colonnes_exposees,
+    porte_sur_une_colonne,
+    pour_le_modele,
+    signature,
+)
 from data_analyst_agent.agents.retrieval.sql import (
     DatabaseAdapter,
     QueryError,
@@ -163,6 +170,11 @@ class RetrievalDeps:
     # filtre. Deux allers-retours au pire, sous `retrieval_request_limit`.
     relance_de_multiplication: bool = False
     relance_de_filtre: bool = False
+    # Ce qui a déjà échoué dans ce tour : signature de la requête -> son erreur.
+    # Sans lui, une requête renvoyée à l'identique recevait son erreur inchangée
+    # et rien qui la distingue d'un premier essai — mesuré quatre fois de suite
+    # sur la même chaîne, jusqu'à épuiser le budget (cf. `retrieval/diagnostic`).
+    echecs: dict[str, str] = field(default_factory=dict)
     # Ce qui reste à dire de la DERNIÈRE requête réussie — celle qui sert les
     # chiffres. Réécrit à chaque requête réussie : une requête corrigée efface
     # l'avertissement de celle qu'elle remplace.
@@ -212,7 +224,7 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
             result = ctx.deps.adapter.run(query, max_rows=ctx.deps.max_rows)
         except QueryError as exc:
             ctx.deps.executed.append(ExecutedQuery(sql=query, ok=False, error=str(exc)))
-            return f"ERREUR SQL : {exc}\nCorrige la requête et réessaie."
+            return _retour_d_erreur(ctx.deps, query, str(exc))
         ctx.deps.executed.append(ExecutedQuery(sql=query, ok=True))
         ctx.deps.last_success = (query, result)
         rendu = result.to_markdown()
@@ -220,6 +232,27 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
         return f"{rendu}\n\n{chr(10).join(remarques)}" if remarques else rendu
 
     return agent
+
+
+def _retour_d_erreur(deps: RetrievalDeps, query: str, erreur: str) -> str:
+    """L'erreur de la base, et les faits que la base n'a pas dits.
+
+    Deux faits, l'un et l'autre vrais quelle que soit la question posée
+    (cf. `agents/retrieval/diagnostic`) : cette requête exacte a-t-elle déjà
+    échoué, et — si l'erreur porte sur une colonne — que chaque relation de la
+    requête expose réellement. Ils s'ajoutent à l'erreur, jamais à sa place :
+    c'est elle que le modèle doit lire d'abord.
+    """
+    faits: list[str] = []
+    cle = signature(query)
+    if cle in deps.echecs:
+        faits.append(DEJA_ECHOUEE)
+    deps.echecs[cle] = erreur
+    if porte_sur_une_colonne(erreur):
+        relations = colonnes_exposees(query, deps.adapter.schema())
+        if relations:
+            faits.append(pour_le_modele(relations))
+    return "\n".join([f"ERREUR SQL : {erreur}", *faits, "Corrige la requête et réessaie."])
 
 
 def _remarques(deps: RetrievalDeps, query: str) -> list[str]:
