@@ -23,6 +23,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from data_analyst_agent import prompts
+from data_analyst_agent.agents.analysis.diagnostic import diagnostiquer
 from data_analyst_agent.agents.dictionnaire import (
     EN_TETE_CODE,
     DictionnaireInjecte,
@@ -114,6 +115,20 @@ def _initial_prompt(
     return "\n\n".join(parts)
 
 
+def message_de_correction(execution: SandboxResult, diagnostic: str = "") -> str:
+    """Ce que le modèle reçoit après un échec : la trace, et le fait qui lui manque.
+
+    Le ``diagnostic`` (cf. `agents/analysis/diagnostic`) vient APRÈS la trace et
+    ne la remplace pas : la trace dit où, lui dit quoi mettre à la place. Vide,
+    le message est celui d'avant, au caractère près.
+    """
+    parts = [f"L'exécution a échoué (statut : {execution.status}).\nErreur :\n{execution.error}"]
+    if diagnostic:
+        parts.append(f"Diagnostic :\n{diagnostic}")
+    parts.append("Corrige le problème et renvoie le code COMPLET corrigé.")
+    return "\n\n".join(parts)
+
+
 def run_analysis(
     question: str,
     *,
@@ -165,11 +180,7 @@ def run_analysis(
                     dictionary_notice=dictionnaire.avis,
                 )
             message_history = run.all_messages()
-            prompt = (
-                f"L'exécution a échoué (statut : {execution.status}).\n"
-                f"Erreur :\n{execution.error}\n\n"
-                "Corrige le problème et renvoie le code COMPLET corrigé."
-            )
+            prompt = message_de_correction(execution, diagnostiquer(sandbox, execution.error))
         return AnalysisResult(
             code=code,
             execution=execution,
