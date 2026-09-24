@@ -2496,7 +2496,13 @@ class Orchestrator:
 
     @contextmanager
     def _ouvrir_pour_requeter(self, plan: Plan, state: OrchestratorState) -> Iterator[tuple]:
-        """Cède ``(adaptateur, dictionnaire, nom_lisible, avis)`` pour l'agent SQL.
+        """Cède ``(adaptateur, dictionnaire, nom_lisible, avis, filtres)`` pour l'agent SQL.
+
+        ``filtres`` voyage avec l'adaptateur et non à côté : ce sont les règles
+        que les sources OUVERTES ICI déclarent sur leurs sommes, sous les noms
+        de tables du périmètre qu'on vient de monter. Les calculer ailleurs
+        serait rouvrir la question « quelles sources ? » une seconde fois, et
+        deux décomptes du même fait finissent par diverger.
 
         Un seul chemin pour les deux cas — une source, ou un périmètre qui en
         croise plusieurs — parce que l'agent SQL est le même : il reçoit un
@@ -2515,7 +2521,13 @@ class Orchestrator:
                 # Ce que la source DÉCLARE vouloir dire. Un tableau
                 # intermédiaire de la conversation n'en a pas — `dictionary`
                 # vaut alors `None` et le prompt est celui d'avant.
-                yield adapter, source.dictionary_text(), source.name, ""
+                yield (
+                    adapter,
+                    source.dictionary_text(),
+                    source.name,
+                    "",
+                    _filtres_montes([source], croise=False),
+                )
             return
         croisement = ouvrir_le_croisement(croise, max_rows=self.settings.analysis_table_max_rows)
         with closing(croisement):
@@ -2524,6 +2536,7 @@ class Orchestrator:
                 dictionnaire_du_croisement(croise),
                 ", ".join(croisement.noms),
                 self._avis_de_troncature(croisement.tronquees),
+                _filtres_montes(croise, croise=True),
             )
 
     def _budget_du_perimetre(self, plan: Plan) -> Settings:
@@ -2550,13 +2563,14 @@ class Orchestrator:
     def _retrieval_node(self, state: OrchestratorState) -> dict:
         start = time.monotonic()
         plan = state["plan"]
-        with self._ouvrir_pour_requeter(plan, state) as (adapter, dictionary, nom, avis):
+        with self._ouvrir_pour_requeter(plan, state) as (adapter, dictionary, nom, avis, filtres):
             outcome = run_retrieval(
                 state["question"],
                 adapter=adapter,
                 model=self.model,
                 settings=self._budget_du_perimetre(plan),
                 dictionary=dictionary,
+                filtres=filtres,
             )
         artifacts = [_table_artifact(outcome.result)] if outcome.result else []
         # mémorise le tableau produit pour le réutiliser aux tours suivants
@@ -2979,6 +2993,7 @@ class Orchestrator:
                 # et un code mal filtré y fait le même dégât — en pire, puisque
                 # le chiffre faux ressort en prédiction et non en tableau.
                 dictionary=source.dictionary_text(),
+                filtres=_filtres_montes([source], croise=False),
             )
         if not retrieval.result or not retrieval.result.rows:
             return {
@@ -3070,6 +3085,7 @@ class Orchestrator:
             mode = "lot (déterministe)"
         elif state.get("retrieval") is not None and state.get("plan").capability == "query":
             answer, mode = self._synthesize_query(state["retrieval"])
+            answer = self._avec_l_avertissement(answer, state["retrieval"])
         elif state.get("analysis") is not None:
             answer = self._synthesize_analysis(state)
             mode = "LLM"
@@ -3182,6 +3198,19 @@ class Orchestrator:
         # prompt de l'agent SQL n'aurait tenu que sur la phrase montrée, et
         # l'empreinte des sept prompts n'aurait plus rien attesté (cf. `recit`).
         return sans_le_recit_des_etapes(retrieval.summary), "résumé de la récupération"
+
+    @staticmethod
+    def _avec_l_avertissement(reponse: str, retrieval: RetrievalResult) -> str:
+        """La réponse, PUIS ce que la requête qui la fonde a encore de suspect.
+
+        La requête qui sert les chiffres multiplie encore une somme par une
+        jointure, ou somme encore sans le filtre que sa source déclare, et la
+        relance n'a plus d'essai. On sert le tableau — le jeter serait pire, et
+        d'autres colonnes peuvent être justes — et on dit ce qui cloche, dans
+        le texte, là où l'utilisateur lit. Jamais en silence, jamais jeté :
+        c'est la même règle que ``consigne_notice`` pour le chemin d'analyse.
+        """
+        return f"{reponse}\n\n{retrieval.avertissement}" if retrieval.avertissement else reponse
 
     @staticmethod
     def _sur_quoi_classe(sql: str | None) -> str:

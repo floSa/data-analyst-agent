@@ -20,6 +20,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
 from data_analyst_agent import prompts
+from data_analyst_agent.agents.analysis.consigne import FiltreMonte
 from data_analyst_agent.agents.dictionnaire import (
     EN_TETE_SQL,
     DictionnaireInjecte,
@@ -32,6 +33,12 @@ from data_analyst_agent.agents.retrieval.sql import (
     QueryError,
     QueryResult,
     SchemaInfo,
+)
+from data_analyst_agent.agents.retrieval.verification import (
+    Sonde,
+    somme_multipliee,
+    somme_sql_sans_son_filtre,
+    sonde_de_l_adaptateur,
 )
 from data_analyst_agent.config import Settings, get_settings
 from data_analyst_agent.llm import build_model
@@ -74,6 +81,12 @@ class RetrievalResult(BaseModel):
     result: QueryResult | None = None
     executed: list[ExecutedQuery] = []
     tools_used: list[str] = []  # vide = réponse non fondée sur la source
+    # Ce qui manque encore à la requête qui SERT les chiffres — une somme
+    # multipliée par une jointure, une somme sans le filtre que sa source
+    # déclare ("" = rien à dire). La relance a été tentée et n'a pas corrigé :
+    # on sert le tableau, et on dit ce qu'il a de suspect. Jamais en silence,
+    # jamais jeté (cf. `agents/retrieval/verification`).
+    avertissement: str = ""
     # Ce qui a été coupé du dictionnaire faute de budget ("" = rien). Remonte
     # jusqu'à la trace du tour, et de là jusqu'à l'utilisateur : le défaut
     # qu'on répare ici est un chiffre faux rendu en silence, on ne le remplace
@@ -99,6 +112,10 @@ class RetrievalDeps:
     # exactement celui d'avant, ce qui est le comportement de `titanic` et
     # `iris` (aucune des deux ne déclare de dictionnaire).
     dictionnaire: DictionnaireInjecte | None = None
+    # Les filtres que les sources montées déclarent sur leurs SOMMES
+    # (``filtre_des_sommes``). Vide = aucune source du périmètre n'en déclare,
+    # et la vérification du filtre ne dit alors jamais rien.
+    filtres: list[FiltreMonte] = field(default_factory=list)
     executed: list[ExecutedQuery] = field(default_factory=list)
     last_success: tuple[str, QueryResult] | None = None
     # Outils réellement appelés. Un modèle peut répondre SANS en toucher aucun,
@@ -111,6 +128,27 @@ class RetrievalDeps:
     # suivante, et la boucle mangerait `retrieval_request_limit` sur une
     # remarque qu'il a déjà lue.
     relance_de_classement: bool = False
+    # Une relance par propriété du SQL, et une seule, pour la même raison. Deux
+    # verrous et non un : une requête peut multiplier ET oublier son filtre, et
+    # le modèle qui répare la jointure doit encore pouvoir s'entendre dire le
+    # filtre. Deux allers-retours au pire, sous `retrieval_request_limit`.
+    relance_de_multiplication: bool = False
+    relance_de_filtre: bool = False
+    # Ce qui reste à dire de la DERNIÈRE requête réussie — celle qui sert les
+    # chiffres. Réécrit à chaque requête réussie : une requête corrigée efface
+    # l'avertissement de celle qu'elle remplace.
+    avertissement: str = ""
+    # La sonde de cardinalité, construite au premier besoin : elle lit le
+    # schéma, et une récupération qui n'écrit aucune somme n'a pas à le payer.
+    _sonde: Sonde | None = None
+
+    def sonde(self) -> Sonde:
+        if self._sonde is None:
+            self._sonde = sonde_de_l_adaptateur(self.adapter, self.adapter.schema())
+        return self._sonde
+
+    def tables_connues(self) -> dict[str, str]:
+        return {t.name.lower(): t.name for t in self.adapter.schema().tables}
 
 
 def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
@@ -149,14 +187,58 @@ def build_retrieval_agent() -> Agent[RetrievalDeps, str]:
         ctx.deps.executed.append(ExecutedQuery(sql=query, ok=True))
         ctx.deps.last_success = (query, result)
         rendu = result.to_markdown()
-        absentes = grandeurs_non_projetees(query)
-        if not absentes or ctx.deps.relance_de_classement:
-            return rendu
-        ctx.deps.relance_de_classement = True
-        grandeurs = " et ".join(f"`{g}`" for g in absentes)
-        return f"{rendu}\n\n{RELANCE_DE_CLASSEMENT.format(grandeurs=grandeurs)}"
+        remarques = _remarques(ctx.deps, query)
+        return f"{rendu}\n\n{chr(10).join(remarques)}" if remarques else rendu
 
     return agent
+
+
+def _remarques(deps: RetrievalDeps, query: str) -> list[str]:
+    """Ce qu'on rend au modèle EN PLUS du tableau, et ce qu'on retient pour l'utilisateur.
+
+    Trois propriétés du SQL, toutes vraies ou fausses quelle que soit la
+    question : le palmarès qui porte ses chiffres (`classement`), la somme que
+    la jointure ne doit pas multiplier et la somme que sa source oblige à
+    filtrer (`verification`).
+
+    **Appendues au résultat, jamais à sa place.** Le tableau est calculé ; le
+    retenir pour forcer une correction transformerait un tour en tour mort. Le
+    modèle reste libre de répondre avec ce qu'il a.
+
+    **Chacune bornée à une relance par récupération.** Sans ce verrou, un modèle
+    qui passe outre se verrait resservir la même remarque à chaque requête, et
+    la boucle mangerait ``retrieval_request_limit`` sur un texte qu'il a déjà lu.
+
+    ``deps.avertissement`` est réécrit à CHAQUE requête réussie, et non
+    accumulé : il décrit la dernière, qui est celle qui sert les chiffres. Une
+    requête corrigée efface donc ce qu'on disait de celle qu'elle remplace.
+    """
+    remarques: list[str] = []
+    avertissements: list[str] = []
+
+    absentes = grandeurs_non_projetees(query)
+    if absentes and not deps.relance_de_classement:
+        deps.relance_de_classement = True
+        grandeurs = " et ".join(f"`{g}`" for g in absentes)
+        remarques.append(RELANCE_DE_CLASSEMENT.format(grandeurs=grandeurs))
+
+    connues = deps.tables_connues()
+    multipliee = somme_multipliee(query, connues, deps.sonde())
+    if multipliee is not None:
+        avertissements.append(multipliee.pour_l_utilisateur())
+        if not deps.relance_de_multiplication:
+            deps.relance_de_multiplication = True
+            remarques.append(multipliee.pour_le_modele())
+
+    non_filtree = somme_sql_sans_son_filtre(query, connues, deps.filtres)
+    if non_filtree is not None:
+        avertissements.append(non_filtree.pour_l_utilisateur())
+        if not deps.relance_de_filtre:
+            deps.relance_de_filtre = True
+            remarques.append(non_filtree.pour_le_modele())
+
+    deps.avertissement = "\n\n".join(avertissements)
+    return remarques
 
 
 def composer_le_prompt(dialect: str, dictionnaire: DictionnaireInjecte | None) -> str:
@@ -208,6 +290,7 @@ def run_retrieval(
     model: Model | None = None,
     settings: Settings | None = None,
     dictionary: str | None = None,
+    filtres: list[FiltreMonte] | None = None,
 ) -> RetrievalResult:
     """Répond à une question par une requête SQL sur la source fournie.
 
@@ -215,6 +298,12 @@ def run_retrieval(
     ``None`` = la source n'en déclare pas. Il est taillé au budget ICI et non
     chez l'appelant : le plafond est un réglage de cet agent, et un appelant qui
     l'oublierait renverrait un prompt sans plafond sans s'en apercevoir.
+
+    ``filtres`` porte les filtres que les sources montées déclarent sur leurs
+    SOMMES, sous les noms de tables du périmètre — même déclaration et même
+    règle que pour le code d'analyse (``agents/analysis/consigne``). Une requête
+    qui somme sans l'un d'eux repart au modèle avec le fait ; si la relance ne
+    corrige pas, la réponse est servie AVEC l'avertissement.
     """
     settings = settings or get_settings()
     dictionnaire = preparer(dictionary, settings.dictionary_max_chars)
@@ -222,6 +311,7 @@ def run_retrieval(
         adapter=adapter,
         max_rows=settings.retrieval_max_rows,
         dictionnaire=dictionnaire,
+        filtres=list(filtres or []),
     )
     agent = build_retrieval_agent()
     run = agent.run_sync(
@@ -237,5 +327,6 @@ def run_retrieval(
         result=result,
         executed=deps.executed,
         tools_used=deps.tools_used,
+        avertissement=deps.avertissement,
         dictionary_notice=dictionnaire.avis,
     )

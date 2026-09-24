@@ -59,14 +59,22 @@ class FiltreMonte:
     ``prefixe`` vaut ``"ventes_"`` dans un croisement, où chaque table porte le
     nom de sa source (`agents/retrieval/croisement`), et ``""`` quand la source
     est seule : ``/data/lignes_commande.csv``.
+
+    Deux noms montés et non un : le chemin d'analyse voit des CSV dans un bac à
+    sable, le chemin SQL voit des tables dans une connexion
+    (`agents/retrieval/verification`). C'est la même déclaration, lue sous les
+    deux formes sous lesquelles elle est montée.
     """
 
     source: str
     prefixe: str
     filtre: FiltreDesSommes
 
+    def table(self, table: str) -> str:
+        return f"{self.prefixe}{table}"
+
     def fichier(self, table: str) -> str:
-        return f"{self.prefixe}{table}.csv"
+        return f"{self.table(table)}.csv"
 
 
 def _chaines(arbre: ast.AST) -> list[str]:

@@ -19,7 +19,9 @@ modèle qui a écrit la requête.
 
 Ce que ce module ne sait pas faire, et l'assume : ce n'est pas un analyseur SQL
 complet. Il masque les littéraux et les commentaires, compte les parenthèses,
-et ne regarde que le niveau zéro — une sous-requête, un ``OVER (…)`` ou un
+et ne regarde que le niveau zéro — cette lecture-là vit dans `lecture`, partagée
+avec `verification` depuis qu'une seconde propriété en a eu besoin au caractère
+près. Il ne regarde donc que le niveau zéro — une sous-requête, un ``OVER (…)`` ou un
 ``STRING_AGG(… ORDER BY …)`` vivent entre parenthèses et sont ignorés. Partout
 où il doute, il conclut « projetée » : un doute coûte au pire un palmarès sans
 ses chiffres, comme avant, là qu'un faux positif coûterait un aller-retour de
@@ -30,6 +32,25 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+
+from data_analyst_agent.agents.retrieval.lecture import (
+    decouper as _decouper,
+)
+from data_analyst_agent.agents.retrieval.lecture import (
+    dernier_au_niveau_zero as _dernier_au_niveau_zero,
+)
+from data_analyst_agent.agents.retrieval.lecture import (
+    masquer as _masquer,
+)
+from data_analyst_agent.agents.retrieval.lecture import (
+    normaliser as _normaliser,
+)
+from data_analyst_agent.agents.retrieval.lecture import (
+    premier_au_niveau_zero as _premier_au_niveau_zero,
+)
+from data_analyst_agent.agents.retrieval.lecture import (
+    profondeurs as _profondeurs,
+)
 
 # Ce qui ferme la liste du ORDER BY dans une requête de haut niveau.
 _FINS_DE_ORDER_BY = ("limit", "offset", "fetch", "for", "union", "intersect", "except", "window")
@@ -139,131 +160,6 @@ def grandeurs_non_projetees(sql: str) -> list[str]:
     return [ecrit for ecrit, couvert in triees if not _est_projetee(couvert, projetees)]
 
 
-# --- lecture du SQL ----------------------------------------------------------
-
-
-def _masquer(sql: str) -> str:
-    """Le SQL, littéraux de chaîne et commentaires remplacés par des blancs.
-
-    Les identifiants cités (``"ma colonne"``, `` `ma colonne` ``) sont
-    CONSERVÉS, à la différence de ``sql.mask_literals`` : un ORDER BY porte
-    couramment sur eux, et les blanchir ferait disparaître la moitié de la
-    comparaison. Les positions sont préservées à l'octet près — le masque sert
-    à REPÉRER, le texte rendu au lecteur est découpé dans l'original.
-    """
-    sortie: list[str] = []
-    position = 0
-    fin = len(sql)
-    while position < fin:
-        caractere = sql[position]
-        if caractere == "'":
-            debut = position
-            position += 1
-            while position < fin:
-                if sql[position] == "'":
-                    if sql[position + 1 : position + 2] == "'":
-                        position += 2
-                        continue
-                    position += 1
-                    break
-                position += 1
-            sortie.append(_blanchir(sql[debut:position]))
-            continue
-        if sql.startswith("--", position):
-            saut = sql.find("\n", position)
-            borne = fin if saut == -1 else saut
-            sortie.append(_blanchir(sql[position:borne]))
-            position = borne
-            continue
-        if sql.startswith("/*", position):
-            ferme = sql.find("*/", position + 2)
-            borne = fin if ferme == -1 else ferme + 2
-            sortie.append(_blanchir(sql[position:borne]))
-            position = borne
-            continue
-        sortie.append(caractere)
-        position += 1
-    return "".join(sortie)
-
-
-def _blanchir(fragment: str) -> str:
-    return "".join("\n" if c == "\n" else " " for c in fragment)
-
-
-def _profondeurs(masque: str) -> list[int]:
-    """Pour chaque position, le nombre de parenthèses ouvertes AVANT elle."""
-    niveaux: list[int] = []
-    courant = 0
-    for caractere in masque:
-        if caractere == ")":
-            courant = max(0, courant - 1)
-        niveaux.append(courant)
-        if caractere == "(":
-            courant += 1
-    return niveaux
-
-
-def _dernier_au_niveau_zero(
-    motif: re.Pattern[str], masque: str, profondeurs: list[int], avant: int | None = None
-) -> int | None:
-    """La dernière occurrence du motif hors de toute parenthèse (``None`` si aucune).
-
-    LA DERNIÈRE, et non la première : ``SELECT a UNION SELECT b ORDER BY c``
-    porte deux SELECT au niveau zéro, et c'est le dernier qui décrit les
-    colonnes rendues.
-    """
-    trouvee = None
-    for occurrence in motif.finditer(masque):
-        if avant is not None and occurrence.start() >= avant:
-            break
-        if profondeurs[occurrence.start()] == 0:
-            trouvee = occurrence.start()
-    return trouvee
-
-
-def _premier_au_niveau_zero(
-    motif: re.Pattern[str], masque: str, profondeurs: list[int], depuis: int, jusqu_a: int
-) -> int | None:
-    for occurrence in motif.finditer(masque, depuis, jusqu_a):
-        if profondeurs[occurrence.start()] == 0:
-            return occurrence.start()
-    return None
-
-
-def _decouper(fragment: str, masque_du_fragment: str) -> list[tuple[str, str]]:
-    """Le fragment coupé aux virgules de niveau zéro, chaque morceau avec son masque.
-
-    Deux textes et non un : **toute comparaison porte sur le masque**, où un
-    commentaire et un littéral ne sont plus que des blancs, et l'original ne
-    sert qu'à REMONTRER au modèle ce qu'il a écrit. Les avoir confondus faisait
-    lire « total -- puis ORDER BY ruse » comme une grandeur.
-    """
-    couples: list[tuple[str, str]] = []
-    depart = 0
-    profondeur = 0
-    for index, caractere in enumerate(masque_du_fragment):
-        if caractere == "(":
-            profondeur += 1
-        elif caractere == ")":
-            profondeur = max(0, profondeur - 1)
-        elif caractere == "," and profondeur == 0:
-            couples.append((fragment[depart:index], masque_du_fragment[depart:index]))
-            depart = index + 1
-    couples.append((fragment[depart:], masque_du_fragment[depart:]))
-    return [c for c in (_rogner(*couple) for couple in couples) if c[1].strip()]
-
-
-def _rogner(original: str, masque: str) -> tuple[str, str]:
-    """Le couple, débarrassé de ce qui n'est que blanc DANS LE MASQUE aux deux bouts.
-
-    C'est ainsi qu'un commentaire de fin — masqué, donc blanc — disparaît aussi
-    du texte qu'on remontre, sans qu'on ait à le reconnaître une seconde fois.
-    """
-    debut = len(masque) - len(masque.lstrip())
-    fin = len(masque.rstrip())
-    return original[debut:fin], masque[debut:fin]
-
-
 # --- les deux listes qu'on compare -------------------------------------------
 
 
@@ -351,15 +247,3 @@ def _est_projetee(terme: str, projetees: set[str]) -> bool:
             for forme in projetees
         )
     return False
-
-
-def _normaliser(expression: str) -> str:
-    """Minuscules, espaces réduits, ponctuation recollée, guillemets d'identifiant retirés.
-
-    ``COUNT( s.id )`` et ``count(s.id)`` sont la même grandeur ; ``"code"`` et
-    ``code`` sont la même colonne. La comparaison porte sur ce qui est calculé,
-    pas sur la façon de l'écrire.
-    """
-    texte = re.sub(r"\s+", " ", expression.strip()).lower()
-    texte = re.sub(r"\s*([(),.])\s*", r"\1", texte)
-    return texte.replace('"', "").replace("`", "").strip()
