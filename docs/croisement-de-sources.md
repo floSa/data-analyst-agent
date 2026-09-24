@@ -1762,3 +1762,111 @@ son rouge ici est un tirage de routage, pas le chemin SQL.
   annulées perdu sur la troisième.
 - **`produites-vs-vendues-fil-lie` ne rend toujours pas 689 et 727** — le
   périmètre s'ajoute au fil, la question reste servie sur `ventes` seule.
+
+## La moitié du périmètre perdue sur un fil lié (C66)
+
+Un fil lié à `ventes`. « compare les quantités produites et les quantités
+vendues par produit » n'a plus rendu ses chiffres depuis C58 : 0/3. Sur le MÊME
+fil, « compare le chiffre d'affaires par produit avec les quantités
+fabriquées » et « est-ce qu'on vend plus que ce qu'on produit ? » passent. Ce
+n'est donc pas « jamais », et c'est l'écart entre les trois qu'il fallait
+mesurer.
+
+### Étape 1 — la sortie du planificateur, tirage par tirage
+
+Avant toute réparation. Moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue
+`sources/metier/catalogue.yaml`, fil lié à `ventes`, 5 tirages par question.
+Le plan est capturé AVANT que les règles le mutent, puis relu après.
+
+| question | plan AVANT les règles | plan APRÈS | ce qui décide |
+|---|---|---|---|
+| « compare les quantités produites et les quantités vendues par produit » | `analyze`, `source='production'`, `sources=[]` — **5/5** | `analyze` sur `ventes` | `_relire_sans_la_source_du_fil` **refuse**, puis `_regle_source_de_la_conversation` repose `ventes` |
+| « compare le chiffre d'affaires par produit avec les quantités fabriquées » | `analyze`, `source='ventes'`, `sources=[]` — **5/5** | `analyze` sur `ventes, production` | `_relire_sans_la_source_du_fil` **ouvre** ; la relecture rend `sources=['ventes','production']` 5/5 |
+| « est-ce qu'on vend plus que ce qu'on produit ? » | `query`, `source='ventes'`, `sources=[]` — **5/5** | `query` sur `ventes, production` | `_relire_sans_la_source_du_fil` **ouvre** ; la relecture rend `source='ventes, production'` 5/5 |
+
+Cinq tirages sur cinq dans les trois cas : le relevé est déterministe, et il ne
+laisse aucune place à un tirage malheureux.
+
+### La cause, telle que mesurée
+
+**Les trois plans nomment UNE source ; ce qui les sépare est LAQUELLE.** Les
+deux questions qui passent échoent la source du fil — `ventes` —, et la
+condition 3 de `_relire_sans_la_source_du_fil` exigeait exactement cela : « le
+plan désigne EXACTEMENT la source du fil ». Celle qui échoue nomme
+`production`, c'est-à-dire l'AUTRE moitié du même périmètre. La relecture lui
+était refusée, au motif écrit dans sa propre docstring — « un plan qui en
+désigne une AUTRE a désobéi à la phrase, donc il l'a lue, et la retirer
+n'apprendrait rien ».
+
+Le relevé dit l'inverse : le modèle a lu la phrase dans les trois cas. Ce qu'il
+en a fait diffère, et le refus se paie deux règles plus loin —
+`_regle_source_de_la_conversation` repose `ventes` par-dessus `production`, la
+source que le planificateur avait vue est perdue, et la question est servie sur
+la moitié de son périmètre. Sans un mot : le tour interroge `ventes`, y trouve
+123 et 125, et ne peut pas calculer 689 et 727.
+
+### La réparation
+
+Un mot retiré à une condition, et rien d'autre : la relecture s'ouvre sur un
+plan qui ne désigne QU'UNE source, quelle qu'elle soit, au lieu du seul plan
+qui échoe celle du fil. La propriété qu'elle lit est « ce plan a nommé au plus
+la moitié d'un périmètre », et elle ne regarde pas lequel des deux noms il
+porte.
+
+Les quatre autres conditions ne bougent pas, et ce sont elles qui bornent : la
+relecture ne peut qu'AJOUTER — elle n'est gardée que si elle désigne un
+périmètre d'au moins deux sources (`_perimetre_croise`, le même décompte
+qu'ailleurs) —, une source imposée par l'appelant la ferme, et un fil vierge ne
+la paie pas. Un tour ordinaire sur un fil lié garde donc son plan, comme avant.
+
+**Aucun prompt n'a bougé** : ni un fichier de `prompts/`, ni une fiche d'outil,
+ni la docstring de `Plan`. Aucune empreinte SHA-256 ne change.
+
+### L'avant/après
+
+Les trois questions du relevé, 5 tirages chacune, valeurs rendues contre les
+oracles. Moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue
+`sources/metier/catalogue.yaml`.
+
+| question | avant | après |
+|---|---|---|
+| `produites-vs-vendues-fil-lie` | **0/3** (C60 → C65) — 689 et 727 absents | **5/5** — 689/123 et 727/125 |
+| `ca-produit-vs-fabrique-fil-lie` | vert | **5/5** — 323 700 € pour 461, annulées exclues et dites |
+| `vend-plus-quon-produit-fil-lie` | vert | **5/5** — 4 413 fabriquées contre 1 828 vendues |
+
+### Les campagnes
+
+Toutes séquentielles. Catalogue lu en tête de chacune :
+`sources/metier/catalogue.yaml`, moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`) — sauf les deux dernières, qui lisent
+leur propre catalogue.
+
+| campagne | repère | ce tour |
+|---|---|---|
+| les 3 questions du relevé, 5 tirages | 0/5, 5/5, 5/5 | **15/15** |
+| croisement complet, 1 tirage | 13/17 | **13/17** |
+| `scripts/mesure_questions_metier.py`, 1 tirage | 12/12 | **12/12** |
+| `uv run pytest -p no:randomly` | 1 621 verts | **1 623 verts** (2 tests ajoutés) |
+| `scripts/mesure_choix_de_source.py` — catalogue `sources/catalogue.yaml` (titanic, iris) | 6/6 | **6/6** — le verrou tient sur `titanic`, la bascule vers `iris` est annoncée |
+| `scripts/mesure_ambiguite_de_source.py`, 1 essai — catalogues `tests/catalogues/ambiguite/*.yaml` | la proposition dans les deux ordres | **1/1 et 1/1** — proposition dans les deux ordres, indépendante de l'ordre du YAML |
+
+Les trois témoins du croisement sont verts : `temoin-une-seule-source`
+(1 496 743 € sur `ventes` seule), `temoin-question-de-sens`, et
+`temoin-faire-choisir`, qui fait toujours choisir. Les quatre rouges du
+croisement sont `fabrique-vendu-stock` (131, le piège des annulées sur trois
+sources), `ca-produit-vs-fabrique-fil-lie`, `vel01-fabrique-vendu` et
+`vendus-sans-fabriquer`. Les trois derniers sont des tirages : le premier rend
+5/5 dans sa campagne dédiée ci-dessus, les deux autres étaient déjà rouges à
+C65 pour n'avoir regardé aucune donnée.
+
+### Ce qui reste
+
+- **`fabrique-vendu-stock` garde son 131** : trois sources, et le filtre des
+  annulées perdu sur la troisième. Inchangé depuis C65.
+- **`vendus-sans-fabriquer` ne regarde aucune donnée** sur son tirage, comme à
+  C65 : le croisement par DIFFÉRENCE n'a toujours pas de mesure stable.
+- **La relecture coûte un appel LLM de plus** sur les tours d'un fil lié où le
+  plan nomme une source autre que celle du fil. Le coût était déjà payé sur
+  ceux qui l'échoent ; il s'étend à ce cas-là, et pas au-delà.
