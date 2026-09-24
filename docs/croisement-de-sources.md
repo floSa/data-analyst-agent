@@ -1510,3 +1510,142 @@ sur cinq.
 - **La première lecture de VEL-02 est instable** — `production, ventes` ou
   `production` selon le tirage. La seconde lecture rattrape le second cas ;
   elle ne rend pas la première stable.
+
+## Un chiffre faux muet dans un CASE, et un bon résultat jeté (C64)
+
+Deux défauts, mesurés sur le même banc, tous deux au bout du chemin SQL. Le
+premier fait taire les deux propriétés de C61 ; le second jette un résultat qui
+avait abouti. Ils n'ont rien en commun sauf l'endroit où ils se paient : ce que
+l'utilisateur lit.
+
+### Défaut 1 — la somme enrobée n'était plus une somme
+
+« pour le VEL-01, combien on en a fabriqué et combien on en a vendu ? » a rendu
+« le VEL-01 a été fabriqué 689 fois, et il a été vendu 141 fois ». L'oracle dit
+123 vendus ; **141 est le même produit sans le filtre des annulées**. Aucune
+remarque au modèle, aucun avertissement à l'utilisateur. Le SQL que le contrôle
+a laissé passer :
+
+```sql
+SELECT SUM(CASE WHEN T1.code_produit = 'VEL-01' THEN T2.quantite ELSE 0 END)
+       AS total_vendu
+FROM ventes_produits AS T1
+INNER JOIN ventes_lignes_commande AS T2 ON T1.produit_id = T2.produit_id
+WHERE T1.code_produit = 'VEL-01';
+```
+
+`_colonnes_sommees` n'acceptait qu'un argument NU : `SUM(colonne)`. Dès que la
+colonne était enrobée — un `CASE`, un `COALESCE`, `quantite * prix`, un cast —,
+l'argument n'était plus une colonne, la portée entière était comptée illisible,
+et les deux propriétés se taisaient. Le module fait le contraire de ce que son
+propre texte annonce : il se tait au doute, et il n'y avait aucun doute ici
+sur ce qui est sommé.
+
+**La propriété qui répare** : chaque colonne ATTEINTE dans l'argument d'une
+somme est une colonne sommée, sous l'expression qui la porte. On descend
+jusqu'aux colonnes. On n'entre pas dans les CONDITIONS — `EQ`, `NEQ`, `IN`,
+`LIKE`, `AND`… et la condition d'un `WHEN` : ce qui s'y lit filtre les lignes,
+il ne dit pas ce qu'on somme. Sans cette réserve, `SUM(CASE WHEN
+T1.code_produit = … THEN T2.quantite END)` aurait été jugé « sommé dans
+`ventes_produits` », et la propriété de multiplication aurait repris une
+requête juste, dans la forme même que le relevé montre.
+
+Un test par forme, sur la base miniature :
+
+| forme | ce qu'elle rend |
+|---|---|
+| `SUM(CASE WHEN code_produit = … THEN quantite ELSE 0 END)` | filtre manquant SIGNALÉ |
+| `SUM(COALESCE(quantite, 0))` | filtre manquant SIGNALÉ |
+| `SUM(quantite * montant_ligne_eur)` | filtre manquant SIGNALÉ |
+| `SUM(CAST(quantite AS BIGINT))` | filtre manquant SIGNALÉ |
+| le même `CASE` avec `WHERE statut <> 'ANN'` | **muet** |
+| `SUM(CASE WHEN statut <> 'ANN' THEN quantite END)` | **muet** — le filtre posé DANS le `CASE` est un filtre |
+| `COUNT(CASE WHEN … THEN quantite END)` | **muet** — un comptage n'est jamais touché |
+| `SUM(CASE WHEN … THEN quantite_produite END)` sur la jointure qui duplique | multiplication SIGNALÉE |
+
+`SUM(quantite * 2)` sur deux tables, la colonne non qualifiée, reste muet : ce
+n'est plus l'expression qui fait douter, c'est la table devinée.
+
+### Défaut 2 — un résultat réussi, jeté par la limite
+
+« au total, combien d'unités sont sorties de l'atelier et combien sont parties
+en commande ? », **3 fois sur 3, à la requête près**. Le déroulé, relevé requête
+par requête :
+
+| essai | issue |
+|---|---|
+| 1 | `FULL OUTER JOIN … ON T1.code_produit = T2.produit_id` — erreur de conversion |
+| 2 | le même, `ON T1.code_produit = T2.code_produit` — colonne inexistante |
+| 3 | `LEFT JOIN … GROUP BY 1, 2` — un `GROUP BY` sur des agrégats |
+| 4 | **RÉUSSIT** — 180 669 / 20 557, et reçoit les deux remarques de C61 |
+| 5 | deux sous-requêtes déjà agrégées, re-sommées : `SUM(T1.quantite_produite)` sur un `FROM (SELECT SUM(…))` — erreur de binder |
+| 6 à 9 | **la même requête, à l'identique, quatre fois** — même erreur |
+| — | `UsageLimitExceeded: request_limit of 10` |
+
+**C'est bien la remarque qui fait dérailler les essais d'après**, et le relevé
+le dit sans le réparer : la relance contre la multiplication demande d'agréger
+chaque table séparément, le modèle écrit les sous-requêtes, puis resomme leur
+résultat déjà agrégé et ne sait plus en sortir. Réécrire la remarque sur cette
+seule lecture serait réparer sans mesure. Ce qui est réparé ici est l'autre
+moitié : un tableau attendait, et il était jeté.
+
+C61 a posé la règle — **jamais en silence, jamais jeté** — et c'était le seul
+endroit du chemin SQL où l'on jetait. L'exception remontait, le nœud de
+récupération la changeait en incident, et l'utilisateur lisait « la source de
+données n'a pas pu être interrogée ». `run_retrieval` sert désormais la
+DERNIÈRE requête réussie quand le budget s'épuise, avec ce qu'elle a de suspect
+et avec le fait qu'elle n'est pas aboutie. Sans une seule réussite, l'exception
+repart telle quelle : c'est bien un incident.
+
+### L'avant/après
+
+Les trois questions ENCHAÎNÉES dans un même processus, un fil neuf par
+question, 3 passes. Posée seule, `vel01-fabrique-vendu` tombe souvent sur une
+autre forme de SQL. Catalogue `sources/metier/catalogue.yaml`, moteur vLLM
+`http://localhost:8100/v1` (`google/gemma-4-E4B-it-qat-w4a16-ct`), lus en tête
+de chaque relevé.
+
+| | avant | après |
+|---|---|---|
+| chiffres faux muets (141, 131, 147) | **0/9** | **0/9** |
+| incidents | **3/9** | **0/9** |
+
+**Le chiffre faux muet ne s'est pas reproduit dans ce relevé-là** : les trois
+passes ont rendu 689 / 123, la forme `CASE` n'est pas ressortie. Le défaut est
+tenu par les tests unitaires, forme par forme, et non par cette campagne. Les
+trois incidents, eux, sont sortis 3 fois sur 3 avant et 0 fois sur 3 après. Ce
+qui est servi à leur place porte les trois avertissements — la limite atteinte,
+la somme multipliée, le filtre manquant — et un tableau (180 669 / 20 557) que
+la réponse dit surévalué. Le chiffre reste faux ; il n'est plus muet, et il
+n'est plus perdu.
+
+### Les campagnes
+
+Séquentielles, jamais deux de front. Le catalogue est lu en tête de chaque
+relevé.
+
+| campagne | catalogue | repère | après ce commit |
+|---|---|---|---|
+| les 3 questions enchaînées, 3 passes | métier | 3 incidents sur 9 | **0 incident sur 9** |
+| croisement complet (1 tirage) | métier | 11/17 | **13/17** |
+| `mesure_questions_metier.py` (1 tirage) | métier | 12/12 | **12/12** |
+| `uv run pytest -p no:randomly` | — | vert | **1 605 verts** |
+
+Les quatre rouges du croisement : `fabrique-vendu-stock` (131, le piège des
+annulées sur trois sources), `produites-vs-vendues-fil-lie` (689 et 727
+absents), `vendus-sans-fabriquer` (aucune donnée regardée sur ce tirage — la
+même question aboutit 3 fois sur 3 dans le relevé enchaîné) et
+`total-fabrique-vs-total-vendu`, qui n'est plus un incident mais rend le
+chiffre multiplié, avertissements compris.
+
+### Ce qui reste
+
+- **La remarque contre la multiplication mène le modèle dans une impasse** sur
+  les deux totaux : sous-requêtes agrégées, puis re-sommées. Relevé, non
+  réparé — le réparer demande sa propre mesure.
+- **`total-fabrique-vs-total-vendu` ne rend toujours pas 4 413 / 1 828.** Il
+  rend un chiffre faux qui se dit faux, ce qui est la règle de C61 et non une
+  réponse juste.
+- **Le chiffre faux muet n'a pas de mesure de bout en bout** : il est tenu par
+  les tests, forme par forme. Une campagne qui le ferait sortir à coup sûr
+  demanderait de fixer la forme du SQL, donc de mesurer le banc.
