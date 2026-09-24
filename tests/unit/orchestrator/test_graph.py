@@ -1492,8 +1492,19 @@ def test_source_omise_catalogue_a_une_source(mini_csv: Path, registry: Registry)
 def test_source_omise_catalogue_multi_sources(
     mini_csv: Path, passager_csv: Path, registry: Registry
 ):
-    """Plusieurs sources et aucun choix : on POSE une question, on ne plante pas."""
-    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", source=None))])
+    """Plusieurs sources et aucun choix : on POSE une question, on ne plante pas.
+
+    Le plan est scripté deux fois : un plan sans source est reposé une fois au
+    planificateur (``_relire_faute_de_source_designee``), et la seconde lecture
+    ne désigne rien de plus. Rien n'est retenu, la question part comme avant.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source=None)),
+            plan_response(Plan(capability="query", source=None)),
+        ],
+    )
     catalog = Catalog(
         sources=[
             FileSource(name="mini", path=mini_csv),

@@ -1681,6 +1681,12 @@ class Orchestrator:
         if sans_le_fil is not None:
             plan = sans_le_fil
         question = self._appliquer_les_regles(plan, ctx)
+        redesignee = self._relire_faute_de_source_designee(
+            plan, ctx, question, system_prompt, state, mesures
+        )
+        if redesignee is not None:
+            plan = redesignee
+            question = self._appliquer_les_regles(plan, ctx)
         relue = self._relire_sans_la_clause_dabsence(plan, ctx, system_prompt, state, mesures)
         if relue:
             question = self._appliquer_les_regles(plan, ctx)
@@ -1690,6 +1696,8 @@ class Orchestrator:
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         if sans_le_fil is not None:
             detail += " — seconde lecture sans la source du fil"
+        if redesignee is not None:
+            detail += " — seconde lecture faute de source désignée"
         if relue:
             detail += f" — seconde lecture sans « {relue} »"
         return {
@@ -1758,6 +1766,147 @@ class Orchestrator:
             return None
         prompt, _ = self._peser_le_prompt({**state, "source_in": None})
         second = self._demander_un_plan(prompt, state, dict(mesures))
+        if second is None or not self._perimetre_croise(second, ctx):
+            return None
+        return second
+
+    # Le FAIT qui manque au planificateur quand il rend un plan sur les données
+    # sans désigner de source : que sa première lecture n'en a désigné aucune, et
+    # qu'aucune réponse n'existe dans cet état. Il ne dit rien de la question —
+    # ni un mot, ni une tournure, ni une paire de sources : il énonce l'état du
+    # PLAN qu'on vient de recevoir. C'est ce qui le rend indépendant de la
+    # phrase, et c'est la seule propriété qu'on lui demande de tenir.
+    #
+    # Ajouté à la suite du prompt, comme les trois contextes de conversation
+    # (``_contexte_de_source`` et ses voisines) : le gabarit ne bouge pas, et
+    # l'empreinte SHA-256 de `prompts/planner.txt` non plus.
+    FAIT_SANS_SOURCE_DESIGNEE = (
+        "CONSTAT SUR TA PREMIÈRE LECTURE : tu as classé cette demande comme une "
+        "demande de données, et tu n'as désigné qu'une source au plus. Or rien "
+        "ne garantit qu'une seule suffise. Relis les descriptions ci-dessus, et "
+        "énumère dans `sources` TOUTES celles dont la description couvre une "
+        "partie de ce qui est demandé — une seule si une seule suffit, plusieurs "
+        "si la demande porte sur des données qu'elles ne portent pas ensemble."
+    )
+
+    def _relire_faute_de_source_designee(
+        self,
+        plan: Plan,
+        ctx: PlanContext,
+        question: str | None,
+        system_prompt: str,
+        state: OrchestratorState,
+        mesures: dict,
+    ) -> Plan | None:
+        """Repose la MÊME question quand le tour allait servir l'inventaire.
+
+        **Le défaut, mesuré le 2026-09-24**, catalogue métier, conversation
+        neuve, aucune source liée, 5 tirages par question, la sortie EXACTE du
+        planificateur relevée à chaque tirage :
+
+            « Pour chaque produit, donne les unités vendues et les
+              unités fabriquées. »                 query, source='ventes'   5/5
+            « Quels produits a-t-on moins vendus
+              que fabriqués ? Donne les quantités. » query, source='ventes'  5/5
+            « Pour le VEL-02, combien d'unités avons-nous fabriquées
+              et combien en avons-nous vendues ? »
+                                    query, source='production, ventes'      3/5
+                                    query, source='production'              2/5
+
+        Les trois reçoivent l'inventaire des cinq sources là où la troisième,
+        quand elle empaquette DEUX noms, rend ses chiffres.
+
+        **La cause n'est pas un plan muet.** Le planificateur DÉSIGNE : il lit
+        les descriptions, `ventes` porte les ventes, `production` la
+        fabrication, et il écrit un nom. Ce qui manque à ce nom, c'est d'être
+        le SECOND : une question qui demande le fabriqué ET le vendu ne tient
+        pas dans une source, et le plan n'en nomme qu'une.
+
+        **Ce qui transforme cette demi-désignation en inventaire est C57.**
+        ``_regle_source_de_la_conversation`` efface, sur un fil vierge, toute
+        source que personne n'a validée — ni l'utilisateur en la nommant, ni le
+        fil en la portant (``elif plan.source in declarees: plan.source =
+        None``). C'est une bonne règle et elle reste : c'est elle qui rend le
+        comportement indépendant de l'ordre de déclaration du YAML. Mais elle
+        efface aussi la moitié d'un périmètre, et ``_regle_choisir_la_source``
+        voit alors un plan sans source. Un périmètre de DEUX noms, lui, survit
+        — ``_regle_croiser_les_sources`` passe avant et le pose —, et c'est
+        exactement l'écart entre les 3/5 qui répondent et les 2/5 qui non.
+
+        **Servir l'inventaire à un plan qui demande des données est une réponse
+        fausse**, et c'est la propriété qu'on répare — pas une famille de
+        tournures. Le plan dit deux choses à la fois : « il faut des données »
+        et « je ne sais plus où ». La seconde n'annule pas la première : elle
+        appelle un second tour de lecture, comme l'agent de réparation en
+        accorde un à une requête SQL qui a échoué.
+
+        **Ce qu'on rend au modèle est un CONSTAT SUR SON PROPRE PLAN**
+        (``FAIT_SANS_SOURCE_DESIGNEE``) : il a classé une demande de données et
+        n'a désigné qu'une source au plus. Pas un mot de la question, pas une
+        tournure, pas une paire de sources citée en exemple. Mesuré sur le
+        planificateur seul, 8 tirages, le constat ajouté au prompt :
+
+            vel02          sources=['production','ventes']            8/8
+            par-produit    sources=['ventes','production']            7/8
+                           source='ventes', sources=['production']    1/8
+            moins-vendus   sources=['ventes','production']            8/8
+
+        Une première rédaction du constat — « tu n'as désigné AUCUNE source,
+        nomme celle qui porte ce qui est demandé » — rendait `production` seul
+        8/8 sur vel02 : elle demandait UNE source, et elle l'obtenait. Le
+        constat garde donc de la première lecture ce qu'elle a vraiment fait
+        (au plus une source) et laisse le compte ouvert.
+
+        **Le gabarit ne bouge pas.** Le constat est ajouté à la suite du
+        prompt, comme les trois contextes de conversation
+        (``_contexte_de_source`` et ses voisines) : l'empreinte SHA-256 de
+        `prompts/planner.txt` ne bouge pas d'un caractère.
+
+        **Cinq conditions, et il les faut toutes** — c'est ce qui borne le coût
+        à un appel LLM sur les seuls tours qui, sans lui, ne rendaient rien :
+
+        1. les règles se sont arrêtées sur une question. Un tour qui aboutit ne
+           passe jamais ici : ce qui est troqué est une question posée à
+           l'utilisateur contre une réponse, jamais une réponse contre une autre ;
+        2. la capacité interroge une source. ``_regle_relire_une_requete_en_-
+           prediction`` est passée AVANT : un `query` sans source qu'elle a relu
+           en `predict` ne porte plus une capacité sur les données, et la
+           condition le voit ;
+        3. le plan ne désigne plus RIEN — ni ``source``, ni ``sources``. « ventes
+           ou production ? » ressort du planificateur avec ``source='ventes,
+           production'`` et le garde jusqu'ici, 5 tirages sur 5 : elle ne
+           remplit pas cette condition, et le témoin qui la garde reste la
+           question du choix ;
+        4. le catalogue déclaré en contient plusieurs. Avec une seule source,
+           ``_regle_source_de_la_conversation`` a déjà fait le repli ;
+        5. la seconde lecture désigne un PÉRIMÈTRE — au moins deux sources
+           déclarées, au sens de ``_perimetre_croise``, qui est le même
+           décompte qu'ailleurs et non un second.
+
+        **La condition 5 est celle qui ne défait pas C57**, et c'est la seule
+        raison de la préférer à « désigne au moins une source ». Une source
+        seule redemandée au modèle serait une source DEVINÉE de plus : elle
+        rouvrirait la dépendance à l'ordre du YAML que C57 a fermée, et sur le
+        catalogue d'ambiguïté la bonne réponse reste de faire choisir. Une
+        demande qui porte sur deux sources, elle, n'est pas ambiguë — elle est
+        double. Quand la seconde lecture n'en nomme qu'une, on garde le premier
+        plan et le tour se déroule comme si cette méthode n'existait pas.
+
+        Une source IMPOSÉE par l'appelant la ferme d'elle-même : ``ask(source=)``
+        remplit ``plan.source`` avant les règles (``_regle_source_imposee``), et
+        la condition 3 n'est plus tenue.
+        """
+        if question is None:
+            return None
+        if plan.capability not in self._SOURCE_CAPABILITIES:
+            return None
+        if plan.source or plan.sources:
+            return None
+        if len(ctx.catalogue_declare.sources) <= 1:
+            return None
+        second = self._demander_un_plan(
+            f"{system_prompt}\n{self.FAIT_SANS_SOURCE_DESIGNEE}", state, dict(mesures)
+        )
         if second is None or not self._perimetre_croise(second, ctx):
             return None
         return second

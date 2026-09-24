@@ -259,6 +259,44 @@ QUESTIONS: tuple[Question, ...] = (
         attendu="4 413 fabriquées, 1 828 vendues (annulées exclues)",
         montre="NEUVE — deux totaux, et le piège des annulées sur le second",
     ),
+    # ---- LE RELEVÉ DU PILOTE DU 2026-09-24, SUR FIL VIERGE ---------------
+    #
+    # Trois phrases qui recevaient l'INVENTAIRE des cinq sources au lieu d'une
+    # réponse — conversation neuve, aucune source liée. Elles ne sont pas des
+    # variantes de celles du haut : le planificateur y désigne UNE source (« les
+    # ventes »), C57 l'efface faute de validation, et la règle du choix sert le
+    # catalogue à qui demandait des chiffres. Elles gardent la seconde lecture
+    # qui répare ce bord (``_relire_faute_de_source_designee``).
+    Question(
+        cle="vel02-fabrique-vendu-pilote",
+        message=(
+            "Pour le VEL-02, combien d'unités avons-nous fabriquées "
+            "et combien en avons-nous vendues ?"
+        ),
+        nombres=(484, 130),
+        # 147 est le même produit sans le filtre des annulées.
+        interdits=(147,),
+        attendu="VEL-02 : 484 fabriqués, 130 vendus",
+        montre="LE RELEVÉ DU PILOTE — l'inventaire servi 2 fois sur 8 sur fil vierge",
+    ),
+    Question(
+        cle="par-produit-vendu-fabrique",
+        message="Pour chaque produit, donne les unités vendues et les unités fabriquées.",
+        nombres=(689, 123, 727, 125),
+        interdits=(141, 131),
+        attendu="VEL-01 689 fabriqués / 123 vendus, VEL-04 727 / 125",
+        montre="LE RELEVÉ DU PILOTE — l'inventaire, et aucune source désignée",
+    ),
+    Question(
+        cle="moins-vendus-que-fabriques",
+        message="Quels produits a-t-on moins vendus que fabriqués ? Donne les quantités.",
+        # Les huit vélos, tous fabriqués plus qu'ils ne sont vendus. Les quatre
+        # accessoires ne sont pas fabriqués : ils ne peuvent pas y figurer.
+        nombres=(689, 123, 727, 125),
+        interdits=(141, 131),
+        attendu="les 8 vélos, VEL-01 689/123 et VEL-04 727/125 en tête",
+        montre="LE RELEVÉ DU PILOTE — une comparaison, et l'inventaire pour réponse",
+    ),
     # ---- LES TROIS TÉMOINS -----------------------------------------------
     Question(
         cle="temoin-une-seule-source",

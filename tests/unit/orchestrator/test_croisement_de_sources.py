@@ -803,3 +803,134 @@ def test_un_fil_vierge_ne_paie_aucune_seconde_lecture(tmp_path: Path):
 
     assert rendu["plan"].source == "ventes"
     assert len(llm.prompts_for(PLANNER)) == 1
+
+
+# --- le fil VIERGE, et la seconde lecture faute de source désignée ---------------
+#
+# L'autre bord du même défaut, et il se joue à l'opposé : là-haut c'est la
+# source du FIL qui écrase le périmètre ; ici il n'y a pas de fil, et c'est
+# C57 qui EFFACE la demi-désignation du planificateur
+# (``_regle_source_de_la_conversation``, branche `elif plan.source in
+# declarees`). Le tour finit sur l'inventaire des sources, servi à quelqu'un
+# qui demandait des chiffres.
+
+MOINS_VENDUS = "Quels produits a-t-on moins vendus que fabriqués ? Donne les quantités."
+
+
+def test_un_plan_qui_ne_nomme_qu_une_source_sur_un_fil_vierge_est_relu(tmp_path: Path):
+    """Le relevé du 2026-09-24 : `source='ventes'` 5/5, effacé, puis l'inventaire.
+
+    Le planificateur avait bien lu les descriptions — il a nommé une source. Ce
+    qui lui manque, c'est la seconde : la question demande le vendu ET le
+    fabriqué. La demi-désignation ne survit pas à C57, et la règle du choix
+    sert alors l'inventaire à une demande de données.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="ventes")),
+            plan_response(Plan(capability="query", sources=["ventes", "production"])),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat(MOINS_VENDUS, source_in=""))
+
+    assert "clarification" not in rendu
+    assert rendu["plan"].source == "ventes, production"
+    assert "seconde lecture faute de source désignée" in rendu["trace"][0].detail
+
+
+def test_une_seconde_lecture_qui_ne_nomme_toujours_qu_une_source_ne_change_rien(
+    tmp_path: Path,
+):
+    """La condition qui ne défait pas C57 : une source seule reste une source DEVINÉE.
+
+    C'est le bord qui garde le catalogue d'ambiguïté. Redemander au modèle
+    jusqu'à ce qu'il lâche un nom rouvrirait la dépendance à l'ordre de
+    déclaration du YAML ; une demande qui porte sur deux sources, elle, n'est
+    pas ambiguë — elle est double. Quand la relecture n'en nomme qu'une, le
+    premier plan reste, et l'inventaire est la réponse due.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="ventes")),
+            plan_response(Plan(capability="query", source="production")),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat(MOINS_VENDUS, source_in=""))
+
+    assert "source(s) de données" in rendu["clarification"]
+    assert len(llm.prompts_for(PLANNER)) == 2
+
+
+def test_le_constat_ne_parle_que_du_plan_et_jamais_de_la_question(tmp_path: Path):
+    """Ce qu'on rend au modèle est un fait sur SA sortie, pas un mot de la phrase.
+
+    Le garde-fou de la consigne : aucune règle de prompt qui énumère des
+    tournures. Le constat est ajouté à la suite du prompt — le gabarit ne bouge
+    pas, et l'empreinte SHA-256 de `prompts/planner.txt` non plus.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="ventes")),
+            plan_response(Plan(capability="query", sources=["ventes", "production"])),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    orchestrateur._plan_node(_etat(MOINS_VENDUS, source_in=""))
+
+    second = llm.systems_for(PLANNER)[1]
+    assert Orchestrator.FAIT_SANS_SOURCE_DESIGNEE in second
+    for mot in ("vendus", "fabriqués", "quantités", "produits"):
+        assert mot not in Orchestrator.FAIT_SANS_SOURCE_DESIGNEE
+
+
+def test_un_plan_qui_empaquette_deux_noms_ne_paie_aucune_seconde_lecture(tmp_path: Path):
+    """« ventes ou production ? » : le témoin qui doit continuer de faire choisir.
+
+    Le planificateur en ressort avec ``source='ventes, production'`` 5 tirages
+    sur 5, et ce nom survit à C57 (la branche d'effacement ne voit pas un nom
+    déclaré). La troisième condition n'est donc pas tenue : rien n'est relu, et
+    la question du choix part comme avant.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER, [plan_response(Plan(capability="query", source="ventes, production"))]
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat("ventes ou production ?", source_in=""))
+
+    assert "Sur quelle source veux-tu travailler" in rendu["clarification"]
+    assert len(llm.prompts_for(PLANNER)) == 1
+
+
+def test_une_source_imposee_ferme_la_seconde_lecture_du_fil_vierge(tmp_path: Path):
+    """`source=` est un paramètre d'API : ``_regle_source_imposee`` la remplit, et c'est fini."""
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", source=""))])
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat(MOINS_VENDUS, source_in="", source_name="ventes"))
+
+    assert rendu["plan"].source == "ventes"
+    assert len(llm.prompts_for(PLANNER)) == 1
+
+
+def test_une_prediction_relue_ne_paie_aucune_seconde_lecture(tmp_path: Path):
+    """La deuxième condition : ``_regle_relire_une_requete_en_prediction`` passe AVANT.
+
+    Un `query` sans source qu'elle a relu en `predict` ne porte plus une
+    capacité sur les données — et une prédiction n'a besoin d'aucune source.
+    """
+    llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="predict"))])
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat("prédis la survie d'un passager", source_in=""))
+
+    assert rendu["plan"].capability == "predict"
+    assert len(llm.prompts_for(PLANNER)) == 1

@@ -73,10 +73,25 @@ def orchestrateur(llm: ScriptedLLM, catalogue: Catalog, registre: Registry) -> O
 
 
 def une_requete(source: str | None = None) -> ScriptedLLM:
-    """Un planificateur qui classe en `query`, et un agent SQL qui répond."""
+    """Un planificateur qui classe en `query`, et un agent SQL qui répond.
+
+    Le plan est scripté DEUX fois, et la seconde n'est consommée que par les
+    tours qui allaient servir l'inventaire : depuis C63, un plan qui demande des
+    données sans désigner de source est reposé une fois au planificateur
+    (``_relire_faute_de_source_designee``). La seconde réponse est la même que
+    la première — elle ne désigne toujours rien —, donc rien n'est retenu et le
+    tour se déroule comme avant, à un appel près. C'est exactement ce que ces
+    tests doivent continuer de voir : l'inventaire, proposé.
+    """
     return (
         ScriptedLLM()
-        .script(PLANNER, [plan_response(Plan(capability="query", source=source))])
+        .script(
+            PLANNER,
+            [
+                plan_response(Plan(capability="query", source=source)),
+                plan_response(Plan(capability="query", source=source)),
+            ],
+        )
         .script(
             RETRIEVAL,
             [tool_call("run_sql", {"query": "SELECT count(*) AS n FROM t"}), text("Deux lignes.")],
