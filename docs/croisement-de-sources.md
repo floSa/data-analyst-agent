@@ -885,3 +885,169 @@ l'image du bac à sable alors que `to_markdown()` est une tournure naturelle. Le
 correctif de ce commit ne peut rien pour ces tours : il sert ce que le code a
 imprimé, et ce code-là n'a rien imprimé. Ce qui les réparerait est ailleurs —
 la liste des bibliothèques de `prompts/analysis.txt`, ou l'image du bac à sable.
+
+## Le filtre des annulées oublié sur les quantités (C60)
+
+Le défaut que C58 a rendu visible : « compare les quantités produites et les
+quantités vendues par produit » rendait **141 et 131** vendus pour VEL-01 et
+VEL-04. 689 et 727 étaient justes ; 141 et 131 sont les quantités vendues SANS
+le filtre des commandes annulées. Les oracles, recalculés dans la base :
+
+| produit | vendu, `statut <> 'ANN'` | vendu, brut |
+|---|---|---|
+| VEL-01 | **123** | 141 |
+| VEL-04 | **125** | 131 |
+
+Un chiffre faux et plausible. On ne savait pas pourquoi, et on ne l'a pas
+supposé : la cause a été mesurée avant d'écrire une ligne.
+
+### Le relevé, essai par essai
+
+Quatre questions, trois tirages chacune, moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue `sources/metier/catalogue.yaml`.
+Pour chaque essai de l'analyse : le prompt système et le message EXACTS que
+l'agent reçoit, le code écrit, ce que le bac à sable rend.
+
+**`produites-vs-vendues` (fil vierge, `analyze sur ventes, production`)** — 0/3,
+les trois tirages identiques :
+
+- le dictionnaire de `ventes` est dans le prompt système, **entier** : 15 866
+  caractères pour les deux dictionnaires, sous le budget doublé, aucune section
+  écartée ; le piège nº 1 y est, et la phrase « toute somme d'**unités vendues
+  ou expédiées** » aussi ;
+- le code lit `ventes_lignes_commande.csv` et `ventes_produits.csv`, **jamais
+  `ventes_commandes.csv`** — la table où vit `statut` ;
+- `statut` et `'ANN'` n'apparaissent **nulle part** dans le code ;
+- il écrit lui-même, en commentaire : « Aucune règle spécifique mentionnée pour
+  la vente de produits » ;
+- essai 1 : `KeyError` ou `to_markdown` sans `tabulate` ; essai 2 : il réussit,
+  et imprime 141 et 131.
+
+**`produites-vs-vendues-fil-lie` (fil `ventes`, `analyze sur ventes`)** — 0/3,
+mais pour une autre raison : le code **filtre** les annulées trois fois sur
+trois (`df[df['statut'] != 'ANN']`, commentaire « Piège 1 ») ; quand il imprime
+VEL-01 et VEL-04, c'est 123 et 125. Ce qui manque, c'est `production` : le plan n'attache que `ventes`, et 689
+et 727 ne peuvent pas être calculés. Défaut de périmètre, pas de filtre.
+
+**`vel01-fabrique-vendu` et `vel04-production-ventes`** — 0/3 chacune, et elles
+ne passent **pas par l'analyse** : `query sur ventes, production`, chemin SQL.
+Le SQL joint `production_ordres_fabrication` à `ventes_lignes_commande` par le
+produit et **démultiplie les deux côtés** (27 626 « fabriqués » pour VEL-04,
+26 871 pour VEL-01) ; le filtre manque aussi, mais le produit cartésien écrase
+tout. Le dictionnaire de `ventes` est dans le prompt SQL, entier. Défaut
+distinct, hors de cette tâche.
+
+### La cause, telle que mesurée
+
+**Le dictionnaire arrive ; le code l'ignore.** Même source, même règle, même
+agent : seule, `ventes` fait filtrer le code trois fois sur trois ; croisée
+avec `production`, le code ne joint plus `commandes` et ne filtre plus. Ce
+n'est pas un défaut d'acheminement — il n'y avait rien à faire arriver —, et
+ce n'est pas une phrase de plus qui l'aurait réparé : la phrase était lue.
+
+Et l'exécution **réussit** : la boucle de correction ne se déclenche que sur
+une erreur. Un chiffre faux qui ne lève rien la traversait sans être vu.
+
+### La réparation
+
+`ventes` déclare au catalogue le filtre qu'elle impose à ses sommes
+(`filtre_des_sommes` : `commandes.statut`, `exclure: ANN`, et les trois colonnes
+dont la somme l'exige). `agents/analysis/consigne.py` vérifie le code produit :
+s'il lit une table déclarée, nomme une de ces colonnes, somme, et ne porte
+nulle part `'ANN'`, la boucle le renvoie au modèle avec ce fait — même quand il
+a réussi.
+
+**Par une propriété du code, comme `agents/retrieval/classement.py` pour le
+SQL.** Rien n'est lu dans les tournures de la question, et rien dans le Markdown
+du dictionnaire : un dictionnaire de démonstration pose un filtre pour COMPTER
+et le refuse pour SOMMER, et un analyseur de texte aurait appris la règle à
+l'envers sur l'un des deux. Les prompts et les fiches d'outils ne bougent pas ;
+l'empreinte SHA-256 non plus.
+
+**Le comptage n'est jamais touché.** « combien de commandes » → 180, pas 164 :
+un comptage ne nomme aucune colonne de mesure (`len`, `size`, `count` sur un
+identifiant), donc la propriété ne le voit pas, même quand il additionne ses
+propres effectifs. Quatre cas de test le fixent, dont les deux comptages du
+dictionnaire.
+
+**Un garde-fou ne jette pas une réponse.** Le dernier calcul réussi est gardé :
+si les essais s'épuisent — ou si l'essai de correction plante — c'est lui qui
+est servi, avec un avertissement sous la réponse, et non « l'analyse n'a pas
+abouti ». Un commentaire qui cite la règle ne compte pas comme filtre : seules
+les chaînes du code sont lues.
+
+Ce qu'elle ne sait pas faire : un filtre posé sans écrire la valeur
+(`isin(['LIV', 'EXP'])`) est pris pour un oubli. Le coût est un essai de plus,
+et au pire un avertissement de trop sous un chiffre juste.
+
+### L'avant/après, les quatre questions
+
+Mêmes conditions, trois tirages, séquentiels.
+
+| question | chemin | avant | après | ce qui est rendu, après |
+|---|---|---|---|---|
+| `produites-vs-vendues` | analyse, deux sources | **0/3** — VEL-01 141, VEL-04 131 | **3/3** | VEL-01 **123** / 689, VEL-04 **125** / 727, total vendu 1 828 |
+| `produites-vs-vendues-fil-lie` | analyse, `ventes` seule | 0/3 — filtre posé, `production` absente | 0/3 | inchangé, même cause |
+| `vel01-fabrique-vendu` | SQL | 0/3 — 141, puis 3 384 / 26 871 | 0/3 | 3 384 / 26 871, inchangé |
+| `vel04-production-ventes` | SQL | 0/3 — 2 751 / 27 626 | 0/3 | 2 751 / 27 626, inchangé |
+
+Sur les trois tirages après, le déroulé est le même :
+
+```
+essai 1  ImportError  `Import tabulate` failed   (to_markdown)
+essai 2  ok           somme `quantite` sans 'ANN' → constat renvoyé au modèle
+essai 3  ok           joint ventes_commandes.csv, statut != 'ANN' → 123, 125
+```
+
+**La marge est nulle** : la correction arrive au troisième et dernier essai,
+parce que le premier est perdu sur `tabulate` — l'absence que C59 a laissée à
+la décision du propriétaire. Un essai de moins, et c'est l'avertissement qui
+serait servi à la place du chiffre juste.
+
+### La sonde du comptage, par le chemin d'analyse
+
+Fil `ventes`, deux tirages. Oracle calculé dans la base : 100 / 44 / 36
+commandes (magasin / en ligne / grossiste) sans filtre ; 91 / 38 / 35 si l'on
+écartait à tort les annulées.
+
+| question | chemin | rendu | constat envoyé |
+|---|---|---|---|
+| « Fais-moi un graphique du nombre de commandes par canal » | analyse | **100 / 44 / 36**, 2/2 | aucun |
+| « trace le nombre de lignes de commande par produit » | SQL | 39 VEL-01, 38 VEL-04… (463 lignes) | sans objet |
+
+La seconde est partie au SQL : elle ne sonde pas la vérification, elle est
+notée pour ce qu'elle est.
+
+### Les campagnes
+
+Séquentielles, jamais de front. Moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue lu en tête de chaque relevé :
+`sources/metier/catalogue.yaml`.
+
+| campagne | repère | après ce commit |
+|---|---|---|
+| croisement de sources (1 tirage) | 7/14 (C59) | **8/14** |
+| questions métier (1 tirage) | 36/36 à 3 tirages | **12/12** |
+
+**Croisement.** `produites-vs-vendues` passe (123 et 125 servis) ; les trois
+témoins restent verts. Les six écarts ne tiennent pas au filtre : trois
+questions sur fil vierge où le plan ne regarde aucune donnée (`source=''`, le
+bord de C57) ; `vel04-production-ventes` et `total-fabrique-vs-total-vendu` sur
+le chemin SQL ; `produites-vs-vendues-fil-lie`, où `production` n'est pas
+attachée. Un tirage ne tranche rien : le point gagné est celui que les trois
+tirages de l'avant/après ont établi, pas un de plus.
+
+**Métier.** Les douze questions passent, dont « combien de commandes » (180,
+aucun filtre) et le graphique du CA par canal. La vérification n'y retire aucun
+chiffre juste.
+
+### Ce qui reste
+
+- **Le chemin SQL du croisement resserré** (`vel01-…`, `vel04-…`) : un produit
+  cartésien entre ordres de fabrication et lignes de commande, puis le filtre
+  manquant. La même propriété pourrait se vérifier sur le SQL ; ce n'est pas
+  fait ici.
+- **Le fil lié à `ventes`** n'attache pas `production` pour une question qui la
+  nomme.
+- **`tabulate`** coûte un essai à chaque tour de cette question, et c'est lui qui
+  ramène la marge à zéro.
