@@ -1743,11 +1743,35 @@ class Orchestrator:
 
         1. un fil lié — sans source de travail, il n'y a pas de phrase à retirer ;
         2. une capacité qui interroge une source ;
-        3. le plan désigne EXACTEMENT la source du fil, et rien d'autre : ni un
+        3. le plan ne désigne qu'UNE source, quelle qu'elle soit : ni un
            périmètre dans ``sources``, ni un second nom empaqueté dans
-           ``source``. Un plan qui a déjà vu deux sources n'a rien à relire, et
-           un plan qui en désigne une AUTRE a désobéi à la phrase — donc il l'a
-           lue, et la retirer n'apprendrait rien ;
+           ``source``. Un plan qui a déjà vu deux sources n'a rien à relire.
+
+           **La condition disait d'abord « exactement la source du fil », et
+           c'est ce mot-là qui laissait passer le défaut.** Mesuré le
+           2026-09-24, catalogue métier, fil lié à `ventes`, 5 tirages, la
+           sortie du planificateur relevée AVANT toute règle :
+
+               « compare les quantités produites et les
+                 quantités vendues par produit »      analyze, source='production'  5/5
+               « compare le chiffre d'affaires par produit
+                 avec les quantités fabriquées »      analyze, source='ventes'      5/5
+               « est-ce qu'on vend plus que
+                 ce qu'on produit ? »                 query,   source='ventes'      5/5
+
+           Les deux dernières ÉCHOENT le fil : la relecture s'ouvrait, et elle
+           rendait le périmètre 5 fois sur 5. La première désigne `production`
+           — l'autre moitié —, la relecture était refusée, et
+           ``_regle_source_de_la_conversation`` reposait `ventes` par-dessus :
+           la source que le planificateur avait vue était perdue, et la
+           question servie sur la moitié du périmètre.
+
+           Ce qui distinguait les deux cas n'était donc pas que le modèle ait
+           lu la phrase ou non — il l'a lue dans les deux — mais LEQUEL des
+           deux noms il avait gardé. Un plan qui n'en nomme qu'un, sur un fil
+           qui en porte un, a nommé au plus la moitié d'un périmètre : c'est
+           cette propriété qui ouvre la relecture, et elle ne regarde pas
+           lequel ;
         4. la seconde lecture désigne un périmètre. Sinon on garde le premier
            plan, et le tour se déroule comme si cette méthode n'existait pas.
 
@@ -1762,7 +1786,7 @@ class Orchestrator:
         if plan.capability not in self._SOURCE_CAPABILITIES or plan.sources:
             return None
         designee = introspection.sources_nommees(plan.source or "", ctx.catalogue_declare)
-        if len(designee) != 1 or designee[0].name != ctx.source_de_travail:
+        if len(designee) != 1:
             return None
         prompt, _ = self._peser_le_prompt({**state, "source_in": None})
         second = self._demander_un_plan(prompt, state, dict(mesures))

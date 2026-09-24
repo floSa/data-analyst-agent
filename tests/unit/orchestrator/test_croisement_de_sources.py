@@ -794,6 +794,56 @@ def test_une_source_imposee_ferme_la_seconde_lecture(tmp_path: Path):
     assert len(llm.prompts_for(PLANNER)) == 1
 
 
+def test_une_source_AUTRE_que_celle_du_fil_est_relue_elle_aussi(tmp_path: Path):
+    """Le relevé du 2026-09-24 : le plan nomme `production`, le fil porte `ventes`.
+
+    C'est l'autre moitié du même périmètre, et elle était refusée. La condition
+    exigeait que le plan ÉCHOE la source du fil ; « compare les quantités
+    produites et les quantités vendues par produit » ressort au contraire
+    `source='production'`, 5 tirages sur 5. La relecture ne s'ouvrait pas, et
+    `ventes` était reposée par-dessus : la source que le planificateur avait
+    vue était perdue, sans un mot.
+
+    Ce qui décide n'est pas LEQUEL des deux noms le plan porte — c'est qu'il
+    n'en porte qu'un quand le fil en porte un autre.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="analyze", source="production")),
+            plan_response(Plan(capability="analyze", sources=["ventes", "production"])),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat(CROISEMENT, source_in="ventes"))
+
+    assert rendu["plan"].source == "ventes, production"
+    assert "seconde lecture sans la source du fil" in rendu["trace"][0].detail
+
+
+def test_une_source_autre_sans_perimetre_a_la_relecture_garde_le_premier_plan(tmp_path: Path):
+    """Le garde-fou, sur ce bord aussi : la relecture ne peut qu'AJOUTER.
+
+    Un tour qui nomme une source autre que celle du fil paie la relecture ;
+    si elle ne désigne pas de périmètre, le premier plan reste et la source du
+    fil est reposée comme avant. Rien ne se troque contre rien.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="production")),
+            plan_response(Plan(capability="query", source="production")),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat("combien on a vendu ?", source_in="ventes"))
+
+    assert rendu["plan"].source == "ventes"
+    assert "seconde lecture" not in rendu["trace"][0].detail
+
+
 def test_un_fil_vierge_ne_paie_aucune_seconde_lecture(tmp_path: Path):
     """Sans source de travail, il n'y a pas de phrase à retirer — donc rien à relire."""
     llm = ScriptedLLM().script(PLANNER, [plan_response(Plan(capability="query", source="ventes"))])
