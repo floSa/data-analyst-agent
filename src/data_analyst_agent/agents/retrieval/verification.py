@@ -46,6 +46,18 @@ découpé en portées — la requête principale, chaque sous-requête, chaque `
 compte là où il agit : dans la portée qui somme, ou dans une portée qui
 l'enferme, jamais dans une portée sœur.
 
+**Une somme sommée DANS une expression reste une somme** (C64). Les deux
+propriétés n'ont jamais lu que ``SUM(colonne)`` : dès que la colonne était
+enrobée — un ``CASE``, un ``COALESCE``, ``quantite * prix``, un cast —, la
+portée était comptée illisible et plus rien n'était dit. Mesuré sur « pour le
+VEL-01, combien on en a fabriqué et combien on en a vendu ? » : **141 vendus
+servis quand le juste est 123**, le chiffre sans le filtre des annulées, dans
+un ``SUM(CASE WHEN code_produit = 'VEL-01' THEN quantite ELSE 0 END)``, sans
+une remarque et sans un avertissement. On descend donc jusqu'aux colonnes,
+sous l'expression qui les porte. Pas dans les CONDITIONS : la colonne d'un
+``WHEN`` filtre les lignes, elle ne dit pas ce qu'on somme, et la lire comme
+sommée ferait juger la multiplication depuis la mauvaise table.
+
 **Un comptage n'est jamais touché**, par construction : les deux propriétés
 exigent un ``SUM(``. « combien de commandes » rend 180, pas 164, et
 ``COUNT(*)`` sur une jointure de dimension ne déclenche rien.
@@ -324,31 +336,94 @@ def _egalites_du_texte(noeud, tables: dict[str, Table]) -> list[Egalite]:
     return trouvees
 
 
+# Ce qui, dans l'argument d'une somme, est une CONDITION et non une valeur.
+# ``SUM(CASE WHEN statut <> 'ANN' THEN quantite END)`` somme `quantite` ; `statut`
+# y pose un filtre. Les confondre ferait juger la somme depuis la table du
+# filtre, et signalerait comme multipliée une requête qui ne l'est pas.
+_CONDITIONS = (
+    exp.EQ,
+    exp.NEQ,
+    exp.GT,
+    exp.GTE,
+    exp.LT,
+    exp.LTE,
+    exp.Like,
+    exp.ILike,
+    exp.In,
+    exp.Is,
+    exp.Between,
+    exp.Not,
+    exp.And,
+    exp.Or,
+)
+
+
+def _colonnes_sommables(noeud) -> Iterator[exp.Column]:
+    """Les colonnes dont la somme prend la VALEUR, sous l'expression qui les porte.
+
+    On descend l'argument d'une ``SUM(`` jusqu'aux colonnes, quelle que soit
+    l'expression qui les enrobe — ``CASE``, ``COALESCE``, ``quantite * prix``,
+    un cast. On s'arrête à une portée fille, qui se juge chez elle, et l'on
+    n'entre pas dans une condition : ce qui y est lu filtre les lignes, il ne
+    dit pas ce qu'on somme.
+    """
+    if isinstance(noeud, list):
+        for element in noeud:
+            yield from _colonnes_sommables(element)
+        return
+    if not isinstance(noeud, exp.Expression):
+        return
+    if isinstance(noeud, (exp.Select, exp.Subquery, *_CONDITIONS)):
+        return
+    if isinstance(noeud, exp.Column):
+        yield noeud
+        return
+    if isinstance(noeud, exp.If):
+        # ``CASE WHEN condition THEN valeur ELSE valeur`` : les deux branches,
+        # jamais la condition — même quand celle-ci est une colonne nue.
+        yield from _colonnes_sommables(noeud.args.get("true"))
+        yield from _colonnes_sommables(noeud.args.get("false"))
+        return
+    for valeur in noeud.args.values():
+        yield from _colonnes_sommables(valeur)
+
+
 def _colonnes_sommees(
     sommes: list[exp.Sum], tables: dict[str, Table]
 ) -> list[tuple[str, str]] | None:
-    """``(alias, colonne)`` de chaque ``SUM(colonne)`` de la portée — ``None`` au doute.
+    """``(alias, colonne)`` de chaque colonne sommée de la portée — ``None`` au doute.
 
-    Une somme dont on ne sait pas de quelle table elle sort — une expression,
-    une colonne non qualifiée alors que la portée porte plusieurs tables —
-    rend ``None`` : elle décide du verdict, et un verdict sur une table devinée
-    ne vaut rien.
+    **Chaque colonne ATTEINTE dans l'argument, et non le seul argument nu**
+    (C64). La lecture d'avant exigeait ``SUM(colonne)`` et se taisait sur tout
+    le reste : ``SUM(CASE WHEN … THEN quantite ELSE 0 END)`` rendait ``None``,
+    la portée entière était comptée illisible, et les deux propriétés ne
+    disaient plus rien. Mesuré sur « pour le VEL-01, combien on en a fabriqué
+    et combien on en a vendu ? » : **141 vendus servis quand le juste est 123**
+    — le chiffre sans le filtre des annulées —, sans une remarque et sans un
+    avertissement. La somme d'une expression reste une somme de ses colonnes.
+
+    Une colonne dont on ne sait pas de quelle table elle sort — non qualifiée
+    alors que la portée en porte plusieurs — rend ``None`` : elle décide du
+    verdict, et un verdict sur une table devinée ne vaut rien. Un argument sans
+    aucune colonne (``SUM(1)``) aussi : il n'y a rien à mesurer.
     """
     sommees: list[tuple[str, str]] = []
     for somme in sommes:
-        argument = somme.this
-        if not isinstance(argument, exp.Column):
-            return None  # SUM(a * b), SUM(CASE …) : on ne sait pas de qui c'est la somme
-        colonne = _sans_guillemets(argument.name)
-        alias = _sans_guillemets(argument.table).lower()
-        if alias:
-            if alias not in tables:
-                return None
-            sommees.append((alias, colonne))
-            continue
-        if len(tables) != 1:
-            return None  # colonne non qualifiée et plusieurs tables : on ne devine pas
-        sommees.append((next(iter(tables)), colonne))
+        colonnes = list(_colonnes_sommables(somme.this))
+        if not colonnes:
+            return None  # SUM(1) : aucune colonne atteinte, rien à juger
+        for argument in colonnes:
+            colonne = _sans_guillemets(argument.name)
+            alias = _sans_guillemets(argument.table).lower()
+            if alias:
+                if alias not in tables:
+                    return None
+            elif len(tables) != 1:
+                return None  # colonne non qualifiée et plusieurs tables : on ne devine pas
+            else:
+                alias = next(iter(tables))
+            if (alias, colonne) not in sommees:
+                sommees.append((alias, colonne))
     return sommees or None
 
 

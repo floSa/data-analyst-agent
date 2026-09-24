@@ -247,14 +247,18 @@ def test_une_source_seule_garde_ses_noms_de_tables():
     [
         "SELECT SUM(quantite) FROM une_table_inconnue",
         "SELECT SUM(x.quantite) FROM (SELECT * FROM ventes_lignes_commande) x",
+        # Non qualifiée alors que la portée porte DEUX tables : de laquelle
+        # sort-elle ? L'expression qui l'entoure, elle, ne fait plus douter
+        # (C64) — c'est la colonne devinée qui fait douter.
         "SELECT SUM(quantite * 2) FROM ventes_lignes_commande lc "
         "JOIN ventes_commandes c ON c.commande_id = lc.commande_id",
+        "SELECT SUM(1) FROM ventes_lignes_commande",
         "SELECT * FROM ventes_commandes",
         "",
     ],
 )
 def test_le_doute_se_tait(lire_la_base, sql):
-    """Une table inconnue, une sous-requête, une expression : rien n'est affirmé."""
+    """Une table inconnue, une sous-requête, une colonne devinée : rien n'est affirmé."""
     assert lire_la_base(sql) == (None, None)
 
 
@@ -433,3 +437,104 @@ def test_une_seule_relance_par_propriete_puis_l_avertissement(base):
     assert "surévalué" in issue.avertissement
     assert "exclut de toute somme" in issue.avertissement
     assert issue.result.rows == [[100, 24]]  # servi, et non jeté
+
+
+# --- une somme écrite DANS une expression (C64) -------------------------------
+#
+# Le défaut mesuré : « pour le VEL-01, combien on en a fabriqué et combien on en
+# a vendu ? » servait 141 vendus quand le juste est 123 — le chiffre sans le
+# filtre des annulées —, dans un `SUM(CASE WHEN … THEN quantite ELSE 0 END)`.
+# Les deux propriétés n'exigeaient plus qu'une chose pour se taire : que la
+# colonne soit enrobée. Un test par forme d'enrobage.
+
+CASE_SANS_FILTRE = """
+SELECT SUM(CASE WHEN T1.code_produit = 'VEL-01' THEN T2.quantite ELSE 0 END) AS vendu
+FROM ventes_produits AS T1
+INNER JOIN ventes_lignes_commande AS T2 ON T1.produit_id = T2.produit_id
+"""
+COALESCE_SANS_FILTRE = """
+SELECT SUM(COALESCE(lc.quantite, 0)) AS vendu
+FROM ventes_lignes_commande lc
+JOIN ventes_commandes c ON c.commande_id = lc.commande_id
+"""
+ARITHMETIQUE_SANS_FILTRE = """
+SELECT SUM(lc.quantite * lc.montant_ligne_eur) AS valeur
+FROM ventes_lignes_commande lc
+JOIN ventes_commandes c ON c.commande_id = lc.commande_id
+"""
+CAST_SANS_FILTRE = """
+SELECT SUM(CAST(lc.quantite AS BIGINT)) AS vendu
+FROM ventes_lignes_commande lc
+JOIN ventes_commandes c ON c.commande_id = lc.commande_id
+"""
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [CASE_SANS_FILTRE, COALESCE_SANS_FILTRE, ARITHMETIQUE_SANS_FILTRE, CAST_SANS_FILTRE],
+    ids=["case", "coalesce", "arithmetique", "cast"],
+)
+def test_la_colonne_sommee_est_vue_sous_son_expression(lire_la_base, sql):
+    """CASE, COALESCE, `quantite * prix`, cast : c'est toujours `quantite` qu'on somme."""
+    _, manquant = lire_la_base(sql)
+    assert manquant is not None
+    assert "`quantite` (sommée dans `ventes_lignes_commande`)" in manquant.pour_le_modele()
+
+
+MULTIPLIE_DANS_UNE_EXPRESSION = """
+SELECT SUM(CASE WHEN T2.code_produit = 'VEL-01' THEN T1.quantite_produite ELSE 0 END) AS fabrique
+FROM production_ordres_fabrication AS T1
+INNER JOIN ventes_produits AS T2 ON T1.code_produit = T2.code_produit
+INNER JOIN ventes_lignes_commande AS T3 ON T2.produit_id = T3.produit_id
+"""
+
+
+def test_la_multiplication_se_lit_aussi_sous_l_expression(lire_la_base):
+    """La propriété ① se pesait sur le même argument nu : elle se pèse sur la colonne."""
+    multiplication, _ = lire_la_base(MULTIPLIE_DANS_UNE_EXPRESSION)
+    assert multiplication is not None
+    assert multiplication.table_sommee == "production_ordres_fabrication"
+    assert multiplication.multiplicatrices == ("ventes_lignes_commande",)
+
+
+# --- et ce qui, sous une expression, reste MUET -------------------------------
+
+CASE_AVEC_LE_FILTRE = """
+SELECT SUM(CASE WHEN T1.code_produit = 'VEL-01' THEN T2.quantite ELSE 0 END) AS vendu
+FROM ventes_produits AS T1
+INNER JOIN ventes_lignes_commande AS T2 ON T1.produit_id = T2.produit_id
+JOIN ventes_commandes c ON c.commande_id = T2.commande_id
+WHERE c.statut <> 'ANN'
+"""
+LE_FILTRE_POSE_DANS_LE_CASE = """
+SELECT SUM(CASE WHEN c.statut <> 'ANN' THEN lc.quantite END) AS vendu
+FROM ventes_lignes_commande lc
+JOIN ventes_commandes c ON c.commande_id = lc.commande_id
+"""
+COMPTAGE_DANS_UN_CASE = """
+SELECT COUNT(CASE WHEN T1.code_produit = 'VEL-01' THEN T2.quantite END) AS n
+FROM ventes_produits AS T1
+INNER JOIN ventes_lignes_commande AS T2 ON T1.produit_id = T2.produit_id
+"""
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [CASE_AVEC_LE_FILTRE, LE_FILTRE_POSE_DANS_LE_CASE, COMPTAGE_DANS_UN_CASE],
+    ids=["filtre-pose", "filtre-dans-le-case", "comptage"],
+)
+def test_sous_une_expression_le_juste_reste_muet(lire_la_base, sql):
+    """Le filtre posé — y compris DANS le CASE — est un filtre ; un comptage n'est rien.
+
+    `SUM(CASE WHEN statut <> 'ANN' THEN quantite END)` somme `quantite` et
+    filtre sur `statut` : la colonne d'une condition n'est pas une colonne
+    sommée, sans quoi la multiplication se jugerait depuis la table du filtre
+    et une requête juste se verrait reprise.
+    """
+    assert lire_la_base(sql) == (None, None)
+
+
+def test_le_chiffre_du_case_est_bien_celui_du_defaut(base):
+    """Les deux chiffres du relevé, dans la base miniature : 12 sans le filtre, 5 avec."""
+    assert base.run(CASE_SANS_FILTRE).rows == [[12]]
+    assert base.run(CASE_AVEC_LE_FILTRE).rows == [[5]]
