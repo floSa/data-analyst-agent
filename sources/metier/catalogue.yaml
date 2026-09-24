@@ -53,6 +53,16 @@ sources:
     # La période qui intéresse le métier est celle de l'ACTIVITÉ, pas celle de
     # l'ouverture des comptes clients.
     date_reference: commandes.date_commande
+    # Le piège nº 1 du dictionnaire, sous une forme qu'on VÉRIFIE sur le code
+    # d'analyse : toute somme d'unités ou d'euros écarte les annulées, aucun
+    # comptage ne le fait. Le dictionnaire reste ce que le modèle lit.
+    filtre_des_sommes:
+      colonne: commandes.statut
+      exclure: ANN
+      sommes:
+        - lignes_commande.quantite
+        - lignes_commande.montant_ligne_eur
+        - commandes.montant_total_eur
 
   - type: duckdb
     name: production

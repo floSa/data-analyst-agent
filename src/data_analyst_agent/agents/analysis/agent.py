@@ -23,6 +23,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from data_analyst_agent import prompts
+from data_analyst_agent.agents.analysis.consigne import FiltreMonte, somme_sans_son_filtre
 from data_analyst_agent.agents.analysis.diagnostic import diagnostiquer
 from data_analyst_agent.agents.dictionnaire import (
     EN_TETE_CODE,
@@ -61,6 +62,10 @@ class AnalysisResult(BaseModel):
     # perdait entre les deux, et le tour rendait 290 relevés sur 547 200 sans
     # rien en dire (mesuré 3/3, dette `H`).
     truncation_notice: str = ""
+    # Le dernier code RÉUSSI somme encore sans le filtre que la source déclare
+    # (cf. `agents/analysis/consigne`), et la boucle n'a plus d'essai pour le
+    # corriger. La réponse est servie, et elle le dit ("" = rien à dire).
+    consigne_notice: str = ""
 
     @property
     def succeeded(self) -> bool:
@@ -129,6 +134,20 @@ def message_de_correction(execution: SandboxResult, diagnostic: str = "") -> str
     return "\n\n".join(parts)
 
 
+def message_de_consigne(constat: str) -> str:
+    """Ce que le modèle reçoit quand son code a RÉUSSI mais somme sans le filtre déclaré.
+
+    Même forme que ``message_de_correction`` : un fait, puis la demande du code
+    complet. Le fait vient de la déclaration de la source, pas d'une règle
+    écrite ici.
+    """
+    return (
+        "L'exécution a réussi, mais le calcul ne respecte pas le dictionnaire.\n\n"
+        f"Constat :\n{constat}\n\n"
+        "Corrige le calcul et renvoie le code COMPLET corrigé."
+    )
+
+
 def run_analysis(
     question: str,
     *,
@@ -139,6 +158,7 @@ def run_analysis(
     settings: Settings | None = None,
     sandbox: SandboxLike | None = None,
     dictionary: str | None = None,
+    filtres: list[FiltreMonte] | None = None,
 ) -> AnalysisResult:
     """Génère puis exécute du code d'analyse, avec self-debug sur erreur.
 
@@ -150,6 +170,13 @@ def run_analysis(
     chez l'appelant, comme dans ``run_retrieval`` : le plafond est un réglage du
     dictionnaire, pas de l'appel, et un appelant qui l'oublierait enverrait un
     prompt sans plafond sans s'en apercevoir.
+
+    ``filtres`` porte les filtres que les sources montées déclarent sur leurs
+    SOMMES (``filtre_des_sommes``). Un code qui réussit mais somme sans l'un
+    d'eux est renvoyé au modèle comme un échec, avec le constat — c'est la
+    seule façon pour la boucle de voir un chiffre faux qui ne lève rien. Le
+    dernier code réussi est gardé : si les essais s'épuisent, c'est lui qui est
+    rendu, avec son avis, plutôt qu'un échec qui jetterait une réponse.
     """
     settings = settings or get_settings()
     model = model or build_model(settings)
@@ -168,19 +195,30 @@ def run_analysis(
         message_history = None
         code = ""
         execution = SandboxResult(status="error", error="aucun essai effectué")
+        retenu: AnalysisResult | None = None
         for attempt in range(1, settings.analysis_max_attempts + 1):
             run = agent.run_sync(prompt, message_history=message_history)
             code = extract_code(run.output)
             execution = sandbox.execute(code)
+            message_history = run.all_messages()
             if execution.status == "ok":
-                return AnalysisResult(
+                resultat = AnalysisResult(
                     code=code,
                     execution=execution,
                     attempts=attempt,
                     dictionary_notice=dictionnaire.avis,
                 )
-            message_history = run.all_messages()
+                constat = somme_sans_son_filtre(code, filtres or [])
+                if constat is None:
+                    return resultat
+                retenu = resultat.model_copy(
+                    update={"consigne_notice": constat.pour_l_utilisateur()}
+                )
+                prompt = message_de_consigne(constat.pour_le_modele())
+                continue
             prompt = message_de_correction(execution, diagnostiquer(sandbox, execution.error))
+        if retenu is not None:
+            return retenu.model_copy(update={"attempts": settings.analysis_max_attempts})
         return AnalysisResult(
             code=code,
             execution=execution,

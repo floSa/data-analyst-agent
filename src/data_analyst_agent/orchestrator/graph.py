@@ -27,6 +27,7 @@ from pydantic_ai.models import Model
 
 from data_analyst_agent import prompts
 from data_analyst_agent.agents.analysis.agent import AnalysisResult, SandboxLike, run_analysis
+from data_analyst_agent.agents.analysis.consigne import FiltreMonte
 from data_analyst_agent.agents.inference.accompagnants import (
     absence_daccompagnants,
     champs_daccompagnants,
@@ -297,6 +298,19 @@ def _json_table(columns: list[str], rows: list[list], truncated: bool) -> MimeOu
     """
     payload = {"columns": columns, "rows": rows, "truncated": truncated}
     return MimeOutput(mime="application/json", data=json.dumps(payload, ensure_ascii=False))
+
+
+def _filtres_montes(sources: list, *, croise: bool) -> list[FiltreMonte]:
+    """Les filtres que ces sources déclarent sur leurs sommes, sous leurs noms montés.
+
+    Dans un croisement chaque table est montée préfixée du nom de sa source
+    (``ventes_lignes_commande.csv``) ; seule, elle garde son nom.
+    """
+    return [
+        FiltreMonte(s.name, f"{s.name}_" if croise else "", s.filtre_des_sommes)
+        for s in sources
+        if getattr(s, "filtre_des_sommes", None) is not None
+    ]
 
 
 def _table_artifact(result: QueryResult) -> MimeOutput:
@@ -2250,6 +2264,7 @@ class Orchestrator:
                 # pas — `dictionary_text()` rend alors `None`, et le prompt est
                 # celui d'avant.
                 dictionary=source.dictionary_text(),
+                filtres=_filtres_montes([source], croise=False),
             )
         # La coupe est une propriété du DÉCOR, et le décor meurt avec le bloc
         # ci-dessus. On l'attache donc au résultat, qui va traverser l'agent de
@@ -2820,6 +2835,9 @@ class Orchestrator:
                 dictionary=(
                     dictionnaire_du_croisement(croise) if croise else sources[0].dictionary_text()
                 ),
+                # Et ce que la ou les sources déclarent sur leurs SOMMES : le code
+                # réussi qui les ignore est renvoyé au modèle (C60).
+                filtres=_filtres_montes(sources, croise=bool(croise)),
             )
         # Une analyse en échec ne livre PAS ses figures : la tentative ratée laisse
         # des axes vides, et un graphique blanc affiché sous « l'analyse n'a pas
@@ -3226,7 +3244,12 @@ class Orchestrator:
         )
         agent = Agent(system_prompt=prompts.gabarit(prompts.SYNTHESIS))
         phrase = agent.run_sync(context, model=self.model).output
-        return self._avec_ce_que_le_code_a_imprime(phrase, analysis.execution.stdout)
+        reponse = self._avec_ce_que_le_code_a_imprime(phrase, analysis.execution.stdout)
+        # Le code rendu somme encore sans le filtre que la source déclare, et la
+        # boucle n'a plus d'essai : on sert le calcul, et on dit ce qui lui manque.
+        if analysis.consigne_notice:
+            reponse = f"{reponse}\n\n{analysis.consigne_notice}"
+        return reponse
 
     # Ce qu'on sert du `stdout` d'une analyse. Assez pour une comparaison par
     # produit — douze lignes et leurs colonnes tiennent largement dedans —

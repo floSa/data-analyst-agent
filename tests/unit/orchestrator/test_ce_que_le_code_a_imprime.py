@@ -43,3 +43,32 @@ def test_une_sortie_trop_longue_est_coupee_et_le_dit():
 
     assert "sortie coupée" in rendu
     assert len(rendu) < Orchestrator._IMPRIME_MAX_CARACTERES + 300
+
+
+def test_un_calcul_qui_somme_encore_sans_son_filtre_le_dit_sous_la_reponse():
+    """C60 : les essais épuisés, le calcul est servi — et son avis avec lui."""
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from data_analyst_agent.agents.analysis.agent import AnalysisResult
+    from data_analyst_agent.sandbox.client import SandboxResult
+
+    orchestrateur = Orchestrator.__new__(Orchestrator)
+    orchestrateur._modele_injecte = FunctionModel(
+        lambda m, i: ModelResponse(parts=[TextPart("Phrase.")])
+    )
+    avis = "Avertissement sur ce calcul : le code somme `quantite` sans écarter `statut = 'ANN'`."
+    etat = {
+        "question": "Q",
+        "analysis": AnalysisResult(
+            code="x",
+            execution=SandboxResult(status="ok", stdout="VEL-01 141\n"),
+            attempts=3,
+            consigne_notice=avis,
+        ),
+    }
+
+    rendu = orchestrateur._synthesize_analysis(etat)
+
+    assert rendu.startswith("Phrase.")
+    assert rendu.index("VEL-01 141") < rendu.index(avis)

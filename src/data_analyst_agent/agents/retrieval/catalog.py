@@ -19,6 +19,30 @@ from data_analyst_agent.agents.inference.correspondance import Declarations
 from data_analyst_agent.agents.retrieval.duckdb_excel import DuckDBAdapter
 from data_analyst_agent.agents.retrieval.sql import DatabaseAdapter, PostgresAdapter
 
+TableColonne = Annotated[str, Field(pattern=r"^[A-Za-z_]\w*\.[A-Za-z_]\w*$")]
+
+
+class FiltreDesSommes(BaseModel):
+    """Un filtre que la source exige sur certaines SOMMES, et seulement sur elles.
+
+    ``colonne`` porte le filtre (``commandes.statut``), ``exclure`` la valeur à
+    écarter (``ANN``), ``sommes`` les colonnes dont la somme l'exige
+    (``lignes_commande.quantite``…), chacune écrite ``table.colonne``.
+
+    Le dictionnaire le dit déjà, en phrases, et c'est lui que le modèle lit. La
+    déclaration le redit sous une forme qu'on VÉRIFIE sur le code produit
+    (`agents/analysis/consigne`) : relevé en C60, le dictionnaire arrivait
+    entier et le code l'ignorait trois fois sur trois. Une phrase lue ne se
+    contrôle pas ; une propriété du code, si.
+
+    Rien sur les comptages, et c'est voulu : la règle qu'elle déclare ne vaut
+    que pour les sommes, et un comptage ne nomme aucune de ces colonnes.
+    """
+
+    colonne: TableColonne
+    exclure: str = Field(min_length=1)
+    sommes: list[TableColonne] = Field(min_length=1)
+
 
 class SourceBase(BaseModel):
     """Ce que toute source déclare : un nom, une description, un dictionnaire.
@@ -51,6 +75,11 @@ class SourceBase(BaseModel):
 
     Facultatif encore : une source qui n'a qu'une colonne de date, ou aucune,
     n'a rien à désigner.
+
+    ``filtre_des_sommes`` déclare un filtre que le dictionnaire impose aux
+    sommes et refuse aux comptages (cf. ``FiltreDesSommes``). Facultatif : une
+    source sans piège de ce genre n'a rien à déclarer, et son code d'analyse
+    n'est pas relu.
     """
 
     name: str
@@ -58,6 +87,7 @@ class SourceBase(BaseModel):
     dictionary: Path | None = None
     features: Declarations = Field(default_factory=dict)
     date_reference: str | None = None
+    filtre_des_sommes: FiltreDesSommes | None = None
 
     def dictionary_text(self) -> str | None:
         """Contenu du dictionnaire, ou ``None`` si la source n'en déclare pas."""
