@@ -1273,3 +1273,104 @@ formulations restent 10/10, et le SQL en règle 10/10.
 - **La forme réparée n'est pas vérifiée.** Une requête qui agrège dans des
   sous-requêtes sort du champ de lecture du module, qui se tait : on constate
   la faute, on ne certifie pas la correction.
+
+## La somme écrite en sous-requête ou dans un WITH (C62)
+
+C61 a posé les deux propriétés du SQL. Elles ne lisaient qu'une chose : le
+**niveau zéro** de la requête. Le trou est dans la réparation même.
+
+La relance contre la multiplication dit au modèle d'agréger chaque table
+séparément, « une sous-requête par table, qui groupe et somme ». C'est la bonne
+consigne, il la suit — et la somme qu'il écrit alors n'est plus au niveau zéro.
+La forme réparée était devenue la forme aveugle.
+
+Appel direct de `somme_sql_sans_son_filtre` sur `02511fb`, filtre de `ventes`
+monté avec le préfixe `ventes_` :
+
+| forme | somme | sur `02511fb` |
+|---|---|---|
+| plate | `SELECT SUM(T3.quantite) FROM ventes_lignes_commande T3 JOIN …` | repérée |
+| sous-requête | `SELECT (SELECT SUM(T3.quantite) FROM … ) AS v, …` | **pas repérée** |
+| `WITH` | `WITH v AS (SELECT produit_id, SUM(quantite) … ) SELECT * FROM v` | **pas repérée** |
+
+Le coût est un chiffre faux, plausible et muet : sur « Pour le VEL-02, combien
+d'unités avons-nous fabriquées et combien en avons-nous vendues ? », fil vierge
+et source non liée, le pilote a relevé un tirage sur sept à **147 vendues** — la
+quantité sans le filtre des annulées — quand le juste est 130, sans un mot
+d'avertissement.
+
+### Chaque somme est jugée dans SA portée
+
+Une **portée** est un `SELECT` et un seul : la requête principale, chaque
+sous-requête du `SELECT`, du `FROM` ou du `WHERE`, le corps de chaque `WITH`.
+Le SQL est découpé en portées, et chacune est pesée avec SES tables, SES
+jointures et SES sommes — c'est là, et nulle part ailleurs, que se joue la
+multiplication d'une somme.
+
+Un filtre compte **là où il agit** : dans la portée qui somme, ou dans une
+portée qui l'enferme — un `WHERE` extérieur restreint bien les lignes qu'une
+sous-requête du `FROM` a rendues. Jamais dans une portée SŒUR : le filtre posé
+dans une sous-requête ne filtre pas celle d'à côté, et les confondre rendrait
+muette une somme fautive dès qu'une somme juste est écrite à côté d'elle.
+
+### L'outil : un arbre, parce qu'il en faut un
+
+`agents/retrieval/lecture.py` repère des mots-clés hors de toute parenthèse. Il
+voit le niveau zéro, et c'est tout ce qu'il sait faire — c'est exactement ce qui
+manque ici. Tenir les portées à la parenthèse près demande un arbre, et le
+refaire à la main redonnerait un analyseur SQL, en moins sûr.
+
+D'où **sqlglot** (pur Python, licence MIT, aucune dépendance), entré dans
+`uv.lock`. Il ne sert QU'À `verification.py` : `classement.py` garde la lecture
+maison, et `lecture.py` reste ce qu'il est.
+
+### Ce qui est signalé, et ce qui ne l'est pas
+
+Un test unitaire par forme, sur une base DuckDB qui porte les vrais rapports —
+la sonde est réelle, pas une doublure.
+
+| forme | verdict |
+|---|---|
+| deux sommes en sous-requête, dont une sans son filtre | **signalée** |
+| une somme multipliée écrite dans un `WITH` (deux tables de faits jointes par le produit) | **signalée** |
+| le filtre posé dans la sous-requête qui somme | silence |
+| un `WITH` qui joint `commandes` et porte `statut`, la requête extérieure qui filtre `statut <> 'ANN'` avant de sommer | silence |
+| une somme en euros sur `ventes` seule, filtre posé (CA 2025 = 1 496 743) | silence |
+| un comptage (180 commandes, 463 lignes) | silence |
+| une jointure de dimension (`commandes` → `clients`, CA par canal) | silence |
+
+**Là où il doute, le module se tait, et il dit combien de fois.** Le nom d'un
+`WITH` n'est pas une table du schéma : la portée qui le somme n'a pas de
+cardinalité à mesurer, et elle est comptée dans `Lecture.illisibles`. C'est le
+prix du dernier silence du tableau — la requête est juste, et on n'en juge rien
+plutôt que d'en juger mal. **Sur les trois campagnes : 3 portées sommantes non
+lues sur 22 requêtes SQL distinctes.**
+
+### Les campagnes
+
+Séquentielles, jamais de front. Moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue `sources/metier/catalogue.yaml`
+lu en tête de chaque relevé.
+
+| campagne | repère | après ce commit | portées non lues |
+|---|---|---|---|
+| VEL-02, fil vierge, 7 tirages | avant : 7/7 | **7/7** | — |
+| `vel01-fabrique-vendu` + `vel04-production-ventes` (3 tirages) | 3/3 chacune | **3/3** et **3/3** | 0 sur 4 requêtes |
+| croisement de sources (1 tirage) | 8/14 | **9/14** | 2 sur 9 requêtes |
+| questions métier (1 tirage) | 12/12 | **12/12** | 1 sur 9 requêtes |
+
+**L'avant/après de VEL-02 ne montre rien, et c'est un résultat.** Le défaut
+relevé par le pilote est d'un tirage sur sept ; sur les sept tirages d'avant
+comme sur les sept d'après, la réponse a été 484 fabriquées et 130 vendues,
+sans 147 et sans avertissement. Ce qui est établi ici est donc l'absence de
+régression sur le chemin normal, et non la fermeture du trou mesurée en bout de
+chaîne : la fermeture, ce sont les tests par forme qui la tiennent.
+
+### Ce qui reste
+
+- **Le bord de C57** tient toujours deux des cinq écarts du banc de croisement
+  (`vendus-sans-fabriquer`, `total-fabrique-vs-total-vendu` : `system → plan →
+  synthesize`, aucune donnée regardée). C'est le premier poste.
+- **Un `WITH` dont la requête extérieure somme** n'est pas jugé : le module ne
+  résout pas le nom d'un `WITH` vers ses tables réelles. Il se tait et le dit.
+  C'était 3 requêtes sur 22 sur ces campagnes.
