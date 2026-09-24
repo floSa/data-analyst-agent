@@ -1051,3 +1051,225 @@ chiffre juste.
   nomme.
 - **`tabulate`** coûte un essai à chaque tour de cette question, et c'est lui qui
   ramène la marge à zéro.
+
+## La jointure qui multiplie, et le filtre oublié sur le SQL (C61)
+
+Ce que C60 a laissé ouvert, et nommé comme tel : le chemin SQL du croisement
+resserré. « pour le VEL-01, combien on en a fabriqué et combien on en a
+vendu ? » rendait **26 871 fabriqués et 3 384 vendus** ; les oracles disent 689
+et 123. « compare la production et les ventes du VEL-04 » rendait **27 626 et
+2 751** pour 727 et 125. Trois tirages sur trois, la même requête au caractère
+près, aucune erreur levée, et une phrase de réponse parfaitement lisible.
+
+### Le relevé, essai par essai
+
+Deux questions, trois tirages chacune, moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue `sources/metier/catalogue.yaml`.
+Pour chaque essai : le SQL envoyé à `run_sql`, ce que la base a rendu, et le
+prompt exact reçu par l'agent.
+
+**Une seule requête par tour**, et c'est elle qui sert les chiffres. Sur les six
+tirages, cinq passent par le chemin SQL (`query sur ventes, production`) ; un —
+`vel01` au premier tirage — n'a regardé aucune donnée et a rendu l'inventaire
+(`system → plan → synthesize`), qui est le bord de C57 et non ce défaut-ci.
+
+**`vel01-fabrique-vendu`**, identique aux deux tirages qui interrogent :
+
+```sql
+SELECT SUM(T1.quantite_produite) AS total_fabrique,
+       SUM(T3.quantite)          AS total_vendu
+FROM production_ordres_fabrication AS T1
+INNER JOIN ventes_produits        AS T2 ON T1.code_produit = T2.code_produit
+INNER JOIN ventes_lignes_commande AS T3 ON T2.produit_id  = T3.produit_id
+WHERE T2.code_produit = 'VEL-01'        -- rend 26 871 et 3 384
+```
+
+**`vel04-production-ventes`**, identique aux trois tirages :
+
+```sql
+SELECT SUM(T1.quantite_produite) AS production_vel04,
+       SUM(T3.quantite)          AS ventes_vel04
+FROM production_ordres_fabrication AS T1
+INNER JOIN ventes_produits        AS T2 ON T1.code_produit = T2.code_produit
+INNER JOIN ventes_lignes_commande AS T3
+  ON T2.code_produit = (SELECT code_produit FROM ventes_produits
+                        WHERE produit_id = T3.produit_id)
+WHERE T2.code_produit = 'VEL-04'        -- rend 27 626 et 2 751
+```
+
+Ce que le relevé donne, et qu'on n'a pas supposé :
+
+- **les jointures et leurs clés.** `vel01` relie les ordres de fabrication aux
+  produits par `code_produit`, puis les produits aux lignes de commande par
+  `produit_id`. Les deux clés sont UNIQUES du côté des produits : chaque
+  jointure, prise seule, est irréprochable. C'est leur mise bout à bout qui
+  multiplie — deux tables de faits accrochées à la même dimension, et chaque
+  ordre apparié à chacune des 39 lignes de commande du produit
+  (689 fois 39 = 26 871 ; 141 fois 24 = 3 384). `vel04` fait pire : la
+  troisième table n'est reliée que par une sous-requête corrélée, donc par
+  aucune égalité de colonnes lisible — un produit cartésien ;
+- **`statut` et `'ANN'` n'apparaissent dans aucune des six requêtes.** Le
+  filtre des annulées manque partout ; le produit cartésien l'écrase, mais il
+  est bien là — 141 et non 123 sous la multiplication ;
+- **les deux dictionnaires arrivent entiers.** Le prompt système pèse 18 442
+  caractères, il porte sept fois `ANN` et neuf fois `statut`, et il est
+  identique aux six tirages. Ce n'est donc pas un défaut d'acheminement : le
+  texte est lu, et il n'est pas appliqué.
+
+### La cause, telle que mesurée
+
+**Deux fautes empilées dans la même requête, et aucune ne lève.** L'exécution
+réussit ; la boucle de correction ne se déclenche que sur une erreur SQL. Un
+chiffre faux d'un facteur quarante la traversait sans être vu — exactement ce
+que C60 avait relevé pour le chemin d'analyse, sur l'autre chemin.
+
+Et une phrase de prompt n'y aurait rien fait, pour la même raison qu'en C60 :
+le dictionnaire était là, entier, et ce qui manquait n'était pas le texte.
+
+### La réparation
+
+Deux propriétés du SQL produit, vérifiées après chaque requête réussie
+(`agents/retrieval/verification.py`). Ni l'une ni l'autre ne regarde la
+question : elles sont vraies ou fausses quelle que soit la tournure, comme
+`classement` pour le palmarès et `agents/analysis/consigne` pour le code.
+
+**① Une somme lue dans une table ne doit pas être multipliée par une jointure.**
+Ça se MESURE : on part de la table dont une colonne est sommée, et l'on n'avance
+dans la requête que par une clé qui ne se répète pas du côté où l'on arrive —
+trois agrégats demandés à la base, `count(*)`, `count(colonne)`,
+`count(DISTINCT colonne)`. Une table atteinte ainsi est une table de DIMENSION :
+elle décore la ligne sans la dupliquer. Une table qu'on n'atteint jamais —
+parce que sa clé se répète, ou parce qu'aucune égalité de colonnes ne la relie —
+apparie plusieurs de ses lignes à chaque ligne sommée, et la somme est
+multipliée d'autant. C'est la même lecture des données que
+`relier_les_sources`, à une différence près : là-bas une clé doit être sans
+NULL, ici seulement sans DOUBLON — un NULL ne multiplie rien.
+
+**② La règle `filtre_des_sommes` vaut aussi pour le SQL.** La déclaration est
+celle de C60, au catalogue, inchangée ; `FiltreMonte` dit sous quel nom ses
+tables sont montées — `ventes_lignes_commande.csv` pour le bac à sable,
+`ventes_lignes_commande` pour une connexion. Une seule déclaration, deux
+lectures.
+
+Le fait repart au modèle **par le canal du classement** : appendu au tableau,
+jamais à sa place, et borné à une relance par propriété et par récupération —
+deux allers-retours au pire, sous `retrieval_request_limit`. Si la relance ne
+corrige pas, la réponse est **servie avec l'avertissement dans le texte**
+(`_avec_l_avertissement`), jamais en silence et jamais jetée : c'est la règle de
+`consigne_notice` pour l'autre chemin.
+
+**Aucun prompt ni aucune fiche d'outil n'a bougé** ; l'empreinte SHA-256 des
+sept prompts non plus.
+
+Ce que ça ne sait pas faire, et qui est assumé : partout où la lecture doute —
+une table absente du schéma, une sous-requête en guise de table, deux `FROM` de
+niveau zéro, une somme d'expression (`SUM(a * b)`) — le module se tait. Un
+doute coûte au pire le chiffre d'avant ; un faux positif coûterait un
+aller-retour et pourrait pousser à corriger une requête juste.
+
+### L'avant/après, les deux questions
+
+Mêmes conditions, trois tirages, séquentiels, catalogue
+`sources/metier/catalogue.yaml`.
+
+| question | avant | après | ce qui est rendu, après |
+|---|---|---|---|
+| `vel01-fabrique-vendu` | **0/3** — 26 871 / 3 384 (2 tirages), inventaire (1) | **3/3** | **689** fabriqués, **123** vendus |
+| `vel04-production-ventes` | **0/3** — 27 626 / 2 751 | **3/3** | **727** fabriqués, **125** vendus |
+
+Le déroulé est le même aux six tirages d'après, et il tient en trois lignes :
+
+```
+requête 1  la même qu'avant           26 871 / 3 384  → les DEUX remarques
+sonde      count / count / distinct   ventes_lignes_commande.produit_id : 463 pour 12
+requête 2  une somme par sous-requête, statut <> 'ANN'   → 689 / 123
+```
+
+Le modèle corrige les deux fautes d'un coup, dans la requête suivante : il
+agrège les ventes dans une sous-requête corrélée au produit, y joint
+`ventes_commandes` et y pose `statut <> 'ANN'`. Sur `vel04`, une seule sonde
+suffit — la table n'étant reliée par aucune égalité, il n'y a pas de seconde
+cardinalité à mesurer.
+
+### Les trois témoins
+
+Un garde-fou peut détruire une bonne réponse. Chacun a un test unitaire —
+`test_temoin_une_jointure_de_dimension_ne_declenche_rien`,
+`test_temoin_un_comptage_ne_recoit_ni_l_un_ni_l_autre`,
+`test_temoin_une_somme_en_euros_garde_son_filtre`, tous trois mesurés sur une
+base DuckDB réelle plutôt que sur une doublure de sonde
+(`tests/unit/retrieval/test_verification.py`) — et une sonde sur le produit.
+
+Les trois sondes sont posées sur le chemin SQL réel, fil lié à `ventes`,
+catalogue `sources/metier/catalogue.yaml`. Ce qui est relevé : le SQL du modèle,
+les cardinalités que la vérification a demandées à la base, et si un
+avertissement a été servi.
+
+**① Une jointure juste, par une table de dimension** — « Quel est notre meilleur
+client en chiffre d'affaires en 2025 ? »
+
+```sql
+SELECT T1.raison_sociale, SUM(T2.montant_total_eur) AS chiffre_affaires
+FROM clients AS T1 INNER JOIN commandes AS T2 ON T1.client_id = T2.client_id
+WHERE … AND T2.statut <> 'ANN' GROUP BY T1.raison_sociale
+ORDER BY chiffre_affaires DESC LIMIT 1
+```
+
+Une sonde, une seule : `clients.client_id`, 18 lignes pour 18 valeurs
+distinctes — une clé unique, donc une dimension. **Rien n'est déclenché**, et la
+réponse est Vélocité Bordeaux, 170 149,00 €. C'est la forme normale d'un
+croisement juste, et la signaler aurait coûté un aller-retour sur la moitié des
+requêtes du produit. (Le CA par canal — 862 229 / 331 499 / 303 015 — passe,
+lui, par le chemin d'ANALYSE : c'est un graphique, et il reste 1/1 aux questions
+métier.)
+
+**② Un COMPTAGE ne reçoit jamais le filtre** — « Combien de commandes
+avons-nous reçues en 2025 ? » rend **180**, pas 164. Aucune sonde n'est même
+posée : les deux propriétés exigent un `SUM(` au niveau zéro, et un comptage
+n'en porte aucun. La réponse le dit d'elle-même : « le comptage des commandes ne
+fait aucune distinction de statut ».
+
+**③ Une somme en euros sur `ventes` seule garde son filtre** — « Quel chiffre
+d'affaires avons-nous réalisé en 2025 ? » rend **1 496 743,00 €**, avec
+`statut <> 'ANN'` écrit dans le SQL. Le préfixe est vide hors croisement : la
+règle est cherchée sur `commandes`, et non sur `ventes_commandes`.
+
+Sur les quatre campagnes et les trois sondes, **aucun avertissement n'a été
+servi à l'utilisateur** : partout où une remarque est partie, la relance a
+corrigé.
+
+### Les campagnes
+
+Séquentielles, jamais de front. Moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue lu en tête de chaque relevé.
+
+| campagne | catalogue | repère | après ce commit |
+|---|---|---|---|
+| croisement de sources (1 tirage) | `sources/metier/catalogue.yaml` | 8/14 (C60) | **8/14** |
+| questions métier (1 tirage) | `sources/metier/catalogue.yaml` | 12/12 (C60) | **12/12** |
+| classement sans lexique (1 tirage) | `sources/demonstration/catalogue.yaml` | 10/10 | **10/10** |
+| parcours de démonstration (1 tirage) | `sources/demonstration/catalogue.yaml` | 144/144 à 3 tirages | **48/48** (1 tirage) |
+
+**Croisement : le total ne bouge pas, sa composition oui.**
+`vel04-production-ventes` et `total-fabrique-vs-total-vendu` passent, tous deux
+sur le chemin SQL et tous deux en écart chez C60. Trois questions les
+remplacent en écart, et aucune ne tient à ce correctif : `vel01-fabrique-vendu`,
+`vendus-sans-fabriquer` et `fabrique-vendu-stock` n'ont **regardé aucune
+donnée** (`system → plan → synthesize`, `source=''` — le bord de C57), et
+`ca-produit-vs-fabrique` est parti à l'analyse, où le code n'a pas pu s'exécuter
+en trois essais. Un tirage ne tranche rien : le gain établi est celui des trois
+tirages de l'avant/après.
+
+**Classement.** Il est mesuré parce que `run_sql` est touché : les dix
+formulations restent 10/10, et le SQL en règle 10/10.
+
+### Ce qui reste
+
+- **Le bord de C57** — une question de croisement posée sur un fil vierge qui
+  repart en inventaire au lieu d'interroger — décide maintenant de trois des
+  six écarts du banc de croisement. C'est le premier poste.
+- **Le fil lié à `ventes`** n'attache toujours pas `production` pour une
+  question qui la nomme.
+- **La forme réparée n'est pas vérifiée.** Une requête qui agrège dans des
+  sous-requêtes sort du champ de lecture du module, qui se tait : on constate
+  la faute, on ne certifie pas la correction.
