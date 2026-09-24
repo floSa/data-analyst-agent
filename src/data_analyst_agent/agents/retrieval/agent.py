@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 
@@ -64,6 +65,34 @@ RELANCE_DE_CLASSEMENT = (
     "il ne dit pas de combien le premier devance le second, et ne se vérifie pas. "
     "Ajoute {grandeurs} au SELECT, en gardant les colonnes déjà présentes, et "
     "rappelle run_sql avant de répondre."
+)
+
+
+# Ce qu'on rend quand le budget d'allers-retours s'épuise APRÈS au moins une
+# requête réussie.
+#
+# **Le défaut : un résultat réussi, jeté** (C64). Mesuré 3 fois sur 3 sur « au
+# total, combien d'unités sont sorties de l'atelier et combien sont parties en
+# commande ? » : une requête aboutit, reçoit les deux remarques, et les essais
+# suivants échouent tous sur une erreur de binder jusqu'à `request_limit`.
+# L'exception remontait, le nœud de récupération la changeait en incident, et
+# l'utilisateur lisait « la source de données n'a pas pu être interrogée » alors
+# qu'un tableau attendait. C61 a posé la règle — jamais en silence, jamais jeté
+# — et c'était le seul endroit du chemin SQL où l'on jetait.
+#
+# On sert donc la DERNIÈRE requête réussie, avec ce qu'elle a de suspect
+# (`deps.avertissement`, réécrit à chaque réussite) et avec le fait qu'elle
+# n'est pas une réponse aboutie : le modèle cherchait encore quand le budget
+# s'est épuisé. Sans une seule requête réussie, il n'y a rien à servir et
+# l'exception repart telle quelle : c'est bien un incident.
+RESUME_DE_LA_LIMITE = (
+    "Le nombre d'allers-retours autorisés a été atteint avant que la requête soit "
+    "aboutie. Voici le dernier résultat obtenu."
+)
+AVERTISSEMENT_DE_LA_LIMITE = (
+    "Avertissement sur ce calcul : le nombre d'allers-retours autorisés a été atteint "
+    "avant qu'une requête corrigée aboutisse. Ce résultat est le dernier qui ait été "
+    "obtenu, et il n'a pas été confirmé."
 )
 
 
@@ -304,6 +333,10 @@ def run_retrieval(
     règle que pour le code d'analyse (``agents/analysis/consigne``). Une requête
     qui somme sans l'un d'eux repart au modèle avec le fait ; si la relance ne
     corrige pas, la réponse est servie AVEC l'avertissement.
+
+    Le budget d'allers-retours épuisé ne jette RIEN de ce qui a abouti : la
+    dernière requête réussie est servie, avec ce qu'elle a de suspect et avec
+    le fait que le modèle cherchait encore (cf. ``RESUME_DE_LA_LIMITE``).
     """
     settings = settings or get_settings()
     dictionnaire = preparer(dictionary, settings.dictionary_max_chars)
@@ -314,15 +347,23 @@ def run_retrieval(
         filtres=list(filtres or []),
     )
     agent = build_retrieval_agent()
-    run = agent.run_sync(
-        question,
-        model=model or build_model(settings),
-        deps=deps,
-        usage_limits=UsageLimits(request_limit=settings.retrieval_request_limit),
-    )
+    try:
+        resume = agent.run_sync(
+            question,
+            model=model or build_model(settings),
+            deps=deps,
+            usage_limits=UsageLimits(request_limit=settings.retrieval_request_limit),
+        ).output
+    except UsageLimitExceeded:
+        if deps.last_success is None:
+            raise  # rien n'a abouti : il n'y a pas de chiffre à servir
+        resume = RESUME_DE_LA_LIMITE
+        deps.avertissement = "\n\n".join(
+            m for m in (AVERTISSEMENT_DE_LA_LIMITE, deps.avertissement) if m
+        )
     sql, result = deps.last_success if deps.last_success else (None, None)
     return RetrievalResult(
-        summary=run.output,
+        summary=resume,
         sql=sql,
         result=result,
         executed=deps.executed,

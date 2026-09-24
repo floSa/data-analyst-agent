@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import duckdb
 import pytest
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
@@ -538,3 +539,55 @@ def test_le_chiffre_du_case_est_bien_celui_du_defaut(base):
     """Les deux chiffres du relevé, dans la base miniature : 12 sans le filtre, 5 avec."""
     assert base.run(CASE_SANS_FILTRE).rows == [[12]]
     assert base.run(CASE_AVEC_LE_FILTRE).rows == [[5]]
+
+
+# --- un résultat réussi n'est jamais jeté par la limite (C64) -----------------
+
+
+def test_la_limite_atteinte_sert_la_derniere_requete_reussie(base):
+    """Mesuré 3/3 : une requête aboutit, les suivantes échouent, et tout était jeté.
+
+    Le nœud de récupération changeait l'exception en incident, et l'utilisateur
+    lisait « la source de données n'a pas pu être interrogée » alors qu'un
+    tableau attendait. On le sert, avec ce qu'il a de suspect et avec le fait
+    que le modèle cherchait encore.
+    """
+    recus: list[str] = []
+    casse = "SELECT SUM(x) FROM ventes_lignes_commande"
+    model = rejoue(
+        [
+            [ToolCallPart("run_sql", {"query": MULTIPLIE})],
+            [ToolCallPart("run_sql", {"query": casse})],
+            [ToolCallPart("run_sql", {"query": casse})],
+            [ToolCallPart("run_sql", {"query": casse})],
+        ],
+        recus,
+    )
+    issue = run_retrieval(
+        "au total, combien de fabriqués et combien de vendus ?",
+        adapter=base,
+        model=model,
+        settings=Settings(_env_file=None, retrieval_request_limit=3),
+        filtres=CROISE,
+    )
+    assert issue.result.rows == [[100, 24]]
+    assert issue.sql == MULTIPLIE
+    assert "dernier résultat obtenu" in issue.summary
+    # Les deux avertissements : celui de la limite, et ce que la requête a de
+    # suspect. Le second était déjà dû ; le premier dit qu'elle n'est pas aboutie.
+    assert "n'a pas été confirmé" in issue.avertissement
+    assert "surévalué" in issue.avertissement
+
+
+def test_la_limite_sans_une_seule_reussite_reste_un_incident(base):
+    """Rien n'a abouti : il n'y a pas de chiffre à servir, et l'exception repart."""
+    casse = "SELECT SUM(x) FROM ventes_lignes_commande"
+    model = rejoue([[ToolCallPart("run_sql", {"query": casse})] for _ in range(4)], [])
+    with pytest.raises(UsageLimitExceeded):
+        run_retrieval(
+            "combien ?",
+            adapter=base,
+            model=model,
+            settings=Settings(_env_file=None, retrieval_request_limit=3),
+            filtres=CROISE,
+        )
