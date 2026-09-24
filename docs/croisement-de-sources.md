@@ -1374,3 +1374,139 @@ chaîne : la fermeture, ce sont les tests par forme qui la tiennent.
 - **Un `WITH` dont la requête extérieure somme** n'est pas jugé : le module ne
   résout pas le nom d'un `WITH` vers ses tables réelles. Il se tait et le dit.
   C'était 3 requêtes sur 22 sur ces campagnes.
+
+## L'inventaire servi à une question croisée, en conversation neuve (C63)
+
+Le pilote pose trois questions dans une conversation NEUVE, sans source liée,
+sur le catalogue métier. Elles reçoivent l'inventaire des cinq sources —
+« J'ai accès à 5 source(s) de données : … » — au lieu d'une réponse. La trace
+est toujours la même : `system → plan → synthesize`, aucune donnée regardée.
+
+C'est le bord nommé « le bord de C57 » à la fin de la section précédente, et
+c'est le premier poste qu'elle désignait.
+
+### Étape 1 — la sortie du planificateur, tirage par tirage
+
+Avant toute réparation. Moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue
+`sources/metier/catalogue.yaml`, conversation neuve, `source_de_travail=""`,
+5 tirages par question. Ce qui est relevé est la sortie EXACTE du
+planificateur et la règle de `graph.py` qui décide du tour.
+
+| question | plan rendu | règle qui décide | reçu |
+|---|---|---|---|
+| « Pour chaque produit, donne les unités vendues et les unités fabriquées. » | `query`, `source='ventes'`, `sources=[]` — **5/5** | `_regle_choisir_la_source` | l'inventaire |
+| « Quels produits a-t-on moins vendus que fabriqués ? Donne les quantités. » | `query`, `source='ventes'`, `sources=[]` — **5/5** | `_regle_choisir_la_source` | l'inventaire |
+| « Pour le VEL-02, combien d'unités avons-nous fabriquées et combien en avons-nous vendues ? » | `query`, `source='production, ventes'` — **3/5** | aucune | 484 / 130 |
+| (la même) | `query`, `source='production'` — **2/5** | `_regle_choisir_la_source` | l'inventaire |
+
+Les trois témoins, au même relevé : « ventes ou production ? » ressort avec
+`source='ventes, production'` 5/5 et reçoit la question du choix ; « quelles
+sources as-tu ? » et « qu'est-ce que t'appelles source vente, production,
+stock ? » n'atteignent jamais le planificateur — l'agent système les traite
+(`system → synthesize`), 5/5 chacune.
+
+### La cause, telle qu'elle est mesurée
+
+**Le plan n'est pas muet.** Le planificateur lit les descriptions, et il écrit
+un nom : `ventes` porte les ventes, la description le dit. Ce qui manque à ce
+nom, c'est d'être le second — une question qui demande le fabriqué ET le vendu
+ne tient pas dans une source.
+
+**Ce qui transforme cette demi-désignation en inventaire est C57.**
+`_regle_source_de_la_conversation` efface, sur un fil vierge, toute source que
+personne n'a validée — ni l'utilisateur en la nommant, ni le fil en la portant
+(`elif plan.source in declarees: plan.source = None`). C'est elle qui rend le
+comportement indépendant de l'ordre de déclaration du YAML, et elle reste. Mais
+elle efface aussi la MOITIÉ d'un périmètre, et `_regle_choisir_la_source` voit
+alors un plan sans source. Un périmètre de deux noms, lui, survit :
+`_regle_croiser_les_sources` passe avant et le pose. C'est exactement l'écart
+entre les 3/5 de VEL-02 qui répondent et les 2/5 qui non.
+
+### La réparation
+
+Une seconde lecture bornée, `_relire_faute_de_source_designee`, posée dans le
+nœud du plan à côté des deux autres. Quand les règles se sont arrêtées sur une
+question et que le plan demande des données sans plus désigner personne, on
+repose la MÊME question au planificateur avec un **constat sur son propre
+plan** : il a classé une demande de données, et il n'a désigné qu'une source au
+plus. Pas un mot de la question, pas une tournure, pas une paire de sources
+citée en exemple.
+
+On ne garde la seconde lecture que si elle désigne un PÉRIMÈTRE — au moins deux
+sources déclarées, au sens de `_perimetre_croise`. **C'est la condition qui ne
+défait pas C57** : une source seule redemandée au modèle serait une source
+devinée de plus, et elle rouvrirait la dépendance à l'ordre du YAML. Une
+demande qui porte sur deux sources, elle, n'est pas ambiguë — elle est double.
+
+**Aucun prompt n'a bougé, et aucune docstring de `Plan` non plus.** Le constat
+est ajouté à la suite du prompt composé, comme les trois contextes de
+conversation (`_contexte_de_source` et ses voisines) : le gabarit
+`prompts/planner.txt` ne bouge pas d'un caractère, et les sept empreintes
+SHA-256 de `tests/unit/test_prompts.py` sont inchangées.
+
+**La rédaction du constat a été mesurée, et la première était fausse.** Sur le
+planificateur seul, 8 tirages, le constat ajouté au prompt :
+
+| constat | vel02 | par-produit | moins-vendus |
+|---|---|---|---|
+| « tu n'as désigné AUCUNE source, nomme celle qui porte ce qui est demandé » | `source='production'` 8/8 | — | — |
+| « tu n'as désigné qu'une source AU PLUS, énumère toutes celles dont la description couvre une partie de ce qui est demandé » | périmètre 8/8 | périmètre 8/8 | périmètre 8/8 |
+
+La première demandait UNE source, et elle l'obtenait. Le constat retenu garde
+de la première lecture ce qu'elle a vraiment fait — au plus une source — et
+laisse le compte ouvert.
+
+### L'avant/après
+
+Mêmes conditions, 5 tirages, catalogue `sources/metier/catalogue.yaml` lu en
+tête du relevé.
+
+| question | inventaires avant | inventaires après | chiffres rendus |
+|---|---|---|---|
+| « Pour chaque produit… » | **5/5** | **0/5** | VEL-01 689/123, VEL-04 727/125 — les oracles |
+| « Quels produits a-t-on moins vendus… » | **5/5** | **0/5** | les 8 vélos, oracles |
+| « Pour le VEL-02… » | **2/5** | **0/5** | 484 / 130 — les oracles, 5/5 |
+
+Les trois témoins, après : « ventes ou production ? » ne regarde aucune donnée
+5/5 (la seconde lecture est PAYÉE puis JETÉE — `_perimetre_croise` la refuse
+sur un message qui ne dit rien de plus que deux noms) ; « quelles sources
+as-tu ? » et « qu'est-ce que t'appelles source vente, production, stock ? »
+restent traitées par l'agent système, 5/5, sans jamais atteindre ce chemin.
+
+Les trois questions du pilote entrent au banc
+(`scripts/mesure_croisement_de_sources.py`), avec leurs oracles relus dans
+Postgres le 2026-09-24 : VEL-02 130 unités vendues (147 annulées comprises),
+VEL-01 123 (141), VEL-04 125 (131).
+
+### Les campagnes
+
+Séquentielles, jamais de front. Le catalogue est lu en tête de chaque relevé.
+
+| campagne | catalogue | repère | après ce commit |
+|---|---|---|---|
+| les 3 questions du pilote + 3 témoins, 5 tirages | métier | 3 questions sur 3 en échec | **inventaire 0/15**, oracles rendus |
+| croisement, les 3 questions neuves + 2 témoins (1 tirage) | métier | — | **4/5** |
+| `mesure_choix_de_source.py` | par défaut | 6 tours attendus | **6/6** |
+| `mesure_ambiguite_de_source.py` | les deux catalogues d'ambiguïté | 5/5 propositions par ordre | **5/5 et 5/5** |
+| `mesure_surface_conversationnelle.py` | par défaut | 43/44 | **43/44** |
+
+Le seul rouge de la surface est `choix-entre-deux-sources` (« titanic ou
+iris ? »), le bord bistable déjà nommé et non réparé. Le seul rouge du banc de
+croisement est `vel02-fabrique-vendu-pilote` sur ce tirage-là : le tour ATTEINT
+les données — plus d'inventaire — et rend une quantité vendue qui n'est ni 130
+ni le chiffre du piège. Le relevé de 5 tirages du même jour donne 130 cinq fois
+sur cinq.
+
+### Ce qui reste
+
+- **La campagne de croisement COMPLÈTE n'a pas été relancée** : le budget de
+  moteur de ce tour est parti dans l'étape 1, dans les deux rédactions du
+  constat et dans les trois campagnes de non-régression. Le repère 9/14 n'est
+  donc pas confronté ici.
+- **Un tour qui allait servir l'inventaire paie désormais un appel de plus**,
+  qu'il serve ou non. Il est borné à ce tour-là : un tour qui aboutit ne passe
+  jamais par cette seconde lecture.
+- **La première lecture de VEL-02 est instable** — `production, ventes` ou
+  `production` selon le tirage. La seconde lecture rattrape le second cas ;
+  elle ne rend pas la première stable.
