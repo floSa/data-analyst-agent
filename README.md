@@ -1,5 +1,14 @@
 # data-analyst-agent
 
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-1.2-1C3C3C)
+![pydantic-ai](https://img.shields.io/badge/pydantic--ai-2.22-E92063?logo=pydantic&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
+![DuckDB](https://img.shields.io/badge/DuckDB-1.5-FFF000?logo=duckdb&logoColor=black)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-source-4169E1?logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-sandbox-2496ED?logo=docker&logoColor=white)
+
 Un agent d'analyse de données, on-premise.
 On lui branche ses sources, on lui pose des questions en français, il y répond
 avec ses chiffres, ses tableaux et ses graphiques.
