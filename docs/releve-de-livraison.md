@@ -205,3 +205,107 @@ Ces questions ne sont pas rejouées : elles ne sont pas des rouges neuves.
 Rien n'a été laissé de côté. Les treize campagnes, la suite pytest et les deux
 contrôles `ruff` ont tous été menés, et les rejeux de classement aussi. Le budget
 moteur consommé est d'environ 70 minutes, sous le plafond.
+
+---
+
+## Après le retrait de C67 et C68
+
+**Date de la mesure** : 25 septembre 2026, de 09:15 à 09:50 (heure locale).
+**Commits mesurés** : la tête de la branche de retrait —
+`dfa4ef3` (*revert(plan): un fil lié ne s'enrichit plus de la source que la
+relecture désigne*) sur `544ac7a` (*revert(plan): la preuve de clé retombe avec
+l'enrichissement qu'elle gardait*), à quoi s'ajoutent les deux commits de
+documentation. `src/`, `tests/` et `scripts/` y sont **identiques à `f78a97e`**
+(C66), au caractère près.
+**Moteur** : `llm_base_url = http://localhost:8100/v1`,
+`llm_model = google/gemma-4-E4B-it-qat-w4a16-ct` (vLLM) — le même, lu dans le
+`.env` de l'installation, recopié dans l'arbre de travail puis retiré.
+
+**Les scores de `f9c8cbb` ci-dessus ne sont pas réécrits** : ce sont eux qui
+justifient le retrait, et les effacer priverait de sa preuve la décision qu'ils
+ont fondée.
+
+Comme plus haut : campagnes **séquentielles**, jamais deux de front ; le catalogue,
+`llm_base_url` et `llm_model` imprimés en tête de chaque relevé ; et l'arbre de
+travail a d'abord reçu le `.env` et les six fichiers de données que git ignore.
+La suite pytest a été lancée **seule**, aucune campagne en cours — la précaution
+que C70 a payée d'une heure de blocage sur `tests/unit/test_llm.py:141`.
+
+### Le tableau des campagnes
+
+| campagne | catalogue | tirages | repère | ce tour |
+|---|---|---|---|---|
+| `mesure_parcours_de_demonstration.py`, 3 formulations | `sources/demonstration/catalogue.yaml` | 1 | 48/48 | **48/48**, 207 appels LLM |
+| `mesure_classement_sans_lexique.py` | `sources/demonstration/catalogue.yaml` | 1 | 10/10 | **10/10** (SQL en règle 10/10), 61 appels |
+| `mesure_ouverture_de_source.py` | `sources/demonstration/catalogue.yaml` | 1 | 15/17 | **16/17**, 56 appels |
+| `mesure_questions_metier.py` | `sources/metier/catalogue.yaml` | 1 | 12/12 | **12/12**, 70 appels |
+| `mesure_croisement_de_sources.py` | `sources/metier/catalogue.yaml` | 1 | 13/17 (repère de C66) | **13/17**, 108 appels |
+| `mesure_sources_nommees.py` | `sources/metier/catalogue.yaml` | 3 (défaut du runner) | 20/20 | **60/60**, soit 20/20 par tirage |
+| `mesure_choix_de_source.py` | `sources/catalogue.yaml` | 1 | 6/6 | **6/6**, 26 appels |
+| `mesure_ambiguite_de_source.py` | `tests/catalogues/ambiguite/*.yaml` | 1 essai par ordre | 1/1 et 1/1 | **1/1 et 1/1** — proposition dans les deux ordres |
+| `uv run pytest -p no:randomly` | — | — | verts, ≥ 85 % | **1 623 verts**, 16 désélectionnés, couverture **98,94 %**, 2 min 48 |
+| `ruff check` | — | — | vert | **vert** |
+| `ruff format --check` | — | — | vert | **vert** — 213 fichiers déjà formatés |
+
+### Les dix régressions de `f9c8cbb` sont levées
+
+Les dix questions rouges relevées plus haut repassent, et c'est le résultat de ce
+tour :
+
+- `parcours_de_demonstration` — `Q2`, `Q3`, `Q4`, `Q5` et `verrou-source-liee`
+  rendent leurs chiffres dans les **trois** formulations. `Q3 · courte` (« ça fait
+  combien de kWh au total sur l'année ? ») rend **1 757 519,23 kWh**, là où
+  `f9c8cbb` servait 663 504,99 sur un croisement tronqué à 10 000 lignes. Plus
+  aucune mention de données tronquées sur ces tours.
+- `classement_sans_lexique` — `F04`, `F06` et `F09` classent sur
+  `nombre_sessions` et non plus sur le `nb_points` de `referentiel` : **3/3**,
+  et 10/10 sur la campagne entière.
+- `ouverture_de_source` — `V2-tient` (« quelle est l'énergie totale en kWh ? »)
+  rend 1 757 519,23 ; le volet `verrou` est **3/3**.
+- `croisement_de_sources` — `vel01-fabrique-vendu`, rouge sur `f9c8cbb`, repasse.
+
+Les quatre **bascules** de `f9c8cbb` (`Q3 · longue`, `Q4 · longue`, `Q5 · longue`,
+`verrou-source-liee · courte`) sont vertes ce tour, dans leur formulation comme
+dans les deux autres.
+
+### Ce qui reste rouge — deux questions, 0/3 chacune
+
+Rejouées trois fois, seules, comme les rouges de la première mesure.
+
+#### `croisement_de_sources` — `ca-produit-vs-fabrique`, fil vierge
+
+- **Message** : « compare le chiffre d'affaires par produit avec les quantités
+  fabriquées »
+- **Verdict** : **0/3** — le 461 attendu pour VEL-07 (fabrications, annulées
+  exclues) n'est jamais rendu.
+- **Ce n'est pas un effet du retrait.** Le total de la campagne, 13/17, est
+  exactement le repère de C66 ; c'est sa **composition** qui a bougé d'un
+  tirage : `vel01-fabrique-vendu` était rouge au repère et passe ce tour, celle-ci
+  était verte et tombe. Le relevé de C66 note déjà que ces quatre rouges-là sont
+  des tirages. Les trois autres — `fabrique-vendu-stock` (131 au lieu de 125,
+  trois sources), `ca-produit-vs-fabrique-fil-lie` et `vendus-sans-fabriquer` —
+  étaient rouges au repère et le restent.
+
+#### `ouverture_de_source` — `O01`
+
+- **Message** : « on bosse sur exploitation aujourd'hui, tu peux me la sortir ? »
+- **Verdict** : **0/3** — la source est bien liée à `exploitation`, mais le
+  compte de 6 tables n'est pas dit ; l'accueil déterministe
+  (`introspection.py`, « Entendu : on travaille sur **X** … n table(s) ») ne rend
+  pas la phrase, et le modèle formule à sa place.
+- **La campagne est au-dessus de son repère** — 16/17 contre 15/17 à un tirage —
+  donc deux questions étaient rouges au repère et une seule l'est ici. Cette
+  question est classée régression par la règle du rejeu, et la règle est
+  appliquée telle quelle ; mais `O01` ne peut pas être une rouge neuve dans une
+  campagne qui gagne un point. Le savoir demanderait de rejouer `f78a97e`, ce qui
+  n'a pas été fait.
+
+### Ce qui n'a pas tourné
+
+Rien n'a été laissé de côté. Les huit campagnes du tableau de commande, les deux
+rejeux, la suite pytest et les deux contrôles `ruff` ont tous été menés. Le budget
+moteur consommé est d'environ **35 minutes**, sous les 50 visées.
+
+Aucun fichier de `src/`, `scripts/`, `tests/` ou `sources/` n'a été réparé : les
+seuls changements de cette branche sont les deux retraits et la documentation
+qu'ils rendent due.
