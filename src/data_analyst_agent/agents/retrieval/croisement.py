@@ -79,6 +79,11 @@ def prefixer(schema: SchemaInfo, prefixe: str) -> list[TableInfo]:
     return tables
 
 
+def _la_source_qui_porte(table: str, sources: list[str]) -> str:
+    """La source dont sort une table du croisement — le préfixe EST son nom."""
+    return next((s for s in sources if table.startswith(f"{s}_")), "")
+
+
 def _une_cle_naturelle(connection, table: str, colonne: str) -> bool:
     """La colonne IDENTIFIE-T-ELLE une ligne de cette table ? — sans NULL, sans doublon.
 
@@ -152,7 +157,7 @@ def relier_les_sources(
     # EST le nom de la source : c'est `ouvrir_le_croisement` qui l'a posé.
     porteuses: dict[str, list[tuple[str, str]]] = {}
     for table in decrites:
-        source = next((s for s in sources if table.name.startswith(f"{s}_")), "")
+        source = _la_source_qui_porte(table.name, sources)
         for colonne in table.columns:
             porteuses.setdefault(colonne.name, []).append((source, table.name))
 
@@ -279,6 +284,36 @@ def ouvrir_le_croisement(sources: list[Source], *, max_rows: int) -> Croisement:
         noms=[s.name for s in sources],
         tronquees=tronquees,
     )
+
+
+def une_cle_traverse(sources: list[Source], *, max_rows: int) -> bool:
+    """Les sources se relient-elles ? — une clé PROUVÉE qui passe de l'une à l'autre.
+
+    C'est ``relier_les_sources`` qu'on interroge, et rien d'autre : la question
+    « ces deux sources parlent-elles des mêmes choses ? » a déjà une réponse
+    dans ce module, lue dans les données — même nom de colonne, unique d'un
+    seul côté, toutes les valeurs retrouvées en face. En écrire un second
+    décompte le ferait diverger du premier, et c'est celui-ci qui décide du
+    montage.
+
+    Le prix est une ouverture des deux sources, celle-là même que
+    ``ouvrir_le_croisement`` paie ensuite si le périmètre est retenu. Il est
+    payé sur les seuls tours où la question se pose, et l'appelant garde le
+    résultat : les données d'une source ne changent pas d'un tour à l'autre
+    pendant une session.
+
+    ``max_rows`` est celui du croisement RÉEL, et ce n'est pas un détail : une
+    table tronquée perd des valeurs, l'inclusion peut échouer sur ce qui manque,
+    et prouver la clé sur un échantillon plus large que celui qu'on montera
+    annoncerait un lien que le tour n'aurait pas.
+    """
+    with closing(ouvrir_le_croisement(sources, max_rows=max_rows)) as croisement:
+        return any(
+            _la_source_qui_porte(fk.ref_table, croisement.noms)
+            != _la_source_qui_porte(table.name, croisement.noms)
+            for table in croisement.adapter.schema().tables
+            for fk in table.foreign_keys
+        )
 
 
 def dictionnaire_du_croisement(sources: list[Source]) -> str | None:

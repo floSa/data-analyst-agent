@@ -19,8 +19,10 @@ from data_analyst_agent.agents.retrieval.catalog import Catalog, DuckDBSource, F
 from data_analyst_agent.agents.retrieval.croisement import (
     dictionnaire_du_croisement,
     ouvrir_le_croisement,
+    une_cle_traverse,
 )
 from data_analyst_agent.config import Settings
+from data_analyst_agent.orchestrator import graph as graph_module
 from data_analyst_agent.orchestrator.graph import Orchestrator
 from data_analyst_agent.orchestrator.plan import Plan
 from data_analyst_agent.orchestrator.systeme import (
@@ -423,11 +425,35 @@ def test_le_temoin_tient_aussi_quand_le_champ_est_rempli(orchestrateur, tmp_path
 # --- le PLANCHER cède au périmètre : ce qui le fait céder, et ce qui le retient ----
 
 
-def _orchestrateur_sur(llm: ScriptedLLM, tmp_path: Path) -> Orchestrator:
-    """Un orchestrateur dont le catalogue porte `ventes` et `production`."""
+def reliees(tmp_path: Path) -> list:
+    """`ventes` et `production`, qu'une clé PROUVÉE relie — `code_produit`.
+
+    Les deux sources du catalogue métier se relient pour de vrai (relevé du
+    2026-09-25 : `production_ordres_fabrication.code_produit` vers
+    `ventes_produits`), et un fil lié à l'une s'enrichit de l'autre. Les fixer
+    ici reliées est donc ce qui fait travailler les tests sur le cas réel.
+    """
+    ventes, production = tmp_path / "ventes.csv", tmp_path / "production.csv"
+    ventes.write_text("code_produit,libelle\nVEL-01,Vélo\nVEL-02,VTT\n", encoding="utf-8")
+    production.write_text("code_produit,fabrique\nVEL-01,9\nVEL-01,4\n", encoding="utf-8")
+    return [FileSource(name="ventes", path=ventes), FileSource(name="production", path=production)]
+
+
+def etrangeres(tmp_path: Path) -> list:
+    """`titanic` et `iris` : aucune colonne commune, donc aucune clé — le cas `setosa`."""
+    titanic, iris = tmp_path / "titanic.csv", tmp_path / "iris.csv"
+    titanic.write_text("passager,survivant\n1,1\n2,0\n", encoding="utf-8")
+    iris.write_text("espece,petale\nsetosa,1.4\nsetosa,1.5\n", encoding="utf-8")
+    return [FileSource(name="titanic", path=titanic), FileSource(name="iris", path=iris)]
+
+
+def _orchestrateur_sur(
+    llm: ScriptedLLM, tmp_path: Path, sources: list | None = None
+) -> Orchestrator:
+    """Un orchestrateur dont le catalogue porte `ventes` et `production`, reliées."""
     return Orchestrator(
         model=llm.model(),
-        catalog=Catalog(sources=deux(tmp_path)),
+        catalog=Catalog(sources=reliees(tmp_path) if sources is None else sources),
         registry=registre(tmp_path / "registre_p", UN_MODELE_YAML),
         settings=Settings(_env_file=None),
     )
@@ -713,6 +739,16 @@ def test_une_colonne_vide_ne_fonde_aucune_cle(tmp_path: Path):
     assert _cles_traversantes(sources) == []
 
 
+def test_une_cle_traverse_dit_si_deux_sources_se_relient(tmp_path: Path):
+    """La question « ces deux sources parlent-elles des mêmes choses ? », lue dans les données.
+
+    C'est elle qui sépare un périmètre cohérent d'un fouillis, et elle n'a pas
+    de second décompte : `relier_les_sources` répond, on lit sa réponse.
+    """
+    assert une_cle_traverse(reliees(tmp_path), max_rows=100) is True
+    assert une_cle_traverse(etrangeres(tmp_path), max_rows=100) is False
+
+
 # --- la source du fil, et la seconde lecture qui la retire -----------------------
 
 
@@ -852,7 +888,7 @@ def test_une_source_AUTRE_que_celle_du_fil_est_relue_elle_aussi(tmp_path: Path):
     assert "seconde lecture sans la source du fil" in rendu["trace"][0].detail
 
 
-def test_une_source_autre_seule_a_la_relecture_enrichit_le_perimetre_du_fil(tmp_path: Path):
+def test_une_source_reliee_au_fil_enrichit_son_perimetre(tmp_path: Path):
     """Le relevé du 2026-09-25 : une question qui ne porte QUE sur l'autre source.
 
     Fil lié à `ventes`, « Combien d'arrêts machine avons-nous eus en 2025 ? » :
@@ -934,6 +970,87 @@ def test_le_perimetre_enrichi_ne_change_pas_la_source_liee_au_fil(tmp_path: Path
 
     assert rendu["source_out"] == "ventes"
     assert rendu["avis_de_source"] == ""
+
+
+def test_une_source_que_rien_ne_relie_au_fil_fait_basculer_au_lieu_de_s_ajouter(tmp_path: Path):
+    """Le cas `setosa`, mesuré le 2026-09-25 : le chiffre était juste, le périmètre absurde.
+
+    Fil lié à `titanic`, « Combien de fleurs de l'espèce setosa y a-t-il ? » :
+    la relecture désigne `iris`, le couple monté était « iris, titanic », et la
+    réponse — 50, juste — citait « le dictionnaire de `iris, titanic` ». Rien ne
+    relie des passagers à des fleurs : c'est le fouillis.
+
+    Aucune clé ne traverse les deux sources, donc on ne les croise pas. La
+    question porte sur l'autre source : on y répond, on bascule, et on le DIT.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="iris")),
+            plan_response(Plan(capability="query", source="iris")),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path, etrangeres(tmp_path))
+
+    rendu = orchestrateur._plan_node(
+        _etat("combien de fleurs de l'espèce setosa y a-t-il ?", source_in="titanic")
+    )
+
+    assert rendu["plan"].source == "iris"
+    assert rendu["plan"].sources == []
+    assert rendu["source_out"] == "iris"
+    assert "iris" in rendu["avis_de_source"]
+    assert "titanic" in rendu["avis_de_source"]
+    assert "bascule sur iris" in rendu["trace"][0].detail
+
+
+def test_le_lien_entre_deux_sources_n_est_prouve_qu_une_fois(tmp_path: Path):
+    """Prouver la clé ouvre les deux sources : on le paie au premier tour, pas aux suivants.
+
+    Les données d'une source ne changent pas d'un tour à l'autre pendant une
+    session, et la paire est la même pour tous les fils.
+    """
+    reponses = [plan_response(Plan(capability="query", source="production"))] * 4
+    llm = ScriptedLLM().script(PLANNER, reponses)
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+    preuves = []
+    vraie = graph_module.une_cle_traverse
+
+    def comptee(sources, **kw):
+        preuves.append([s.name for s in sources])
+        return vraie(sources, **kw)
+
+    graph_module.une_cle_traverse = comptee
+    try:
+        for _ in range(2):
+            orchestrateur._plan_node(
+                _etat("combien d'arrêts machine avons-nous eus en 2025 ?", source_in="ventes")
+            )
+    finally:
+        graph_module.une_cle_traverse = vraie
+
+    assert preuves == [["ventes", "production"]]
+
+
+def test_une_source_illisible_ne_prouve_aucune_cle_donc_bascule(tmp_path: Path):
+    """Le bord sûr : une bascule est annoncée, un enrichissement supposé serait muet."""
+    sources = reliees(tmp_path)
+    sources[1].path.unlink()
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="production")),
+            plan_response(Plan(capability="query", source="production")),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path, sources)
+
+    rendu = orchestrateur._plan_node(
+        _etat("combien d'arrêts machine avons-nous eus en 2025 ?", source_in="ventes")
+    )
+
+    assert rendu["plan"].source == "production"
+    assert rendu["source_out"] == "production"
 
 
 def test_un_message_qui_ne_dit_que_des_noms_de_sources_n_enrichit_rien(tmp_path: Path):

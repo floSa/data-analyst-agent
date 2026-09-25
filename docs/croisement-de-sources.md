@@ -2013,3 +2013,154 @@ de plus.
   n'a pas été prise ici.
 - **La relecture ne coûte aucun appel de plus qu'à C66.** Elle était déjà
   ouverte sur ces tours-là ; ce qui change est ce qu'on fait de sa réponse.
+
+## Un fil ne s'enrichit que d'une source RELIÉE (C68)
+
+C67 a rendu au tour la source que la relecture désigne : sur un fil lié, le
+périmètre devient « le fil PLUS elle ». Le pilote l'a mesuré, et la troisième
+question de son relevé montre le prix de cette générosité.
+
+| fil | question | périmètre monté | réponse |
+|---|---|---|---|
+| `ventes` | « Quelle machine a eu le plus d'arrêts en 2025 ? » | `ventes, production` | M-009, 16 arrêts — **voulu** |
+| `ventes` | « Combien de références avons-nous en stock au dernier inventaire ? » | `ventes, stocks` | 12 — **voulu** |
+| `titanic` | « Combien de fleurs de l'espèce setosa y a-t-il ? » | `iris, titanic` | 50, et « le dictionnaire de `iris, titanic` » — **le fouillis** |
+
+Le chiffre est juste dans les trois cas. Le troisième périmètre n'a aucun
+sens : rien ne relie des passagers à des fleurs. « C'est pour éviter que ça
+soit un fouillis sans nom. »
+
+### La cause, telle que mesurée
+
+`_le_fil_plus_la_source_relue` ajoutait la source relue à celle du fil sans
+jamais demander ce que les deux avaient en commun. Les deux premiers cas et le
+troisième passaient par le même code, dans le même état : le couple était monté
+parce que la relecture avait nommé une autre source, et pour aucune autre
+raison.
+
+### La propriété qui les sépare, et elle était déjà lue dans les données
+
+`agents/retrieval/croisement.py` sait depuis C63 dire quelle clé traverse un
+périmètre : une colonne de même nom des deux côtés, clé naturelle d'UN côté
+seulement, dont toutes les valeurs de l'autre côté se retrouvent en face
+(`relier_les_sources`). C'est ce décompte qu'on interroge — pas un second, qui
+divergerait du premier. Relevé le 2026-09-25, catalogue
+`sources/metier/catalogue.yaml`, toutes les paires, `max_rows=10000` :
+
+| paire | clé prouvée | verdict | coût |
+|---|---|---|---|
+| `ventes` + `production` | `production_ordres_fabrication.code_produit` → `ventes_produits` | reliées | 0,36 s |
+| `ventes` + `stocks` | `stocks_mouvements.code_produit` et `stocks_inventaire.code_produit` → `ventes_produits` | reliées | 0,34 s |
+| `titanic` + `iris` | aucune colonne commune | **étrangères** | 0,23 s |
+| `production` + `stocks` | aucune clé prouvée | étrangères | 0,12 s |
+| `ventes` + `titanic`, `ventes` + `iris`, `production` + `iris`, `production` + `titanic`, `stocks` + `iris`, `stocks` + `titanic` | — | étrangères | 0,07 à 0,23 s |
+
+### La réparation
+
+Deux phrases. **Une clé au moins relie la source du fil à la source relue : on
+enrichit, comme C67.** Aucune : c'est une **BASCULE** vers la source relue,
+traitée exactement comme quand l'utilisateur nomme une source — la conversation
+change de source liée, et `_lier_la_source` l'annonce.
+
+Ni enrichissement muet, ni refus. La question porte sur l'autre source : on y
+répond, et on dit qu'on a changé. Ce qui est dangereux n'est pas de changer de
+source, c'est d'en changer en silence.
+
+La bascule circule dans `PlanContext.bascule_relue`, et
+`_regle_source_de_la_conversation` la laisse passer au même endroit qu'une
+source nommée par l'utilisateur : c'est le même fait — quelque chose a tranché
+pour ce tour, et la source du fil ne se repose pas par-dessus.
+
+**Le prix est l'ouverture des deux sources au moment du plan** — 0,35 s par
+paire sur le catalogue métier —, et il est gardé en cache pour la vie du
+processus (`_une_cle_relie`) : les données d'une source ne changent pas d'un
+tour à l'autre pendant une session, et la paire est la même pour tous les fils.
+Le premier tour qui pose la question paie, les suivants lisent. Il n'est payé
+que là où la question se pose : un tour sans relecture, ou dont la relecture
+repose la source du fil, n'ouvre rien.
+
+**Une source injoignable ne prouve aucune clé**, donc bascule. C'est le bord
+sûr : une bascule est ANNONCÉE, là où un enrichissement supposé sur une source
+qu'on n'a pas su lire serait muet.
+
+**Aucun prompt n'a bougé** : ni un fichier de `prompts/`, ni une fiche d'outil,
+ni la docstring de `Plan`. Aucune empreinte SHA-256 ne change.
+
+### L'avant/après
+
+Sept questions, 3 tirages chacune, moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue
+`sources/metier/catalogue.yaml`. « Avant » est le comportement de C67, obtenu en
+faisant répondre « oui » à la preuve de clé : le couple est alors monté sans que
+rien ne le fonde, exactement comme avant ce tour.
+
+| fil | question | périmètre du tour | bascule | avant | après |
+|---|---|---|---|---|---|
+| `titanic` | « Combien de fleurs de l'espèce setosa y a-t-il ? » | `iris` seule | **annoncée** | **0/3** — 50, mais sur `iris, titanic`, et le fil restait sur `titanic` | **3/3** — « Je passe sur la source `iris` — on travaillait sur `titanic`. Il y a 50 fleurs de l'espèce setosa. » |
+| `ventes` | « Quelle machine a eu le plus d'arrêts en 2025 ? » | `ventes, production` | non | 3/3 — M-009, 16 | **3/3** — M-009, 16 |
+| `ventes` | « Combien de références avons-nous en stock au dernier inventaire ? » | `ventes, stocks` | non | 3/3 — 12 | **3/3** — 12 |
+| `titanic` | « Combien de passagers ont survécu ? » | `titanic` seule | non | 3/3 — 342 | **3/3** — 342 |
+| `ventes` | « Quel chiffre d'affaires avons-nous réalisé en 2025 ? » | `ventes` seule | non | 3/3 — 1 496 743,00 € | **3/3** — 1 496 743,00 € |
+| `ventes` | « Combien de salariés avons-nous ? » | `ventes` seule | non | 3/3 — aucune source inventée | **3/3** — aucune source inventée |
+| `titanic` | « et dans iris, combien de lignes ? » | `iris` seule | **annoncée** (source NOMMÉE) | 3/3 — 150 | **3/3** — 150, chemin inchangé |
+
+**18/21 avant, 21/21 après.** Les deux cas « voulus » gardent leur périmètre et
+leurs chiffres ; le fouillis devient une bascule annoncée ; les quatre témoins
+ne bougent pas.
+
+**La latence ajoutée**, mesurée hors LLM sur le catalogue métier,
+`max_rows=10000` : `ventes`+`production` **347 ms**, `ventes`+`stocks`
+**422 ms**, `titanic`+`iris` **98 ms** — une fois par paire, puis zéro (cache).
+Dans les tours mesurés, le premier tirage d'une paire reliée paie +1,6 à +2,0 s
+et les suivants retombent dans le bruit du modèle (±1,5 s d'un tirage à
+l'autre).
+
+### Les campagnes
+
+Toutes séquentielles, jamais deux de front. Le moteur n'a servi aucune autre
+mesure pendant ce tour (une seule connexion sur le port 8100). Catalogue lu en
+tête de chacune : `sources/metier/catalogue.yaml`, moteur
+`http://localhost:8100/v1` (`google/gemma-4-E4B-it-qat-w4a16-ct`) — sauf les
+deux qui lisent leur propre catalogue, nommé dans la ligne.
+
+| campagne | repère | ce tour |
+|---|---|---|
+| les 6 témoins + le cas `setosa`, 3 tirages | 18/21 (comportement C67) | **21/21** |
+| croisement complet, 1 tirage | 15/20 | **22/25** — les 20 d'avant : **17/20** ; les 5 questions ajoutées ici : **5/5** |
+| `scripts/mesure_questions_metier.py`, 1 tirage | 12/12 | **12/12** |
+| `scripts/mesure_choix_de_source.py` — catalogue `sources/catalogue.yaml` (titanic, iris) | 6/6 | **6/6** — le verrou tient sur `titanic`, la bascule vers `iris` est annoncée |
+| `scripts/mesure_sources_nommees.py`, 1 tirage | 20/20 | **20/20** |
+| `scripts/mesure_ambiguite_de_source.py`, 5 essais — catalogues `tests/catalogues/ambiguite/*.yaml` | 1/1 et 1/1 | **5/5 et 5/5** — proposition dans les deux ordres |
+| `uv run pytest -p no:randomly` | 1 627 verts | **1 631 verts** (4 tests de plus) |
+| `ruff check`, `ruff format --check` | verts | **verts** |
+
+Cinq questions sont entrées au banc du croisement : `machine-arrets-fil-lie` et
+`references-en-stock-fil-lie` (les paires RELIÉES), `setosa-sur-fil-titanic`
+(les ÉTRANGÈRES), et deux témoins — `temoin-survivants-titanic` et
+`temoin-bascule-nommee`. Le repère passe de 20 à 25 questions, et la colonne
+« les 20 d'avant » reste comparable.
+
+Le banc a gagné un oracle : `source_apres` — la source à laquelle le fil est lié
+APRÈS le tour, et l'exigence que la bascule soit écrite dans la réponse. Sans
+lui, `setosa` passait : le chiffre était juste.
+
+### Ce qui reste
+
+- **`vend-plus-quon-produit` (fil vierge) reste 0/1**, et
+  **`vendus-sans-fabriquer` ne regarde toujours aucune donnée** : inchangés
+  depuis C65-C67, sans rapport avec ce tour. La variante sur fil lié, elle,
+  est verte.
+- **`fabrique-vendu-stock` garde son défaut** : la question à TROIS sources
+  perd un chiffre. Rien ici ne la vise — la preuve de clé se lit sur une paire,
+  et `production` + `stocks` n'en portent aucune.
+- **La preuve se lit sur une PAIRE.** Le fil et la source relue, rien d'autre.
+  Un périmètre à trois monté par le planificateur lui-même
+  (`_perimetre_croise`) n'est pas soumis à cette preuve : ce qu'un tour DÉSIGNE
+  n'a pas à être justifié, c'est ce qu'on lui AJOUTE qui doit l'être.
+- **Deux sources reliées par une clé peuvent quand même n'avoir rien à se
+  dire.** La clé prouve qu'elles parlent des mêmes objets ; elle ne dit pas que
+  la question porte sur les deux. C'est `_perimetre_croise` qui garde ce bord,
+  comme avant.
+- **Le cache vit avec le processus.** Une source dont les données changent en
+  cours de session garderait son verdict. Les sources de ce socle sont lues,
+  jamais écrites ; si cela changeait, il faudrait une péremption.

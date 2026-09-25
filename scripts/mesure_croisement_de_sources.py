@@ -89,6 +89,11 @@ class Question:
     # périmètre du plan les sépare. Lu dans la trace, qui porte déjà le détail
     # `query sur ventes, production`.
     sans_croisement: bool = False
+    # La source LIÉE au fil APRÈS le tour. "" = « celle d'avant, inchangée » :
+    # un périmètre enrichi n'est monté que pour le tour, et le fil repart de sa
+    # source. Un nom = une BASCULE, et elle doit être ANNONCÉE — c'est ce qui
+    # sépare « changer de source » de « en changer en silence ».
+    source_apres: str = ""
     attendu: str = ""
     montre: str = ""
 
@@ -337,6 +342,63 @@ QUESTIONS: tuple[Question, ...] = (
         attendu="aucune source de plus montée, et le tour le dit",
         montre="TÉMOIN — une question sur rien de ce que le catalogue porte",
     ),
+    # ---- UN PÉRIMÈTRE COHÉRENT : RELIÉE, ON ENRICHIT ; ÉTRANGÈRE, ON BASCULE
+    #
+    # Le relevé du pilote du 2026-09-25 : fil lié à `titanic`, « Combien de
+    # fleurs de l'espèce setosa y a-t-il ? » montait « iris, titanic » et
+    # répondait 50 — juste, et sur un périmètre qui n'a aucun sens. Rien ne
+    # relie des passagers à des fleurs.
+    #
+    # Ce qui sépare les paires est lu dans les données par `relier_les_sources`
+    # (relevé du 2026-09-25, catalogue métier, toutes les paires) :
+    #   ventes + production   `code_produit` → `ventes_produits`   RELIÉES
+    #   ventes + stocks       `code_produit` → `ventes_produits`   RELIÉES
+    #   titanic + iris        aucune colonne commune               ÉTRANGÈRES
+    Question(
+        cle="machine-arrets-fil-lie",
+        message="Quelle machine a eu le plus d'arrêts en 2025 ?",
+        fil="ventes",
+        nombres=(16,),
+        faits=(("M-009",),),
+        attendu="M-009, 16 arrêts — `ventes` enrichie de `production`, qu'une clé relie",
+        montre="RELIÉES — le périmètre du tour s'enrichit, le fil garde sa source",
+    ),
+    Question(
+        cle="references-en-stock-fil-lie",
+        message="Combien de références avons-nous en stock au dernier inventaire ?",
+        fil="ventes",
+        nombres=(12,),
+        attendu="12 références — `ventes` enrichie de `stocks`, qu'une clé relie",
+        montre="RELIÉES — l'autre paire du catalogue, sur le même fil",
+    ),
+    Question(
+        cle="setosa-sur-fil-titanic",
+        message="Combien de fleurs de l'espèce setosa y a-t-il ?",
+        fil="titanic",
+        nombres=(50,),
+        source_apres="iris",
+        attendu="50 fleurs, et la BASCULE sur `iris` annoncée — rien ne relie les deux",
+        montre="ÉTRANGÈRES — le fouillis `iris, titanic` devient une bascule annoncée",
+    ),
+    Question(
+        cle="temoin-survivants-titanic",
+        message="Combien de passagers ont survécu ?",
+        fil="titanic",
+        nombres=(342,),
+        sans_croisement=True,
+        attendu="342 — `titanic` seule, aucune source de plus montée",
+        montre="TÉMOIN — la question du fil se joue sur la source du fil",
+    ),
+    Question(
+        cle="temoin-bascule-nommee",
+        message="et dans iris, combien de lignes ?",
+        fil="titanic",
+        nombres=(150,),
+        source_apres="iris",
+        sans_croisement=True,
+        attendu="150 lignes, bascule annoncée — le chemin de la source NOMMÉE, inchangé",
+        montre="TÉMOIN — quelqu'un qui écrit un nom a tranché, et rien ne change ici",
+    ),
     # ---- LES TROIS TÉMOINS -----------------------------------------------
     Question(
         cle="temoin-une-seule-source",
@@ -412,6 +474,11 @@ def juger(
         return "échec", f"aucune donnée regardée ({' → '.join(noeuds)})"
     if question.sans_croisement and "," in plan:
         return "échec", f"périmètre élargi sans qu'on le demande ({plan})"
+    attendue = question.source_apres or question.fil
+    if attendue and (reponse.source_de_travail or "") != attendue:
+        return "échec", f"le fil repart de `{reponse.source_de_travail}` et non de `{attendue}`"
+    if question.source_apres and question.source_apres not in reponse.answer:
+        return "échec", f"bascule sur `{question.source_apres}` non annoncée"
     # Tolérance de 0,5 : elle absorbe l'arrondi d'affichage sans jamais
     # confondre deux oracles — les deux chiffres de chaque piège sont séparés
     # par des ordres de grandeur, pas par une décimale.

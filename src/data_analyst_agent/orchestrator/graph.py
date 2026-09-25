@@ -16,7 +16,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -57,6 +57,7 @@ from data_analyst_agent.agents.retrieval.croisement import (
     dictionnaire_du_croisement,
     ouvrir_le_croisement,
     prefixer,
+    une_cle_traverse,
 )
 from data_analyst_agent.agents.retrieval.faits import ReglagesDuReleve, RelevesDuCatalogue
 from data_analyst_agent.agents.retrieval.sql import QueryResult
@@ -253,6 +254,12 @@ class PlanContext:
     # ``ask()`` sans ``conversation_id``) — dans ce cas rien n'est lié ni
     # proposé, et le comportement est celui d'avant ce mécanisme.
     source_de_travail: str | None
+    # La source vers laquelle la seconde lecture fait BASCULER ce tour, quand
+    # rien ne la relie à celle du fil (``_le_fil_plus_la_source_relue``). Elle
+    # vaut ce qu'une source nommée par l'utilisateur vaut : la reposition de la
+    # source du fil la laisse passer, et la bascule est annoncée. ``None`` — le
+    # défaut — est le cas de tous les tours qui ne relisent rien.
+    bascule_relue: str | None = None
 
 
 class ChatAnswer(BaseModel):
@@ -357,6 +364,9 @@ class Orchestrator:
             registry if registry is not None else Registry.load(self.settings.models_registry_path)
         )
         self._sandbox_override = sandbox
+        # Les paires de sources dont on a PROUVÉ (ou réfuté) qu'une clé les
+        # relie, gardées le temps du processus — cf. `_une_cle_relie`.
+        self._liens_prouves: dict[tuple[str, ...], bool] = {}
         # plafond de ce qu'un tour réinjecte dans le contexte du modèle
         self.limits = ContextLimits.from_settings(self.settings)
         self.graph = self._build_graph()
@@ -1020,6 +1030,11 @@ class Orchestrator:
         objet = self._objet_du_fil_designe(plan, ctx)
         if nommee:
             plan.source = nommee
+        elif ctx.bascule_relue:
+            # Une bascule décidée par la seconde lecture vaut ce que vaut une
+            # source nommée : la source du fil ne se repose pas par-dessus, et
+            # `_lier_la_source` l'annonce. Cf. `_le_fil_plus_la_source_relue`.
+            plan.source = ctx.bascule_relue
         elif objet is not None:
             plan.source = objet.name
         elif ctx.source_de_travail:
@@ -1677,9 +1692,11 @@ class Orchestrator:
         # un tour qui croise deux sources ressort avec la seule source liée.
         # On la retire, une fois, et on ne garde la relecture que si elle
         # désigne un périmètre (cf. ``_relire_sans_la_source_du_fil``).
-        sans_le_fil = self._relire_sans_la_source_du_fil(plan, ctx, state, mesures)
+        sans_le_fil, bascule = self._relire_sans_la_source_du_fil(plan, ctx, state, mesures)
         if sans_le_fil is not None:
             plan = sans_le_fil
+        if bascule:
+            ctx = replace(ctx, bascule_relue=bascule)
         question = self._appliquer_les_regles(plan, ctx)
         redesignee = self._relire_faute_de_source_designee(
             plan, ctx, question, system_prompt, state, mesures
@@ -1696,6 +1713,8 @@ class Orchestrator:
         detail = f"{plan.capability}" + (f" sur {plan.source}" if plan.source else "")
         if sans_le_fil is not None:
             detail += " — seconde lecture sans la source du fil"
+            if bascule:
+                detail += f", bascule sur {bascule} faute de clé qui relie"
         if redesignee is not None:
             detail += " — seconde lecture faute de source désignée"
         if relue:
@@ -1709,8 +1728,12 @@ class Orchestrator:
 
     def _relire_sans_la_source_du_fil(
         self, plan: Plan, ctx: PlanContext, state: OrchestratorState, mesures: dict
-    ) -> Plan | None:
-        """Repose la MÊME question sans la source du fil — ``None`` s'il n'y a rien à reprendre.
+    ) -> tuple[Plan | None, str]:
+        """Repose la MÊME question sans la source du fil — ``(None, "")`` s'il n'y a rien.
+
+        Rend le plan à garder, et le nom de la source vers laquelle ce tour
+        BASCULE quand rien ne relie la source relue à celle du fil (second
+        membre, vide autrement — cf. ``_le_fil_plus_la_source_relue``).
 
         **Le banc et le chemin normal ne posaient pas la même question, et c'est
         tout l'écart.** « est-ce qu'on vend plus que ce qu'on produit ? » rend
@@ -1773,10 +1796,10 @@ class Orchestrator:
            cette propriété qui ouvre la relecture, et elle ne regarde pas
            lequel ;
         4. la seconde lecture désigne un périmètre — ou, à défaut, une source
-           AUTRE que celle du fil, et le périmètre du tour devient alors le fil
-           PLUS elle (``_le_fil_plus_la_source_relue``). Sinon on garde le
-           premier plan, et le tour se déroule comme si cette méthode
-           n'existait pas.
+           AUTRE que celle du fil, et le tour devient alors le fil PLUS elle si
+           une clé les relie, une BASCULE vers elle sinon
+           (``_le_fil_plus_la_source_relue``). Sinon on garde le premier plan,
+           et le tour se déroule comme si cette méthode n'existait pas.
 
         **Une source IMPOSÉE par l'appelant la ferme**, comme elle ferme
         ``_le_plancher_cede_au_perimetre`` : ``source=`` est un paramètre
@@ -1785,22 +1808,28 @@ class Orchestrator:
         une décision sur CE tour : c'est le souvenir du précédent.
         """
         if ctx.source_imposee or not ctx.source_de_travail:
-            return None
+            return None, ""
         if plan.capability not in self._SOURCE_CAPABILITIES or plan.sources:
-            return None
+            return None, ""
         designee = introspection.sources_nommees(plan.source or "", ctx.catalogue_declare)
         if len(designee) != 1:
-            return None
+            return None, ""
         prompt, _ = self._peser_le_prompt({**state, "source_in": None})
         second = self._demander_un_plan(prompt, state, dict(mesures))
         if second is None:
-            return None
+            return None, ""
         if self._perimetre_croise(second, ctx):
-            return second
+            return second, ""
         return self._le_fil_plus_la_source_relue(second, ctx)
 
-    def _le_fil_plus_la_source_relue(self, second: Plan, ctx: PlanContext) -> Plan | None:
-        """Le fil PLUS la source que la relecture désigne — ``None`` s'il n'y a rien à ajouter.
+    def _le_fil_plus_la_source_relue(
+        self, second: Plan, ctx: PlanContext
+    ) -> tuple[Plan | None, str]:
+        """Le fil PLUS la source relue si une clé les relie, une BASCULE vers elle sinon.
+
+        Rend ``(plan, "")`` pour un périmètre enrichi, ``(plan, nom)`` pour une
+        bascule annoncée, ``(None, "")`` quand il n'y a rien à faire de la
+        seconde lecture.
 
         **Le défaut, mesuré le 2026-09-25**, catalogue métier, fil lié à
         `ventes`, 5 tirages par question, la sortie du planificateur relevée
@@ -1850,6 +1879,40 @@ class Orchestrator:
         qu'un nom déjà lu, ou aucun, laisse le tour se dérouler comme si cette
         méthode n'existait pas.
 
+        **On n'enrichit qu'un périmètre COHÉRENT, et la cohérence se lit dans
+        les données.** Mesuré le 2026-09-25, catalogue métier, fil lié à
+        `titanic`, « Combien de fleurs de l'espèce setosa y a-t-il ? » : la
+        relecture désigne `iris`, le couple monté est « iris, titanic », la
+        réponse rend 50 — juste — et cite « le dictionnaire de `iris, titanic` ».
+        Le chiffre est bon et le périmètre n'a aucun sens : rien ne relie des
+        passagers à des fleurs. Un fil qui ramasse au passage toutes les sources
+        qu'une question effleure est le fouillis que le montage ciblé a fermé.
+
+        Ce qui sépare les deux cas ne se devine pas : il est déjà lu dans les
+        données par ``relier_les_sources`` — une colonne de même nom, unique
+        d'un seul côté, dont toutes les valeurs se retrouvent en face. Relevé
+        sur le catalogue métier, toutes les paires, ``max_rows=10000`` :
+
+            ventes + production   `code_produit`  →  ventes_produits    reliées
+            ventes + stocks       `code_produit`  →  ventes_produits    reliées
+            titanic + iris        —                                     étrangères
+            production + stocks   —                                     étrangères
+
+        Une clé au moins : on ENRICHIT, le fil garde sa source et le tour
+        travaille sur les deux. Aucune : c'est une BASCULE vers la source
+        relue, traitée comme quand l'utilisateur en nomme une — la conversation
+        change de source liée, et ``_lier_la_source`` l'annonce. Ni
+        enrichissement muet, ni refus : la question de l'utilisateur porte sur
+        l'autre source, on y répond, et on dit qu'on a changé.
+
+        **Le prix est l'ouverture des deux sources au moment du plan**, et il
+        est gardé en cache pour la vie du processus (``_une_cle_relie``) :
+        mesuré à 0,35 s par paire sur le catalogue métier, payé une fois.
+
+        **Une source injoignable ne prouve aucune clé**, donc bascule. C'est le
+        bord sûr : une bascule est ANNONCÉE, là où un enrichissement supposé
+        sur une source qu'on n'a pas su lire serait muet.
+
         **Le décompte du périmètre reste celui de ``_perimetre_croise``.** Le
         couple monté y repasse, et il n'est retenu que s'il en ressort : c'est
         le même décompte qu'ailleurs, et non un second qui divergerait du
@@ -1868,16 +1931,56 @@ class Orchestrator:
         (``introspection.source_nommee``), pas avec un second décompte.
         """
         if introspection.source_nommee(ctx.question, ctx.catalogue_declare):
-            return None
+            return None, ""
         designees = introspection.sources_nommees(
             ", ".join([*second.sources, second.source or ""]), ctx.catalogue_declare
         )
         if len(designees) != 1 or designees[0].name == ctx.source_de_travail:
-            return None
-        second.source = f"{ctx.source_de_travail}, {designees[0].name}"
+            return None, ""
+        relue = designees[0].name
+        second.source = f"{ctx.source_de_travail}, {relue}"
+        # Le décompte du périmètre AVANT la preuve de la clé : il ne coûte rien,
+        # et un couple qu'il refuse n'a ni à être relié ni à faire basculer quoi
+        # que ce soit.
         if not self._perimetre_croise(second, ctx):
-            return None
-        return second
+            return None, ""
+        if self._une_cle_relie(ctx.source_de_travail or "", relue, ctx):
+            return second, ""
+        second.source = relue
+        second.sources = []
+        return second, relue
+
+    def _une_cle_relie(self, fil: str, relue: str, ctx: PlanContext) -> bool:
+        """Une clé traverse-t-elle ces deux sources ? — prouvée dans les données, et gardée.
+
+        Le décompte est celui de ``relier_les_sources``, appelé par
+        ``croisement.une_cle_traverse`` : c'est le même fait que celui qui
+        déclarera la clé au modèle si le périmètre est monté, et un second
+        décompte divergerait du premier.
+
+        **Gardé en cache pour la vie du processus.** Prouver la clé ouvre les
+        deux sources et matérialise leurs tables — 0,35 s par paire sur le
+        catalogue métier. Les données d'une source ne changent pas d'un tour à
+        l'autre pendant une session, et la paire est la même pour tous les fils
+        : le premier tour qui pose la question paie, les suivants lisent.
+
+        Un échec de lecture n'est PAS mis en cache : une base momentanément
+        injoignable ferait tenir « ces sources ne se relient pas » jusqu'au
+        prochain redémarrage.
+        """
+        paire = tuple(sorted((fil, relue)))
+        if paire in self._liens_prouves:
+            return self._liens_prouves[paire]
+        sources = [s for s in ctx.catalogue_declare.sources if s.name in paire]
+        if len(sources) != 2:
+            return False
+        try:
+            relie = une_cle_traverse(sources, max_rows=self.settings.analysis_table_max_rows)
+        except Exception:
+            logger.warning("lien entre %s et %s : sources illisibles", fil, relue, exc_info=True)
+            return False
+        self._liens_prouves[paire] = relie
+        return relie
 
     # Le FAIT qui manque au planificateur quand il rend un plan sur les données
     # sans désigner de source : que sa première lecture n'en a désigné aucune, et
