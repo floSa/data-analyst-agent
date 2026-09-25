@@ -1,36 +1,35 @@
-# Brancher sa propre source
+# Ajouter une source
 
-Ce guide s'adresse à qui a **ses données** et veut que l'agent réponde dessus.
-Il suppose le service installé ([INSTALLATION.md](INSTALLATION.md)).
+Ce guide décrit la déclaration d'une nouvelle source de données dans data-analyst-agent, sur un service déjà installé ([INSTALLATION.md](INSTALLATION.md)).
 
-Une source se déclare dans un **fichier YAML**, à la main, sur la machine.
-Il n'y a pas d'écran pour le faire, et c'est une limite connue
-([LIVRAISON.md §3](LIVRAISON.md#3-les-limites-connues)).
+| Section | Contenu |
+|---|---|
+| [1. Les types de source](#1-les-types-de-source) | Fichier, Postgres, DuckDB, avec un exemple chacun |
+| [2. Les champs de la déclaration](#2-les-champs-de-la-déclaration) | Description, clés, date, prédiction, filtre, dictionnaire |
+| [3. Emplacement des fichiers](#3-emplacement-des-fichiers) | Où déposer les données, et la contrainte des chemins |
+| [4. Prise en compte](#4-prise-en-compte) | Ce qui demande un redémarrage |
+| [5. Vérification](#5-vérification) | Les questions à poser après l'ajout |
+| [6. Limites](#6-limites) | Plafonds et contraintes à connaître |
 
-Tout ce qui est affirmé ici se lit dans le code, et le fichier est nommé.
-Le modèle de la déclaration est
-[`agents/retrieval/catalog.py`](../src/data_analyst_agent/agents/retrieval/catalog.py) :
-c'est lui qui dit quels champs existent, lesquels sont obligatoires, et ce
-qu'ils font.
+Une source se déclare dans le catalogue, un fichier YAML sur la machine du service.
+Le format de la déclaration est défini par [`agents/retrieval/catalog.py`](../src/data_analyst_agent/agents/retrieval/catalog.py).
+Un catalogue complet, avec les trois types : [`sources/metier/catalogue.yaml`](../sources/metier/catalogue.yaml).
 
----
+## 1. Les types de source
 
-## 1. Les trois types
-
-| `type` | Ce que c'est | Ce qu'il apporte |
+| `type` | Contenu | Relations |
 |---|---|---|
-| `file` | un CSV, un `.xlsx` ou un `.xlsm` | le plus court chemin ; aucune relation déclarée |
-| `postgres` | une base Postgres | ses tables **et ses clés étrangères**, donc ses jointures |
-| `duckdb` | un fichier `.duckdb` | une **base**, pas un fichier : elle porte aussi ses clés |
+| `file` | un CSV, un `.xlsx` ou un `.xlsm` | aucune |
+| `postgres` | une base Postgres | clés étrangères du schéma |
+| `duckdb` | un fichier `.duckdb` | clés étrangères du schéma |
 
-Les trois se requêtent en SQL.
-Un fichier est chargé en mémoire par DuckDB ; un CSV devient **une table**
-nommée d'après le fichier, un classeur devient **une table par feuille**, nommée
-d'après la feuille (`agents/retrieval/duckdb_excel.py`, `from_file`).
-Les noms sont mis en minuscules et tout ce qui n'est pas une lettre ou un
-chiffre devient `_` (`sanitize_table_name`).
+- Les trois types s'interrogent en SQL.
+- Un CSV devient une table nommée d'après le fichier. Un classeur devient une table par feuille.
+- Les noms de tables sont mis en minuscules ; tout caractère autre qu'une lettre ou un chiffre devient `_`.
+- Une base DuckDB est ouverte en lecture seule.
+- Des données avec des relations se déclarent de préférence en `duckdb` ou `postgres` : les clés y sont explicites.
 
-### Un fichier
+### Fichier
 
 ```yaml
 sources:
@@ -44,7 +43,7 @@ sources:
     date_reference: date_vente
 ```
 
-### Une base Postgres
+### Postgres
 
 ```yaml
   - type: postgres
@@ -57,12 +56,10 @@ sources:
     date_reference: commandes.date_commande
 ```
 
-Le DSN accepte des `${VARIABLES}` d'environnement, résolues depuis le fichier
-d'environnement du service.
-**Une variable non définie est refusée avec son nom**, au lieu de finir en
-erreur de driver illisible (`PostgresSource.resolved_dsn`).
+Les `${VARIABLES}` du DSN sont lues dans le fichier d'environnement du service.
+Une variable absente est signalée par son nom.
 
-### Une base DuckDB
+### DuckDB
 
 ```yaml
   - type: duckdb
@@ -75,80 +72,47 @@ erreur de driver illisible (`PostgresSource.resolved_dsn`).
     date_reference: ordres_fabrication.date_lancement
 ```
 
-Elle est ouverte **en lecture seule**.
-C'est la forme à préférer quand les données ont des relations : un schéma en
-étoile dont on tait les clés oblige le modèle à deviner ses jointures
-(`DuckDBSource`).
+## 2. Les champs de la déclaration
 
-Un exemple complet et vivant des trois types dans le même catalogue :
-[`sources/metier/catalogue.yaml`](../sources/metier/catalogue.yaml).
+| Champ | Obligatoire | Rôle |
+|---|---|---|
+| `type`, `name` | oui | Type et nom de la source |
+| `path` ou `dsn` | oui | Emplacement des données |
+| `description` | recommandé | Base du choix de source par l'agent |
+| `date_reference` | recommandé | Colonne qui porte la période |
+| `dictionary` | recommandé | Sens des données, règles de calcul |
+| `features` | pour prédire | Colonnes qui alimentent un modèle |
+| `filtre_des_sommes` | selon la source | Filtre imposé aux sommes, contrôlé |
 
----
+### `description`
 
-## 2. Ce qu'on attend d'une source
+- L'agent choisit la source sur ce texte quand la question ne la nomme pas.
+- Elle doit dire ce que contient la source et en donner les ordres de grandeur.
+- « 18 revendeurs, 180 commandes sur 2025 » est plus utile que « données de vente ».
 
-### `description` — obligatoire en pratique
+### Clés entre sources
 
-Le champ est facultatif pour le modèle de données.
-Il ne l'est pas pour le produit : **c'est sur lui que le planificateur choisit
-la source** quand l'utilisateur ne la nomme pas.
-C'est la seule chose qu'il voit de chaque source avant d'en ouvrir une
-(`Catalog.describe`, qui rend une ligne `- nom (type) : description`).
+À l'intérieur d'une source, les clés viennent du schéma.
+Entre deux sources, le lien est déduit des données (`relier_les_sources`, [`agents/retrieval/croisement.py`](../src/data_analyst_agent/agents/retrieval/croisement.py)), à trois conditions :
 
-Écrivez-la comme vous la diriez à quelqu'un : ce que la source contient, et
-**de quel ordre de grandeur**.
-« 18 revendeurs, 180 commandes sur 2025 » vaut mieux que « données de vente ».
+1. la colonne porte le même nom dans les deux sources ;
+2. elle est unique et sans valeur nulle d'un seul côté ;
+3. toutes ses valeurs de l'autre côté existent en face.
 
-### Des clés déclarées
+> **Règle : un même identifiant porte le même nom de colonne dans toutes les sources.**
 
-À l'intérieur d'une source, les clés étrangères viennent du schéma : Postgres et
-DuckDB les portent, un CSV et un classeur n'en ont pas.
-Elles arrivent au modèle telles quelles, et c'est ce qui lui évite d'inventer
-une jointure.
+Avec `code_produit` partout, le croisement trouve sa clé.
+Avec `code_produit` d'un côté et `ref_article` de l'autre, l'agent doit deviner la jointure, et le risque de chiffres multipliés est réel.
 
-**Entre deux sources**, aucun schéma ne peut déclarer quoi que ce soit : deux
-bases séparées ne se connaissent pas.
-Le lien est alors **trouvé dans les données**, par
-[`agents/retrieval/croisement.py`](../src/data_analyst_agent/agents/retrieval/croisement.py),
-`relier_les_sources`, à trois conditions :
+### `date_reference`
 
-1. **la colonne porte le même nom des deux côtés** — c'est ce qui la rend
-   candidate, et rien de plus ;
-2. elle est une **clé naturelle d'un seul côté** : sans `NULL`, sans doublon.
-   Deux côtés uniques, ou aucun, et le lien n'est pas posé ;
-3. **toutes les valeurs de l'autre côté se retrouvent en face** — c'est ce qui
-   sépare une clé d'une homonymie.
+- Format : `table.colonne` ou `colonne`.
+- À défaut, la première colonne de date du schéma est retenue.
+- À déclarer dès que la source porte plusieurs dates : une date de création de compte n'est pas une date d'activité.
 
-D'où la règle, et c'est la plus importante de ce guide :
+### `features`
 
-> **Le même identifiant doit porter le même nom de colonne dans toutes vos
-> sources.**
-
-`code_produit` dans les trois bases, et un croisement trouve sa clé.
-`code_produit` ici et `ref_article` là, et il ne la trouve pas — le modèle
-devine une jointure, et rend un produit cartésien qui ne lève aucune erreur.
-Mesuré : « compare la production et les ventes du VEL-04 » a rendu « 27 626
-unités produites, 2 751 vendues » là où les oracles disent 727 et 125.
-
-### `date_reference` — la colonne sur laquelle se lit la période
-
-`table.colonne`, ou `colonne` seule.
-Sans elle, c'est la **première colonne de date du schéma** : juste, mais choisie
-par l'ordre du DDL (`agents/retrieval/faits.py`, `_colonne_de_date`).
-
-Déclarez-la dès que la source porte deux dates.
-Une date de création de compte n'est pas une période d'activité.
-Une date de constat d'inventaire n'est pas un historique.
-
-### `features` — pour prédire
-
-`{modèle: {feature: colonne}}`.
-Ce bloc s'adresse au **code**, pas au modèle de langage : il dit quelle colonne
-de *cette* source alimente quelle feature de quel modèle du registre.
-
-Le même modèle `titanic` est alimenté par `classes.level` dans une base
-Postgres et par `Pclass` dans un CSV : la source est la seule à le savoir.
-Sans la déclaration, la colonne était **devinée**, et le résultat changeait.
+Correspondance entre les colonnes de la source et les attributs d'un modèle du registre : `{modèle: {attribut: colonne}}`.
 
 ```yaml
     features:
@@ -158,8 +122,7 @@ Sans la déclaration, la colonne était **devinée**, et le résultat changeait.
         age: passengers.age
 ```
 
-Forme longue quand la source ne représente pas la valeur comme le modèle
-l'attend :
+Quand la source code une valeur autrement que le modèle :
 
 ```yaml
         pclass:
@@ -167,15 +130,11 @@ l'attend :
           values: {"1re classe": 1, "2e classe": 2, "3e classe": 3}
 ```
 
-Ce qui est déclaré est **relu contre le schéma réel avant toute requête** : une
-colonne déclarée qui n'existe pas est nommée, avec celles qui existent, au lieu
-de finir en SQL en erreur puis en feature absente.
+Chaque colonne déclarée est vérifiée contre le schéma avant toute requête.
 
-### `filtre_des_sommes` — un filtre qu'on vérifie
+### `filtre_des_sommes`
 
-`colonne`, `exclure`, `sommes` — la colonne qui porte le filtre, la valeur à
-écarter, et les colonnes dont la **somme** l'exige, chacune en `table.colonne`
-(`FiltreDesSommes`).
+Filtre que toute somme de certaines colonnes doit appliquer.
 
 ```yaml
     filtre_des_sommes:
@@ -186,150 +145,61 @@ de finir en SQL en erreur puis en feature absente.
         - lignes_commande.montant_ligne_eur
 ```
 
-**Rien sur les comptages, et c'est voulu** : une commande annulée reste une
-commande reçue.
+- `colonne` porte le filtre, `exclure` la valeur à écarter, `sommes` les colonnes concernées, au format `table.colonne`.
+- Les comptages ne sont pas concernés.
+- Le SQL et le code produits par l'agent sont contrôlés contre cette règle avant d'être servis ([`agents/retrieval/verification.py`](../src/data_analyst_agent/agents/retrieval/verification.py), [`agents/analysis/consigne.py`](../src/data_analyst_agent/agents/analysis/consigne.py)).
+- Le dictionnaire exprime la même règle pour le modèle ; la déclaration la rend vérifiable.
 
-Pourquoi le déclarer alors que le dictionnaire le dit déjà en phrases : parce
-qu'une phrase lue ne se contrôle pas.
-Mesuré, le dictionnaire arrivait entier et le code l'ignorait trois fois sur
-trois.
-Déclaré ici, le filtre est **relu sur le SQL et sur le code produits** avant que
-leurs chiffres soient servis (`agents/retrieval/verification.py`,
-`agents/analysis/consigne.py`).
+### `dictionary`
 
-### `dictionary` — ce que les données veulent dire
+- Fichier Markdown, chemin relatif au catalogue.
+- Il donne le sens des données : codes, valeurs particulières, unités, filtres à appliquer selon la question.
+- Il est transmis aux agents qui écrivent le SQL et le Python.
+- Taille maximale transmise : 8 000 caractères (`DAA_DICTIONARY_MAX_CHARS`).
+- Règles de rédaction : [rediger-un-dictionnaire-de-source.md](rediger-un-dictionnaire-de-source.md).
 
-Un fichier Markdown, relatif au catalogue.
-Le schéma donne les types ; le dictionnaire donne le sens — les codes, les
-valeurs sentinelles, les unités, et les filtres qui vont avec chaque question.
+## 3. Emplacement des fichiers
 
-Il a **deux lecteurs** : une personne, et l'agent — celui qui écrit le SQL et
-celui qui écrit le Python le reçoivent dans leur prompt système.
+- Les chemins relatifs sont résolus depuis le fichier du catalogue.
+- Sur le service installé, le catalogue et les données sont sous `/var/lib/data-analyst-agent/sources/` ([INSTALLATION.md](INSTALLATION.md#4-le-dossier-de-données)).
+- Les fichiers appartiennent à l'utilisateur `1000:1000`.
 
-**Comment l'écrire est un sujet à soi seul**, mesuré, et il a son document :
-**[rediger-un-dictionnaire-de-source.md](rediger-un-dictionnaire-de-source.md)**.
-Lisez-le avant d'en écrire un. La règle en une phrase : *dis quel filtre se pose
-pour quelle question, pas seulement ce que les codes veulent dire.*
+**Contrainte des chemins.**
+Les analyses s'exécutent dans un conteneur lancé par le Docker de l'hôte, qui monte les fichiers de données.
+Un fichier placé hors du dossier de données produit un montage vide, sans message d'erreur.
+Tous les fichiers de source doivent donc se trouver sous `DAA_DATA_DIR`.
+Détail : [INSTALLATION.md](INSTALLATION.md#le-bac-à-sable-vu-du-conteneur).
 
-Un plafond : `DAA_DICTIONARY_MAX_CHARS`, **8 000 caractères** par défaut, au-delà
-duquel le texte est coupé dans le prompt (`config.py`). `0` le retire.
+## 4. Prise en compte
 
----
-
-## 3. Où déposer les fichiers
-
-**À côté du catalogue.** Les `path` et les `dictionary` relatifs sont résolus
-par rapport au fichier YAML, pas au dossier courant (`load_catalog`).
-
-Sur le service installé, le catalogue vit sous
-`/var/lib/data-analyst-agent/sources/`, et c'est là que vont les fichiers de
-données ([INSTALLATION §4](INSTALLATION.md#4-le-dossier-de-données)).
-Les fichiers doivent appartenir à `1000:1000` — l'utilisateur du conteneur.
-
-### Le piège des chemins, et il est silencieux
-
-C'est le seul point de ce guide qui demande de comprendre plutôt que de
-recopier, et il est expliqué en entier dans
-[INSTALLATION § Le bac à sable vu du conteneur](INSTALLATION.md#le-bac-à-sable-vu-du-conteneur).
-
-En deux phrases : quand une question demande une figure ou une statistique,
-l'application lance un **conteneur frère** et lui monte les fichiers voulus.
-Ce montage est exécuté par le démon Docker **de l'hôte**, qui lit les chemins
-avec ses yeux à lui, pas avec ceux de l'application.
-
-> **Un fichier que l'application voit à un chemin qui n'existe pas sur l'hôte
-> donne un montage vide — sans erreur.**
-
-D'où la règle : **un seul dossier de données, monté au même chemin absolu des
-deux côtés, et tout ce qui peut finir monté vit dessous.**
-Déposer un fichier de source ailleurs que sous `DAA_DATA_DIR` casse l'analyse,
-et la casse silencieusement.
-
----
-
-## 4. Ce qu'il faut redémarrer
-
-**Le catalogue est lu une fois par processus.** L'orchestrateur est construit au
-premier appel et garde son catalogue (`orchestrator/graph.py`, `load_catalog`).
-
-| Ce que vous changez | Ce qu'il faut faire |
+| Modification | Action |
 |---|---|
-| le catalogue : une source ajoutée, retirée, renommée, sa `description` | **redémarrer** : `sudo systemctl restart daa` |
-| un `dictionary`, un `date_reference`, `features`, `filtre_des_sommes` | **redémarrer** — ils sont lus avec le catalogue |
-| le **contenu** des données (des lignes ajoutées à une table) | rien : chaque question relit la source |
+| Catalogue : source ajoutée, retirée, renommée, description | Redémarrer : `sudo systemctl restart daa` |
+| `dictionary`, `date_reference`, `features`, `filtre_des_sommes` | Redémarrer |
+| Contenu des données | Aucune |
 
-Un cas à part : ce que l'agent dit du **volume** d'une source — tables, lignes,
-période — est relevé au premier inventaire puis gardé
-`DAA_RELEVE_PEREMPTION` secondes (**900**, soit quinze minutes) avant d'être
-relu (`config.py`, `RelevesDuCatalogue`).
-Une source qui vient de grossir peut donc annoncer son ancien compte pendant un
-quart d'heure.
+- Le volume annoncé d'une source (tables, lignes, période) est conservé 15 minutes (`DAA_RELEVE_PEREMPTION`).
+- Le service ne redémarre pas les bases externes : chacune doit avoir sa propre politique de redémarrage ([EXPLOITATION.md](EXPLOITATION.md#commander-le-service)).
 
-Le service ne relance **pas** vos bases.
-Une source Postgres qui vit dans un autre conteneur doit avoir sa propre
-politique de redémarrage, sans quoi la page de chat reviendra sans ses données
-([EXPLOITATION § Commander le service](EXPLOITATION.md#commander-le-service)).
+## 5. Vérification
 
----
+Dans une nouvelle conversation :
 
-## 5. Vérifier qu'elle marche
+| Question | Résultat attendu | Ce qui est vérifié |
+|---|---|---|
+| « Quelles sources de données as-tu ? » | La source apparaît, avec son type | Le catalogue est lu |
+| « On travaille sur <source>. » | Nombre de tables, de lignes, période couverte | La source s'ouvre ; la bonne colonne de date est utilisée |
+| « Combien de <lignes> en <année> ? » | Un chiffre connu à l'avance | La chaîne complète : SQL, exécution, réponse |
+| « Que signifie la colonne <X> ? » | Une réponse qui cite le dictionnaire | Le dictionnaire est transmis |
+| « Fais-moi un graphique de <X>. » | Une figure | Le bac à sable et le montage des fichiers |
 
-Trois questions, dans une conversation neuve.
-Elles n'éprouvent pas la même chose, et c'est pour ça qu'il en faut trois.
+Une erreur de YAML apparaît au redémarrage, dans les journaux : `journalctl -u daa`.
 
-**1. « Quelles sources de données as-tu ? »**
+## 6. Limites
 
-Attendu : votre source **nommée**, avec son type.
-Si elle manque, le service n'a pas relu le catalogue — ou le YAML n'est pas
-valide, et le démarrage l'a dit dans les journaux.
-
-**2. « On travaille sur <votre source>. »**
-
-Attendu : « Entendu : on travaille sur **<nom>** (<type>) », **le nombre de
-tables et de lignes**, et la période couverte.
-C'est ce tour qui prouve que la source s'**ouvre** vraiment : le catalogue peut
-la déclarer et le fichier être introuvable, ou la base injoignable.
-Vérifiez la période : si elle porte sur la mauvaise colonne, c'est
-`date_reference` qui manque.
-
-**3. Une question qui compte, dont vous savez la réponse.**
-
-« Combien de <lignes> en <année> ? », sur un chiffre que vous pouvez vérifier
-sans l'agent.
-C'est le seul tour qui éprouve la chaîne entière — le SQL écrit, exécuté, et la
-phrase rendue.
-
-**Une quatrième, si vous avez un dictionnaire** : « Que signifie la colonne
-<X> ? »
-La réponse doit **citer le dictionnaire** — « selon le dictionnaire de `<source>` ».
-Si elle ne donne que le type SQL, le dictionnaire n'est pas arrivé : vérifiez
-son chemin, relatif au catalogue.
-
-**Et une cinquième, si vous voulez une figure** : « Fais-moi un graphique de
-<quelque chose> ».
-C'est elle, et elle seule, qui éprouve le bac à sable et les montages de
-fichiers du §3.
-
----
-
-## 6. Les limites à connaître avant de déclarer
-
-- **Un croisement de deux sources charge chaque table en entier, plafonnée à
-  `DAA_ANALYSIS_TABLE_MAX_ROWS` — 10 000 lignes.** Au-delà, la somme est calculée
-  sur une tranche. La réponse le dit (« Données tronquées : … coupée(s) à 10000
-  lignes »), mais le chiffre, lui, est faux. Mesuré : 663 504,99 kWh servis au
-  lieu de 1 757 519,23 (`croisement.py`, `ouvrir_le_croisement` ;
-  [releve-de-livraison.md](releve-de-livraison.md)).
-- **Un tableau rendu à l'utilisateur est plafonné à `DAA_RETRIEVAL_MAX_ROWS` —
-  200 lignes.** La coupe est annoncée dans la réponse.
-- **Les questions qui croisent deux sources sont la famille la moins sûre** :
-  13 sur 17 au relevé de livraison. Celles qui tombent, et pourquoi, sont dans
-  [croisement-de-sources.md](croisement-de-sources.md).
-- **Une source de fichier n'a aucune relation.** Deux feuilles d'un même classeur
-  ne sont pas jointes : si vos données ont des relations, préférez `duckdb` ou
-  `postgres`.
-- **Un dictionnaire au-delà de 8 000 caractères est coupé** dans le prompt.
-- **Le catalogue n'est pas validé à chaud** : une erreur de YAML se voit au
-  redémarrage, dans les journaux (`journalctl -u daa`).
-- **Aucune source n'est ajoutable depuis l'écran**, et c'est la prochaine étape
-  nº 4 de [LIVRAISON.md §4](LIVRAISON.md#4-les-prochaines-étapes).
+- Un croisement charge au plus 10 000 lignes par table (`DAA_ANALYSIS_TABLE_MAX_ROWS`). Au-delà, les sommes portent sur une partie des données ; la réponse l'indique.
+- Un tableau affiché est limité à 200 lignes (`DAA_RETRIEVAL_MAX_ROWS`) ; la coupe est indiquée.
+- Deux feuilles d'un même classeur ne sont pas reliées entre elles.
+- Un dictionnaire de plus de 8 000 caractères est tronqué.
+- Le catalogue n'est pas rechargé à chaud.
+- Aucune source ne s'ajoute depuis l'interface ([LIVRAISON.md](LIVRAISON.md#4-les-prochaines-étapes)).

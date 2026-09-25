@@ -562,7 +562,6 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 | Chantier | État | Ce qu'il reste à faire |
 |---|---|---|
 | Migration des conversations réelles | Script écrit et testé sur copie, **jamais exécuté en vrai** | `scripts/migrate_workspace_owner.py --workspace /home/ubuntu/daa-workspaces-persist --owner floSa --appliquer` |
-| Verrou disque DuckDB sur la branche de démonstration | Corrigé sur `main` (`d51c474`), **absent de `Maxizoo`** | Un `cherry-pick` ; le correctif n'exige aucun compte |
 
 ---
 
@@ -586,7 +585,6 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 | Priorité | Item | État | Impact |
 |---|---|---|---|
-| P0 | Verrou DuckDB absent de la branche `Maxizoo` | Ouvert | Le SQL généré y lit les fichiers de l'hôte |
 | — | Anti-force brute par adresse derrière un frontal | **Corrigé** | Était : un échec quelconque verrouillait tous les comptes. Devenu un compteur par appelant réel, `X-Forwarded-For` cru des seuls mandataires déclarés — deux compteurs distincts et une usurpation refusée, mesurés le 16 septembre 2026 |
 | — | Questions SUR le système sans route | **Corrigé** | Était : 8 replis et 4 réponses à côté sur 21 questions méta. Devenu 21/21, et 9 appels LLM au lieu de 43 |
 | — | Catalogue limité à `postgres` et `file` | **Corrigé** | Un troisième type `duckdb`, qui apporte les clés étrangères qu'aucun fichier ne déclare. Mesuré 6/6 sur les trois types à la fois |
