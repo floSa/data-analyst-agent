@@ -309,3 +309,90 @@ moteur consommé est d'environ **35 minutes**, sous les 50 visées.
 Aucun fichier de `src/`, `scripts/`, `tests/` ou `sources/` n'a été réparé : les
 seuls changements de cette branche sont les deux retraits et la documentation
 qu'ils rendent due.
+
+## Installation du 2026-09-25
+
+Le service installé passe de `f790fd4` à `acbe37e`. Rien n'a été réparé ; aucun
+fichier du dépôt n'a été touché, ce relevé mis à part.
+
+### Avant
+
+| | |
+|---|---|
+| commit de `/opt/data-analyst-agent` | `f790fd4` — *docs(exposition) : comment on expose, comment on renouvelle, et ce qu'on a vraiment mesuré*, en service depuis le 16 septembre |
+| unité `daa` | `enabled`, `active` ; les deux conteneurs `healthy` depuis 23 h |
+| catalogue en service | `/var/lib/data-analyst-agent/sources/metier/catalogue.yaml` — le catalogue métier, cinq sources |
+| `GET /health` en HTTPS | `{"status":"ok","version":"0.1.0"}` |
+
+### La sauvegarde
+
+`daactl backup` avant toute chose :
+`/var/backups/data-analyst-agent/daa-20260925-100304.tar.gz`, 4,9 Mo, 7 comptes,
+9 conversations, 57 artefacts.
+
+### Les réglages comparés
+
+Les 51 champs de `Settings` (`src/data_analyst_agent/config.py` de `acbe37e`)
+ont **tous** une valeur par défaut : la version installée n'exige aucune variable
+d'environnement de plus qu'avant, et **rien ne manque** à
+`/etc/data-analyst-agent/daa.env`, qui en déclare 26. Le contrôle a été fait par
+introspection des champs (`is_required()`), pas à l'œil sur le fichier.
+
+### Après
+
+| | |
+|---|---|
+| commit de `/opt/data-analyst-agent` | `acbe37e` — *docs(c72) : le relevé après le retrait, campagnes et questions rouges*, obtenu par `git merge --ff-only` depuis `origin` |
+| l'image | `data-analyst-agent:0.1` reconstruite (`daactl build`), donc `uv sync --locked` rejoué : c'est par là qu'entre `sqlglot` |
+| le bac à sable | `data-analyst-agent-sandbox:0.1` **non reconstruite**, comme prévu |
+| unité `daa` | redémarrée par `daactl restart`, qui passe la main à `systemctl` ; les deux conteneurs `healthy` en 5 s |
+| `GET /health` | `{"status":"ok","version":"0.1.0"}` en HTTPS **et** en clair sur `127.0.0.1:8000` |
+
+Aucun avertissement de configuration au démarrage du conteneur.
+
+### La vérification de bout en bout
+
+En HTTPS sur `8443`, certificat vérifié contre l'autorité locale (`--cacert`,
+jamais `-k`), avec un compte jetable créé pour l'occasion — mot de passe tiré au
+sort, lu par `--stdin` depuis un fichier en 0600, jamais écrit ailleurs.
+
+La connexion se déroule comme elle doit : page de connexion **200** avec son
+jeton anti-CSRF, `POST /login` **303**, et `GET /me` répond avec le login de la
+session.
+
+Puis trois questions au catalogue **en service** :
+
+| | La question | Attendu | Rendu |
+|---|---|---|---|
+| 1 | « on travaille sur ventes aujourd'hui » | la source liée, et son relevé | source de travail `ventes` (postgres), **4 tables, 673 lignes** (clients 18, commandes 180, lignes_commande 463, produits 12), période du 2025-01-02 au 2025-12-31 |
+| 2 | « Combien de commandes avons-nous reçues en 2025 ? » | **180** (l'oracle : un comptage ne se filtre pas sur le statut) | **180**, et la réponse dit elle-même qu'aucun filtre de statut n'a été posé — plus un artefact de tableau |
+| 3 | « Fais-moi un graphique des mouvements par entrepôt. » | une **figure** | une figure `image/png` de 39 ko |
+
+**Ce que la troisième prouve, et ce qu'elle ne prouve pas.** La figure arrive :
+l'application a donc bien lancé son conteneur frère, lui a monté les fichiers du
+classeur `stocks` par des chemins de l'hôte, et le code produit les a lus. C'est
+le point délicat de toute installation, et il tient. En revanche, les chiffres
+rendus — Lyon 3 066, Lille 3 059, Nantes 2 726 — ne sont **pas** ceux de la
+question 10 du catalogue métier (170 / 168 / 142). Ce ne sont pas des chiffres
+faux : ce sont les volumes, `sum(|quantite|)`, dont le total 8 851 est bien
+6 572 entrés plus 2 279 sortis. Le modèle a lu « mouvements » comme un volume
+plutôt que comme un compte. Cette question-ci n'avait pour oracle que l'arrivée
+de la figure ; l'écart est consigné parce qu'il mérite d'être su, pas parce
+qu'il fait échouer l'installation.
+
+### Les journaux
+
+Sur la fenêtre des trois questions, les journaux de l'application portent
+**onze** lignes : trois `POST /chat` en **200**, le reste en sondes `/health`.
+Aucune ligne d'erreur, d'exception ni d'avertissement. `journalctl -u daa` ne
+montre que le redémarrage, jusqu'à *Finished daa.service*.
+
+### Ce qui reste à dire
+
+- **Aucun retour arrière.** Rien n'a échoué, donc `f790fd4` n'a pas été repris.
+- **Le compte jetable a été désactivé, pas supprimé** : `daactl users` n'a pas
+  de verbe de suppression — `create`, `list`, `disable`, `enable`,
+  `reset-password`. Ses deux conversations restent dans le dossier de données,
+  sous son propre dossier de propriétaire.
+- Le moteur — vLLM sur `http://localhost:8100/v1` — n'a pas été touché, et le
+  dépôt `llm-service` non plus.
