@@ -1,6 +1,6 @@
 # Le catalogue métier — les Cycles du Ponant
 
-> **Ce document décrit le catalogue en service** — les Cycles du Ponant — et porte le journal des chantiers qu'il a ouverts. Il reste à ce chemin parce que `src/`, les tests, les scripts et `deploy/` le citent.
+> **Ce document décrit le catalogue en service** — les Cycles du Ponant — et porte le journal des chantiers qu'il a ouverts. Ses chiffres sont ceux que [GUIDE-UTILISATEUR.md](GUIDE-UTILISATEUR.md) reprend. Il reste à ce chemin parce que `src/`, les tests, les scripts et `deploy/` le citent.
 
 Le catalogue de démonstration précédent — un réseau de bornes de recharge,
 décrit dans [`sources-de-demonstration.md`](sources-de-demonstration.md) — est
