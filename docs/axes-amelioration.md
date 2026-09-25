@@ -2,6 +2,13 @@
 
 Chaque point est ancré dans le code (`fichier:ligne`) avec une correction proposée.
 
+**Ce document s'adresse à qui va toucher au code.** Le même état des lieux, écrit
+pour qui **reçoit** le produit — les limites en langage ordinaire et les prochaines
+étapes classées par ce qu'elles apportent à l'utilisateur — est dans
+[LIVRAISON.md](LIVRAISON.md). Les deux ne font pas doublon : celui-ci porte les
+ancres, les constats et les corrections proposées ; celui-là porte l'ordre dans
+lequel les reprendre.
+
 Ce document recense ce qui a été **vu, mesuré et délibérément laissé** pendant le
 chantier de durcissement de septembre 2026. Les dix-sept tâches de
 [l'audit](AUDIT-2026-09.md) sont traitées ; ce qui suit est ce qui a été relevé en
@@ -18,23 +25,34 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 
 ### L'anti-force brute compte par adresse, et l'adresse disparaît derrière un frontal
 
-- **Où** : [`api/app.py:320`](../src/data_analyst_agent/api/app.py)
-- **Constat** :
+- **Où** : [`api/app.py:430`](../src/data_analyst_agent/api/app.py),
+  [`api/forwarded.py`](../src/data_analyst_agent/api/forwarded.py)
+- **Constat, à l'époque** :
   ```python
   adresse = request.client.host if request.client else "inconnue"
   ```
 - **Problème** : derrière un reverse proxy, `request.client.host` est l'adresse du
   proxy — la même pour tout le monde. Cinq échecs de connexion, de qui que ce soit,
-  verrouillent alors **tous** les visiteurs. `X-Forwarded-For` n'est délibérément pas
-  lu : il est forgeable par le client, et le croire aveuglément serait pire que le
-  défaut actuel.
+  verrouillent alors **tous** les visiteurs. `X-Forwarded-For` n'était délibérément
+  pas lu : il est forgeable par le client, et le croire aveuglément serait pire que
+  le défaut d'alors.
 - **Correction proposée** : un réglage de proxys de confiance (`DAA_TRUSTED_PROXIES`),
   et ne lire `X-Forwarded-For` que si la connexion vient de l'un d'eux.
-- **Statut** : Ouvert — sans effet tant que le service n'est pas derrière un frontal.
+- **Statut** : **Corrigé.** `api/forwarded.py` porte la règle : on ne lit ces
+  en-têtes que si le pair immédiat est un mandataire déclaré, et l'on retient la
+  première adresse qui n'en est pas un, **en remontant depuis la droite** — le
+  mandataire le plus proche écrit en dernier, ce que le client s'est inventé reste
+  donc à gauche et n'est jamais atteint. `trusted_proxies` vide (le défaut) : rien
+  n'est cru, on rend le pair. Le middleware appelle `adresse_client(request,
+  app.state.trusted_proxies)`, et `schema_client` suit la même règle pour
+  `X-Forwarded-Proto`. **Éprouvé le 16 septembre 2026** sur la machine en service,
+  depuis deux adresses distinctes et avec une tentative d'usurpation :
+  [EXPLOITATION.md](EXPLOITATION.md), « L'anti-force brute, depuis deux adresses
+  distinctes ».
 
 ### Le plafond de corps ne voit pas une requête en `chunked`
 
-- **Où** : [`api/app.py:285`](../src/data_analyst_agent/api/app.py)
+- **Où** : [`api/app.py:394`](../src/data_analyst_agent/api/app.py)
 - **Constat** :
   ```python
   annonce = request.headers.get("content-length", "")
@@ -567,7 +585,7 @@ c'est la partie qu'on ne retrouve pas dans un diff.
 | Priorité | Item | État | Impact |
 |---|---|---|---|
 | P0 | Verrou DuckDB absent de la branche `Maxizoo` | Ouvert | Le SQL généré y lit les fichiers de l'hôte |
-| P1 | Anti-force brute par adresse derrière un frontal | Ouvert | Un échec quelconque verrouille tous les comptes |
+| — | Anti-force brute par adresse derrière un frontal | **Corrigé** | Était : un échec quelconque verrouillait tous les comptes. Devenu un compteur par appelant réel, `X-Forwarded-For` cru des seuls mandataires déclarés — deux compteurs distincts et une usurpation refusée, mesurés le 16 septembre 2026 |
 | — | Questions SUR le système sans route | **Corrigé** | Était : 8 replis et 4 réponses à côté sur 21 questions méta. Devenu 21/21, et 9 appels LLM au lieu de 43 |
 | — | Catalogue limité à `postgres` et `file` | **Corrigé** | Un troisième type `duckdb`, qui apporte les clés étrangères qu'aucun fichier ne déclare. Mesuré 6/6 sur les trois types à la fois |
 | — | Relevé jamais rafraîchi | **Corrigé** | Était : une source revenue restait « non relevée » toute la session. Devenue re-tentée au bout de 30 s, et périmée au bout de 15 min |

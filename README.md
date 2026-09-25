@@ -89,6 +89,7 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 
 | Document | Contenu |
 |---|---|
+| [docs/LIVRAISON.md](docs/LIVRAISON.md) | **à lire en premier quand on reçoit le produit** : ce que fait l'application, ce qui est mesuré et où, les limites connues dites franchement, et les prochaines étapes classées par ce qu'elles apportent à l'utilisateur |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md) | installer le service sur une machine nue : prérequis, variables obligatoires, certificat et exposition HTTPS, premier compte, première source, la question qui vérifie — et ce qui manquait à la procédure quand elle a été suivie |
 | [docs/EXPLOITATION.md](docs/EXPLOITATION.md) | commander le service, l'exposer en HTTPS (certificat, en-têtes de mandataire, pare-feu), lire ses journaux, sauvegarder et faire tourner les archives, restaurer, ranger les conversations par propriétaire |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | schémas architectural et fonctionnel, description de chaque service, sécurité, configuration, stratégie de tests |
@@ -523,14 +524,15 @@ src/data_analyst_agent/   # package
 │                         #   workspace.py → le magasin d'artefacts ; conversations.py → les fils
 ├── agents/               # ① retrieval  ② analysis  ③ inference
 ├── auth/                 # comptes argon2id, sessions côté serveur, anti-force brute
-├── prompts/              # les 6 prompts système, hors du code (.txt)
+├── prompts/              # les 7 prompts système, hors du code (.txt)
 ├── sandbox/              # client durci + image/ (Dockerfile, bridge Jupyter)
 └── api/                  # app.py (HTTP seul) + templates/ (chat, connexion)
 deploy/                   # la livraison : image de l'app (Dockerfile), compose, unité
                           #   systemd, daactl (pilote), backup.sh / restore.sh,
                           #   tls-cert.sh + proxy/ (la terminaison TLS, nginx)
-docs/                     # INSTALLATION, EXPLOITATION, ARCHITECTURE, CADRAGE, AUDIT,
-                          #   VLLM, spike-vanna, surface-conversationnelle, axes-amelioration
+docs/                     # LIVRAISON, INSTALLATION, EXPLOITATION, ARCHITECTURE, CADRAGE,
+                          #   AUDIT, MOTEUR, spike-vanna, surface-conversationnelle,
+                          #   croisement-de-sources, sources-metier, axes-amelioration
 models/                   # artefacts ML jouets + registry.yaml (Titanic, Iris, California)
 sources/                  # catalogue des sources + datasets vendorisés
 scripts/                  # comptes, migration du workspace, seed Postgres, runners de mesure, bancs
@@ -554,6 +556,7 @@ L'arborescence détaillée, fichier par fichier, est dans [docs/CADRAGE.md §10]
 | Pydantic / pydantic-ai | Typage & agent LLM | MIT |
 | pydantic-settings | Lecture des réglages `DAA_*` et du `.env` | MIT |
 | SQLAlchemy | Accès Postgres | MIT |
+| sqlglot | Analyse du SQL produit : portées, sommes, jointures, colonnes exposées | MIT |
 | pg8000 | Driver PostgreSQL | BSD-3-Clause |
 | pandas | Manipulation de données | BSD-3-Clause |
 | scikit-learn | Modèles de prédiction | BSD-3-Clause |
@@ -562,7 +565,6 @@ L'arborescence détaillée, fichier par fichier, est dans [docs/CADRAGE.md §10]
 | PyYAML | Catalogue de sources, registre de modèles, comptes | MIT |
 | argon2-cffi | Empreintes de mots de passe (argon2id) | MIT |
 | python-multipart | Lecture du formulaire de connexion | Apache-2.0 |
-| vLLM | Serveur du LLM mutualisé, local (moteur en service) | Apache-2.0 |
-| vLLM | Serveur du LLM mutualisé, local (autre serveur possible, même endpoint) | Apache-2.0 |
+| vLLM | Serveur du LLM mutualisé, local — le moteur en service ; tout serveur au même endpoint OpenAI-compatible le remplace | Apache-2.0 |
 | `google/gemma-4-E4B-it-qat-w4a16-ct` | Modèle servi par l'instance en place | **non vérifiée ici, et non lisible depuis l'application.** vLLM n'expose aucune déclaration de licence du modèle : elle se lit sur la fiche du modèle chez son éditeur, et doit y être relue à chaque changement de modèle servi |
 | **Ce projet** | Code applicatif | MIT annoncé, **mais aucun fichier `LICENSE` n'est présent** et `pyproject.toml` ne déclare rien : l'annonce est donc sans portée juridique en l'état (cf. [axes-amelioration](docs/axes-amelioration.md)) |

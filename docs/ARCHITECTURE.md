@@ -7,6 +7,9 @@ puis chaque service du package.
 Pour voir le graphe à l'œuvre plutôt que décrit — huit conversations, huit
 diagrammes de séquence établis sur une trace relevée : [parcours-de-l-agent.md](parcours-de-l-agent.md).
 
+Pour l'état du produit à la livraison — ce qui marche, ce qui ne marche pas, et
+par quoi continuer : [LIVRAISON.md](LIVRAISON.md).
+
 ## 1. Principes directeurs
 
 - **Orchestration explicite** : un graphe LangGraph typé, inspectable, tracé. La règle
@@ -22,6 +25,13 @@ diagrammes de séquence établis sur une trace relevée : [parcours-de-l-agent.m
   rootfs en lecture seule.
 - **Contrats Pydantic aux frontières** : les erreurs éclatent à la frontière du nœud,
   avec un message clair, sans faire tomber le graphe.
+- **Ce qu'on vérifie est une propriété de ce qui a été PRODUIT, jamais une liste
+  de tournures.** Le palmarès qui porte ses chiffres, la somme multipliée par une
+  jointure, la somme non filtrée : chacune est vraie ou fausse quelle que soit la
+  phrase posée (§4.4, §4.5). Ce dépôt a payé deux fois le pari d'un lexique de
+  formulations, et l'a retiré deux fois. Partout où une vérification doute, elle
+  se tait : un faux positif coûte un aller-retour de modèle, un doute coûte au
+  pire le comportement d'avant.
 - **Licences permissives uniquement** (MIT / Apache-2.0 / BSD) — produit on-premise et
   commercialisable.
 
@@ -51,7 +61,7 @@ flowchart TB
         MOTEUR["vLLM :8100<br/>gemma-4-E4B-it-qat-w4a16-ct"]
         SBX["Sandbox Docker<br/>kernel Jupyter · réseau coupé"]
         PG[("Postgres<br/>multi-tables")]
-        FILES[("Fichiers<br/>CSV / Excel via DuckDB")]
+        FILES[("Fichiers<br/>CSV / Excel / base .duckdb<br/>via DuckDB")]
         REG[("Registry modèles ML<br/>YAML + joblib")]
         WS[("Magasin d'artefacts du fil<br/>tableaux · code · figures")]
     end
@@ -112,7 +122,11 @@ bien un artefact passé, il le **dit** avant de laisser le planificateur produir
 déterministe, hors du modèle (§4.12).
 
 Le planificateur classe la demande dans une capacité et en extrait les paramètres
-(source, dataset, features). Le plan qu'il rend est ensuite passé dans une suite de
+(source, dataset, features). **Il peut être RELU** — une fois, sous conditions, et
+seulement pour ajouter ce que la première lecture avait fait tomber : la source du
+fil qui masquait la seconde moitié d'un périmètre, l'absence de toute source
+désignée, une clause d'absence qui faisait perdre des features (§4.2). Le plan est
+ensuite passé dans une suite de
 **règles nommées** — source imposée par l'appelant, dégradations, reprise des
 features acquises, questions de clarification (§4.2) — puis le routage est
 mécanique. Chaque nœud est « gardé » : une exception renseigne `error` dans le state
@@ -301,11 +315,36 @@ travail de la conversation, y refusionner les features déjà obtenues, normalis
 nom de source décoré, proposer les sources quand aucune n'est désignée, demander de
 préciser quand le modèle est ambigu, lire une absence d'accompagnants que le schéma
 sait nommer, promouvoir un `predict` sans features en chaînage sur le dernier
-tableau affiché. Chacune de ces règles répare un incident
-réel, chacune porte son nom et sa docstring, et `_REGLES_DU_PLAN` — neuf lignes —
+tableau affiché, **monter le périmètre quand le plan nomme plusieurs sources**
+(`_regle_croiser_les_sources`, §4.4 `croisement.py`), relire en prédiction une
+requête qui n'en était pas une. Chacune de ces règles répare un incident
+réel, chacune porte son nom et sa docstring, et `_REGLES_DU_PLAN` — onze lignes —
 est la seule chose à lire pour connaître leur ordre, qui est significatif. Une règle
 rend soit rien (le plan continue), soit la question à poser, qui court-circuite les
 suivantes.
+
+**Le nœud `plan` peut RELIRE, et trois relectures existent.** Elles reposent la
+même question au modèle, une fois, sous conditions, et chacune ne peut
+qu'AJOUTER ce que la première lecture avait fait tomber :
+
+| Relecture | Ce qu'elle retire de la question | Ce qu'on garde |
+|---|---|---|
+| `_relire_sans_la_source_du_fil` | la phrase qui rappelle la source de travail — elle est au singulier, et un tour qui croise deux sources en ressort avec une seule | le **nom** de la seconde source, pas le plan relu |
+| `_relire_faute_de_source_designee` | rien ; elle ajoute au prompt le **constat** que la première lecture n'a désigné aucune source | le périmètre énuméré dans `sources` |
+| `_relire_sans_la_clause_dabsence` | la clause d'absence (« sans famille à bord »), qui faisait perdre au modèle des features qu'il extrayait sans faillir | les features retrouvées |
+
+**Un fil ne s'enrichit que d'une source RELIÉE.** La première relecture ne monte
+le couple « source du fil + source relue » que si une **clé traverse** les deux,
+prouvée dans les données par le même décompte que `croisement.relier_les_sources`.
+Sans clé, le tour **bascule** sur la source relue seule, et la bascule est
+annoncée à l'utilisateur : rien ne relie des passagers à des fleurs, et un
+périmètre « iris, titanic » rendait un chiffre juste sur un périmètre qui n'a
+aucun sens. La preuve est **gardée en cache pour la vie du processus** (0,1 à
+0,4 s par paire) ; un échec de LECTURE, lui, n'est jamais mis en cache — mais il
+fait basculer le tour en cours comme une absence de clé.
+
+**Le périmètre enrichi vaut pour CE tour.** La source de travail de la
+conversation, elle, ne change que par une bascule annoncée (§4.11).
 
 **Ce que le planificateur n'a pas le droit de faire, et qui n'est pas une règle.**
 Pour une feature à valeurs autorisées, son prompt lui impose deux temps :
@@ -381,6 +420,21 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   la colonne est nommée dans la réponse, mais choisie par l'ordre du DDL. Une source
   qui porte une date de commande **et** une date de livraison a une colonne qui
   compte, et elle seule le sait.
+  Elle peut enfin déclarer `filtre_des_sommes` **facultatif** : la colonne qui
+  filtre, la valeur à écarter, et les colonnes dont la somme l'exige. C'est la
+  forme *vérifiable* d'un piège que le dictionnaire énonce en prose — « toute
+  somme d'unités vendues écarte les commandes annulées ». La prose s'adresse au
+  modèle, et il l'ignorait trois tirages sur trois ; la déclaration s'adresse au
+  code, qui relit le Python produit (`agents/analysis/consigne.py`, §4.5) et le
+  SQL produit (`verification.py`, ci-dessous). Rien n'est lu dans le Markdown du
+  dictionnaire : un dictionnaire pose `WHERE statut = 'T'` pour COMPTER et le
+  refuse pour SOMMER, et un analyseur de texte apprendrait la règle à l'envers
+  sur l'un des deux. Facultatif : une source sans piège de ce genre ne déclare
+  rien, et son code n'est pas relu.
+- `faits.py` — ce qu'on **LIT** dans une source pour la décrire : nombre de
+  tables, nombre de lignes, période couverte. Le catalogue déclare un nom et une
+  description écrite à la main ; ces trois faits-là viennent de la source
+  elle-même (§4.11).
 - `sql.py` — l'ontologie (tables, colonnes, types, clés primaires/étrangères) rendue
   en DDL compact pour le prompt, valeurs des colonnes à faible cardinalité comprises
   (sans quoi le modèle devine les littéraux, et il les devine dans sa langue) ; le
@@ -427,6 +481,50 @@ d'environnement `DAA_*` ou `.env` (tableau complet en §7).
   épuisé, puis une réponse tirée du schéma au lieu de la mesure.
   La consigne est donc *UNE requête, UNE ligne, TOUTES les colonnes*, avec le rappel
   que le schéma dit ce qui est **possible** quand seule la mesure dit ce qui **est**.
+- `croisement.py` — **croiser DEUX sources déclarées dans une même requête**.
+  `Plan.source` porte un nom, et une question qui en croise deux ressortait en
+  demande de précision alors que le plan portait déjà les deux noms. Les tables
+  des sources que le **tour désigne** — jamais le catalogue entier — sont
+  matérialisées dans une seule connexion DuckDB, préfixées par le nom de leur
+  source (`ventes_produits`, `production_ordres_fabrication`), et l'agent SQL
+  existant les voit comme un schéma unique : ni prompt ni outil ajoutés.
+  `relier_les_sources` décide **dans les données** quelle colonne peut être
+  référencée, et déclare les clés étrangères correspondantes — sans quoi le
+  modèle invente ses jointures.
+- `lecture.py` — lire un SQL **sans l'analyser** : masquer les littéraux et les
+  commentaires, compter les parenthèses, découper aux virgules de même niveau.
+  Partagé par les deux propriétés ci-dessous, au caractère près : deux lectures
+  divergeraient.
+- `classement.py` — **un palmarès porte la grandeur qui l'ordonne.** Propriété du
+  SQL produit : toute expression du `ORDER BY` figure aussi dans le `SELECT`.
+  Elle ne regarde pas la question, et vaut donc quelle que soit la tournure — la
+  première réparation était une ligne de prompt qui énumérait des formulations,
+  et elle lâchait sur la première paraphrase.
+- `verification.py` — **deux propriétés du SQL, vérifiées avant que ses chiffres
+  soient servis**, sur l'arbre rendu par **sqlglot**.
+  ① *une somme lue dans une table n'est pas multipliée par une jointure* : pour
+  chaque table rejointe, on demande à la base si la colonne de jointure y
+  identifie une ligne ; une table qu'aucune clé unique n'atteint apparie
+  plusieurs de ses lignes à chaque ligne sommée, et la somme est multipliée
+  d'autant.
+  ② *la règle `filtre_des_sommes` vaut aussi pour le SQL*, comme
+  `agents/analysis/consigne.py` la vérifie sur le Python.
+  Chaque somme est jugée dans **SA** portée — la requête principale, chaque
+  sous-requête, chaque `WITH` — parce que la forme *réparée* pousse le modèle
+  vers des sous-requêtes agrégées. Une somme enrobée (`CASE`, `COALESCE`, un
+  cast, `quantite * prix`) reste une somme. Un `COUNT` n'est jamais touché.
+  **Partout où il doute, ce module se tait** et rend `None` : un SQL que
+  l'analyseur refuse, une sous-requête en guise de table, une table absente du
+  schéma — **le nom d'un `WITH` en est une**, si bien qu'une somme écrite dans la
+  requête extérieure à un `WITH` n'est pas vue. Le silence est compté
+  (`Lecture.illisibles`).
+- `diagnostic.py` — **ce qu'on rend au modèle quand sa requête ÉCHOUE**, en deux
+  faits qui ne regardent pas la question : ① une requête déjà échouée et
+  renvoyée *à l'identique* le reçoit — sans quoi le modèle réexpédiait la même
+  chaîne jusqu'à épuisement du budget ; ② une erreur de colonne introuvable
+  reçoit **ce que la portée expose** réellement, relation par relation, lu dans
+  l'arbre de la requête — une sous-requête agrégée n'est dans aucun schéma, et la
+  base ne nomme aucun candidat. Même discipline de silence que `verification.py`.
 
 ### 4.5 `agents/analysis/` — capacité ② Analyse
 
@@ -440,6 +538,27 @@ seule ; **une table coupée par ce plafond est annoncée** au code généré com
 l'utilisateur, un CSV tronqué ne se distinguant en rien d'un CSV complet et un
 agrégat calculé dessus étant faux sans en avoir l'air. Les figures reviennent en
 `image/png` (base64) via le protocole MIME du kernel.
+
+- `diagnostic.py` — ce que la boucle de correction ajoute à la trace d'erreur :
+  un **fait**, pas un conseil. La trace arrivait entière au modèle et ne
+  suffisait pas — un `from matplotlib.ticker import Func` raté était réessayé
+  sous un alias, parce que ni CPython ni IPython ne proposent de voisin et que le
+  bac à sable n'a pas de réseau. Trois familles d'erreur, et elles seules : un
+  **nom** absent d'un module (les noms voisins, demandés AU NOYAU, dans le module
+  réellement installé), un **module** absent, une **dépendance optionnelle**
+  absente (`DataFrame.to_markdown` sans `tabulate` : la méthode existe, pandas
+  est annoncé, et elle meurt quand même). Pour tout le reste, le message d'avant,
+  au caractère près.
+- `consigne.py` — **une somme qui exige un filtre, vérifiée sur le CODE produit.**
+  Le dictionnaire arrivait entier dans le prompt, et le code l'ignorait : le
+  texte était lu, il n'était pas appliqué, l'exécution réussissait, et la boucle
+  de correction ne se déclenchait donc pas. La propriété : *un code qui lit une
+  table déclarée, nomme une colonne dont la somme exige un filtre, somme, et ne
+  porte nulle part la valeur à écarter, a oublié le filtre.* Ce qu'il vérifie
+  vient de `filtre_des_sommes` au catalogue (§4.4), jamais d'ici. Il lit l'arbre
+  syntaxique et seulement les **chaînes** — un commentaire qui cite la règle ne
+  filtre rien. Les comptages ne sont jamais touchés : ils ne nomment aucune
+  colonne de mesure. Partout où il doute, il se tait.
 
 ### 4.6 `agents/inference/` — capacité ③ Inférence gardée
 
@@ -565,11 +684,15 @@ docker build -t data-analyst-agent-sandbox:0.1 src/data_analyst_agent/sandbox/im
 
 ### 4.9 `prompts/` — les prompts système, hors du code
 
-Les six prompts — planificateur, agent SQL, agent d'analyse, synthèse, agent
-système (§4.10) et agent de rappel (§4.12) — sont des fichiers `.txt` servis par un
-chargeur de trente lignes, sur le modèle d'`api/pages.py`. Les deux derniers sont
-arrivés avec leurs nœuds : un nœud à outils reconnaît son sujet par son prompt, et
-c'est donc là qu'on ajuste ce qu'il attrape.
+Les sept prompts — planificateur, agent SQL, agent d'analyse, synthèse, agent
+système (§4.10), agent de rappel (§4.12) et **agent de réparation** — sont des
+fichiers `.txt` servis par un chargeur de trente lignes, sur le modèle
+d'`api/pages.py`. Le cinquième et le sixième sont arrivés avec leurs nœuds : un
+nœud à outils reconnaît son sujet par son prompt, et c'est donc là qu'on ajuste ce
+qu'il attrape. Le septième ne porte aucun nœud : il sert la **seconde**
+formulation demandée quand la première a été écartée faute de porter les faits
+lus — il n'a aucun outil, rien à chercher, et tout lui est donné avec le message
+(§4.10).
 Ce dépôt est un socle : le prompt est le premier endroit qu'on voudra adapter par cas
 d'usage, et il ne doit pas demander une modification de source.
 
@@ -1038,7 +1161,10 @@ d'avant.
 
 1. **Identité** : hormis `GET /health`, aucune route n'est atteignable sans session
    (§4.1) ; les fils sont rangés par utilisateur, et celui d'un autre compte répond
-   `404`. Mots de passe en argon2id, sessions côté serveur, anti-force brute (§4.8).
+   `404`. Mots de passe en argon2id, sessions côté serveur, anti-force brute
+   comptée par **appelant réel** — `X-Forwarded-For` n'est cru que d'un mandataire
+   déclaré dans `DAA_TRUSTED_PROXIES`, et rien n'est cru quand la liste est vide
+   (§4.8, `api/forwarded.py`, §7).
 2. **SQL** : lecture seule vérifiée *avant* exécution (première instruction
    `SELECT`/`WITH`, une seule instruction, mots-clés d'écriture refusés) — sur la
    requête **masquée**, ce qui vit dans un littéral ou un commentaire étant une
@@ -1059,6 +1185,12 @@ d'avant.
    longueur de question bornée, débit de `/chat` limité par compte (§7).
 7. **Erreurs** : l'utilisateur reçoit une phrase et une référence d'incident ; le
    type et le message de l'exception restent dans la trace et les logs.
+8. **Chiffres** : ce n'est pas une garde d'accès, mais c'est la même discipline —
+   un chiffre faux et plausible est invisible, donc il se vérifie avant d'être
+   servi. Le SQL produit est relu sur trois propriétés (le palmarès porte sa
+   grandeur, une somme n'est pas multipliée par une jointure, une somme filtrée
+   l'est bien), le code d'analyse sur la même règle de filtre, et une table
+   matérialisée coupée par son plafond le **dit** (§4.4, §4.5).
 
 > **Ce récapitulatif vaut pour `main`. La branche `Maxizoo` n'est pas authentifiée,
 > et c'est voulu** — voir « Deux branches durables » dans le [README](../README.md).
@@ -1074,8 +1206,14 @@ tests/
 ├── fakes/         # faux bridge de sandbox (protocole, sans conteneur)
 ├── helpers/       # ScriptedLLM (réponses par agent), doublures, seed + oracle Titanic
 └── catalogues/    # catalogues et oracles des runners hors suite : ambiguite/,
-                   #   deux-dates/, realiste/, trois-types/
+                   #   deux-dates/, realiste/, trois-types/, plus les tests qui
+                   #   gardent les catalogues livrés (démonstration, métier)
 ```
+
+Les catalogues de **démonstration** et **métier**, eux, vivent dans `sources/` —
+ils sont livrés avec le produit, et ce sont eux que portent les campagnes
+([sources-de-demonstration.md](sources-de-demonstration.md),
+[sources-metier.md](sources-metier.md)).
 
 - Le **LLM est scripté** dans toute la suite (déterminisme, zéro réseau en CI) : le
   helper `ScriptedLLM` route des réponses préparées vers chaque agent via un
@@ -1103,6 +1241,18 @@ tests/
   figure au tour +2 et au tour +5, §4.12) et `scripts/mesure_artefact_absent.py`
   (l'aveu d'un artefact désigné et jamais produit),
   `scripts/mesure_ambiguite_de_source.py`, `scripts/mesure_releve_des_sources.py`,
+  `scripts/mesure_croisement_de_sources.py` (les questions qui croisent DEUX
+  sources déclarées, sur le catalogue métier — le banc qui porte aussi les
+  oracles de bascule et de périmètre, §4.2),
+  `scripts/mesure_questions_metier.py` (les douze questions d'un fabricant de
+  vélos, [sources-metier.md](sources-metier.md)),
+  `scripts/mesure_parcours_de_demonstration.py` (les seize tours du parcours de
+  démonstration, et leurs deux paraphrases chacun),
+  `scripts/mesure_sources_nommees.py` (une source nommée dans la phrase),
+  `scripts/mesure_classement_sans_lexique.py` (dix formulations d'un palmarès,
+  le banc de la propriété de `classement.py`, §4.4),
+  `scripts/mesure_dictionnaire_analyse.py` (le dictionnaire suivi — ou non — par
+  le code produit, le banc de `consigne.py`, §4.5),
   `scripts/mesure_typage_des_arguments_d_outil.py` (l'écart de typage entre moteurs,
   §4.6), `scripts/mesure_contexte.py` (ce qu'une conversation injecte, tour après
   tour) et `scripts/mesure_trois_types_de_source.py` (**les trois types de source à la fois** —
@@ -1194,7 +1344,8 @@ qu'il tienne devant eux : [rediger-un-dictionnaire-de-source.md](rediger-un-dict
 |---|---|---|
 | `DAA_API_DOCS_ENABLED` | `false` | `/docs`, `/redoc`, `/openapi.json`. **Éteints par défaut** : ils décrivent la surface d'attaque à qui atteint le port, et chargent Swagger/ReDoc depuis un CDN — qu'un déploiement au réseau coupé ne peut de toute façon pas servir |
 | `DAA_API_MAX_BODY_BYTES` | `65536` | taille maximale du corps d'une requête, tous chemins confondus |
-| `DAA_CHAT_MESSAGE_MAX_CHARS` | `4000` | longueur maximale d'une question : un seul `POST /chat` peut déclencher **jusqu'à 23 appels LLM** et un conteneur Docker. Le chemin le plus long additionne les plafonds des nœuds traversés — système `6` + rappel `5` + plan `1` + récupération `10` + synthèse `1` ; le commentaire de `config.py` en annonce encore 11, chiffre d'avant les deux nœuds à outils |
+| `DAA_CHAT_MESSAGE_MAX_CHARS` | `4000` | longueur maximale d'une question : un seul `POST /chat` peut déclencher **jusqu'à 26 appels LLM** et un conteneur Docker. Le chemin le plus long additionne les plafonds des nœuds traversés — système `6` + rappel `5` + plan `1` **+ ses trois relectures** (§4.2) + récupération `10` + synthèse `1` ; le commentaire de `config.py` en annonce encore 11, chiffre d'avant les deux nœuds à outils et les relectures |
+| `DAA_TRUSTED_PROXIES` | `[]` (aucun) | les mandataires dont on accepte de croire `X-Forwarded-For` et `X-Forwarded-Proto` — adresses ou réseaux CIDR, séparés par des virgules. **Vide, rien n'est cru** et l'on compte sur le pair immédiat : une configuration qu'on n'a pas posée ne peut pas nous affaiblir. Sans lui, derrière une terminaison TLS, l'anti-force brute compte tout le monde sur l'adresse du mandataire (`api/forwarded.py`) |
 | `DAA_CHAT_RATE_LIMIT_REQUESTS` | `20` | requêtes `POST /chat` par fenêtre et **par compte** |
 | `DAA_CHAT_RATE_LIMIT_WINDOW` | `60.0` s | largeur de la fenêtre glissante de débit |
 
@@ -1214,6 +1365,10 @@ sont substituées dans le DSN du catalogue (`${DAA_PG_HOST}`…) et publiées da
 l'environnement du process par `export_env_file()`. Modèle dans `.env.example`.
 
 ## 8. Limites connues et pistes V2
+
+La liste **lisible par qui reçoit le produit**, avec les limites mesurées sur le
+comportement de l'agent, est dans [LIVRAISON.md §3](LIVRAISON.md#3-les-limites-connues).
+Ce qui suit est la vue technique.
 
 - **Le CONTEXTE conversationnel est limité à UN tour** — le magasin d'artefacts,
   lui, porte aussi loin que le fil (§4.12), et c'est la distinction à tenir :
