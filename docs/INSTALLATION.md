@@ -129,19 +129,14 @@ sources:
 ```
 
 `description` n'est pas décoratif : c'est sur lui que le planificateur choisit la
-source quand l'utilisateur ne la nomme pas. Une source Postgres remplace `path`
-par un `dsn` où `${DAA_PG_*}` sont résolues depuis le fichier d'environnement.
-Trois blocs facultatifs — `dictionary`, `features`, `date_reference` — sont
-expliqués en tête de `sources/catalogue.yaml` et dans
-[rediger-un-dictionnaire-de-source.md](rediger-un-dictionnaire-de-source.md).
-Un quatrième mérite un mot, parce qu'il n'est déclaré par aucune source livrée :
-`filtre_des_sommes` nomme **la colonne qui filtre, la valeur à écarter et les
-colonnes dont la somme l'exige** — « une somme d'unités vendues écarte les
-commandes annulées ». La même règle écrite en prose dans le dictionnaire
-s'adresse au modèle, et il ne l'applique pas toujours ; déclarée là, elle est
-relue sur le SQL et sur le code produits avant que leurs chiffres soient servis.
-Exemple complet dans `sources/metier/catalogue.yaml`, explication dans
-[ARCHITECTURE §4.4](ARCHITECTURE.md#44-agentsretrieval--capacité--récupération).
+source quand l'utilisateur ne la nomme pas.
+
+**Le reste est dans son guide**, et n'est pas repris ici : les trois types avec
+un exemple complet chacun, les quatre blocs facultatifs (`dictionary`,
+`features`, `date_reference`, `filtre_des_sommes`), la règle du nom de colonne
+partagé sans laquelle un croisement ne trouve pas sa clé, ce qu'il faut
+redémarrer, et les questions qui vérifient —
+**[AJOUTER-UNE-SOURCE.md](AJOUTER-UNE-SOURCE.md)**.
 
 ## 6. Construire les deux images
 
