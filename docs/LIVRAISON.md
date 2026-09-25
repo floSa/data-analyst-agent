@@ -78,6 +78,18 @@ porte est nommé.
 
 ### Ce que l'agent peut rendre de faux
 
+- **Une grandeur demandée qui n'existe pas est remplacée par une voisine, en
+  silence.** Relevé le 24 septembre 2026, catalogue métier, fil lié à `ventes` :
+  « Montre-moi un diagramme en barres du nombre de commandes **par région** »
+  rend « un diagramme en barres illustrant le nombre de commandes **par
+  ville** … Lyon avec 21 commandes, Strasbourg 18 ». `ventes` ne porte aucune
+  région — ses clients ont une `ville`, et rien d'autre.
+  C'est la forme la plus difficile à repérer : les chiffres sont justes, le
+  graphique est propre, et seule la grandeur a changé. L'utilisateur qui a
+  demandé des régions lit des villes sans qu'un mot l'en avertisse.
+  Le bon comportement serait de **dire** que la colonne demandée n'existe pas,
+  et de nommer celles qui existent — ce que le chemin de prédiction fait déjà
+  pour une feature déclarée introuvable.
 - **Un « Top 5 » là où la question demande chaque produit.**
   Le code d'analyse imprime un extrait, et la ligne attendue n'y est pas.
   La réparation est dans la règle 2 de `prompts/analysis.txt` ; elle rend dues
@@ -187,6 +199,10 @@ plausible**, donc invisible.
   sources.
 - Lire les sommes qu'un `WITH` porte, pour retirer le dernier silence du
   contrôle SQL.
+- **Refuser une grandeur qui n'existe pas au lieu de lui substituer une
+  voisine** : nommer la colonne absente, et celles qui sont là. La propriété se
+  lit dans le schéma, pas dans la question — comme celles qui gardent déjà le
+  palmarès et les sommes.
 
 ### 2. Donner à l'utilisateur ce qu'il a produit
 
