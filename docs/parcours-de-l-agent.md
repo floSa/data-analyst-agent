@@ -1,5 +1,7 @@
 # Le parcours de l'agent, en huit conversations
 
+> **Ce document est vivant, et tenu par un test** (`tests/unit/docs/test_parcours_de_l_agent.py`) : sa prose ne peut pas rester derrière le relevé dont elle est tirée, [releve-des-parcours.md](releve-des-parcours.md).
+
 Ce document montre ce que l'application fait **réellement** quand on lui parle :
 quel nœud est traversé, quel outil est appelé, combien d'allers-retours avec le
 moteur, qui écrit la phrase finale.

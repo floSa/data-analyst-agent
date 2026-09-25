@@ -1,5 +1,7 @@
 # Spike Vanna — texte-vers-SQL, comparé au socle maison (roadmap §11, étape 9)
 
+> **Ce document est un journal de chantier**, daté de septembre 2026 : la comparaison qui a conclu à garder le socle maison. Index : [README.md](README.md).
+
 > **Révision du 8 septembre 2026.** La première version de ce document concluait au
 > rejet de Vanna sur la foi d'une chronologie fausse et d'une version obsolète. Elle est
 > corrigée ci-dessous. Les mesures de 2026-07-09 sont conservées telles quelles ; c'est

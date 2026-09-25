@@ -1,5 +1,7 @@
 # Le catalogue de démonstration
 
+> **Ce document décrit le catalogue qui a DURCI le socle**, et porte le journal des chantiers qu'il a ouverts. Le catalogue qu'on MONTRE est l'autre : [sources-metier.md](sources-metier.md). Il reste à ce chemin parce que `src/`, les tests et les scripts le citent.
+
 Le produit se démontrait sur `titanic` et `iris` : un naufrage de 1912 et des
 fleurs mesurées en 1936. Les deux sont d'excellents jeux d'essai et ne
 ressemblent à aucun client — ni par leur volumétrie (891 et 150 lignes), ni par

@@ -1,5 +1,7 @@
 # data-analyst-agent — Cahier des charges
 
+> **Ce document est le cahier des charges d'origine** : les contraintes et les décisions de départ, pas l'état du jour. Il reste à ce chemin parce que `src/` le cite. Index des documents de chantier : [historique/README.md](historique/README.md).
+
 Nom du projet / dossier / repo : **`data-analyst-agent`**. Package Python : `data_analyst_agent`.
 
 ## 1. Pitch

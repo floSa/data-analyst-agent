@@ -1,5 +1,7 @@
 # Axes d'amélioration — data-analyst-agent
 
+> **Ce document est vivant** : la dette technique ouverte, ancrée `fichier:ligne`, pour qui va toucher au code. Le résumé pour qui reçoit le produit est dans [LIVRAISON.md §3](LIVRAISON.md#3-les-limites-connues).
+
 Chaque point est ancré dans le code (`fichier:ligne`) avec une correction proposée.
 
 **Ce document s'adresse à qui va toucher au code.** Le même état des lieux, écrit

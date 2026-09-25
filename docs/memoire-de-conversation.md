@@ -1,5 +1,7 @@
 # La mémoire de conversation : ce qu'elle porte, et ce qui s'en sert
 
+> **Ce document est un journal de chantier** : ce que la mémoire d'un fil porte, qui s'en sert, et ce qu'elle ne porte pas. Il reste à ce chemin parce que `src/` et les tests le citent. Index : [historique/README.md](historique/README.md).
+
 Un tableau produit dans un fil est enregistré comme **source éphémère** : un
 nom (`resultat_1`), ses colonnes avec leur type et leurs valeurs possibles, son
 nombre de lignes, la question qui l'a produit, la source d'origine, et un

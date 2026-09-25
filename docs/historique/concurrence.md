@@ -1,5 +1,7 @@
 # Le produit sous charge : plusieurs utilisateurs en même temps
 
+> **Ce document est un journal de chantier**, daté du 15 septembre 2026 : ce que le produit tient quand plusieurs personnes parlent en même temps. Index : [README.md](README.md).
+
 Mesures du 2026-09-15, machine de développement (NVIDIA L4 23 034 Mio, 22 cœurs,
 86 Gio), contre le service en marche : vLLM `0.28.0` sur le port 8100
 (`google/gemma-4-E4B-it-qat-w4a16-ct`, `--max-model-len 32768`,

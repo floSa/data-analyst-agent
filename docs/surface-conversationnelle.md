@@ -1,5 +1,7 @@
 # Surface conversationnelle — ce que l'agent sait répondre sur lui-même
 
+> **Ce document est un journal de mesure** : ce que l'agent sait répondre sur lui-même, formulation par formulation, avant et après. Il reste à ce chemin parce que `src/`, les tests et les scripts le citent. Index : [historique/README.md](historique/README.md).
+
 Dix conversations de durcissement, et **aucune mesure** de ce que l'agent sait
 répondre. On savait, par le README et [axes-amelioration.md](axes-amelioration.md),
 que « De quels attributs as-tu besoin ? » tombait dans le repli ; on ne savait pas

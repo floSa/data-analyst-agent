@@ -1,5 +1,7 @@
 # Le relevé de la mémoire de conversation
 
+> **Ce document est un relevé engendré**, gardé comme preuve d'une mesure. Il reste à ce chemin parce que le script qui l'écrit le cite. Index : [historique/README.md](historique/README.md).
+
 Ce document est ÉCRIT PAR `scripts/mesure_memoire_de_conversation.py`. Il n'est
 pas rédigé à la main, et toute correction qu'on y apporterait serait perdue à la
 prochaine exécution. Il ne juge rien : il relève ce qui EST. C'est la matière

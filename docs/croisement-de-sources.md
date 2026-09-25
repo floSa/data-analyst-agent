@@ -1,5 +1,7 @@
 # Croiser deux sources déclarées
 
+> **Ce document est un journal de chantier** : comment le croisement de deux sources a été construit, ce qu'il coûte, et ce qu'il ne fait pas. Il reste à ce chemin parce que `orchestrator/plan.py` le cite. Index : [historique/README.md](historique/README.md).
+
 `Plan.source` est un `str | None` : un plan porte UNE source. Une question qui
 en croise deux n'avait donc **aucun chemin**, et la demande de précision était ce
 qu'on servait faute de mieux.
