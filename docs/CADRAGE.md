@@ -228,7 +228,7 @@ porte tout ce qui est propre à un déploiement — comptes, sessions, conversat
 Commiter à la fin de chaque étape vérifiée **et testée**. Les consignes de
 contribution vivent dans un fichier local **non versionné** (voir `.gitignore`) :
 elles ne sont donc pas dans un dépôt fraîchement cloné, et les conventions qui
-comptent pour un contributeur extérieur sont dans le [README](../README.md#qualité).
+comptent pour un contributeur extérieur sont dans le [guide de développement](DEVELOPPEMENT.md#qualité-du-code).
 
 ## 12. Stratégie de tests (exigence forte : couverture maximale avant présentation)
 

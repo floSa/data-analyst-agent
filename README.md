@@ -1,127 +1,86 @@
 # data-analyst-agent
 
-Agent conversationnel sur données, **on-premise**. On déclare une source — un CSV,
-un classeur Excel, une base Postgres, une base DuckDB — on pose sa question en
-français, et le système sait :
+Un agent d'analyse de données, on-premise.
+On lui branche ses sources, on lui pose des questions en français, il y répond
+avec ses chiffres, ses tableaux et ses graphiques.
+Rien ne sort de la machine.
 
-1. **Récupérer** — écrire le SQL, jointures comprises, et l'exécuter en lecture seule ;
-2. **Analyser** — écrire du Python (KPI, statistiques, figures) et l'exécuter dans un
-   bac à sable Docker sans réseau ;
-3. **Prédire** — appeler un modèle de ML sur des features validées, en réclamant ce
-   qui manque avant tout `predict`.
+## Ce qu'il fait
 
-Il sait aussi répondre **sur lui-même** (« quelles données as-tu ? ») et **reprendre
-ce qu'il a produit** (« reprends le graphe et mets les barres en bleu »).
+- **Interroge** une source : il écrit le SQL, jointures comprises, et l'exécute en lecture seule.
+- **Analyse et trace** : il écrit du Python et l'exécute dans un bac à sable isolé du réseau.
+- **Prédit** : il appelle un modèle de machine learning déclaré, et réclame ce qui lui manque.
+- **Croise** deux sources reliées par une clé commune.
+- **Explique** ce que veut dire une donnée, à partir du dictionnaire de la source.
+- **Vérifie** ses propres chiffres : une somme multipliée par une jointure ou privée de son filtre est corrigée ou signalée.
 
-Un seul modèle de langage, joint par un **endpoint OpenAI-compatible**, servi
-localement : rien ne sort de la machine. Le moteur n'est nommé nulle part dans le
-code — il se change en changeant une URL. En service : **vLLM**, servant
-`google/gemma-4-E4B-it-qat-w4a16-ct` ([docs/MOTEUR.md](docs/MOTEUR.md)).
+## Technologies
 
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![uv](https://img.shields.io/badge/uv-package_manager-DE5FE9?logo=uv&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-sandbox-2496ED?logo=docker&logoColor=white)
-![LangGraph](https://img.shields.io/badge/LangGraph-1.2-1C3C3C)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
+- Python 3.12, uv
+- LangGraph et pydantic-ai : l'orchestration et les agents
+- FastAPI : l'API et la page de chat
+- Postgres, DuckDB, CSV, Excel : les sources
+- sqlglot : la relecture du SQL produit
+- Docker : le bac à sable d'exécution
+- **N'importe quel LLM on-premise**, derrière une API compatible OpenAI avec appel d'outils
 
-## Je veux… → je lis…
+## Comment il fonctionne
 
-| Si vous voulez… | Lisez |
-|---|---|
-| **savoir ce que le produit fait et ne fait pas** — c'est l'entrée | [docs/LIVRAISON.md](docs/LIVRAISON.md) |
-| **voir ce qu'elle sait faire**, en captures d'écran | [docs/DEMONSTRATION.md](docs/DEMONSTRATION.md) |
-| **vous en servir** : poser des questions dans la page de chat | [docs/GUIDE-UTILISATEUR.md](docs/GUIDE-UTILISATEUR.md) |
-| **brancher vos données** : déclarer une source, la vérifier | [docs/AJOUTER-UNE-SOURCE.md](docs/AJOUTER-UNE-SOURCE.md) |
-| écrire le **dictionnaire** d'une source pour qu'il tienne devant l'agent | [docs/rediger-un-dictionnaire-de-source.md](docs/rediger-un-dictionnaire-de-source.md) |
-| **installer** le service sur une machine nue | [docs/INSTALLATION.md](docs/INSTALLATION.md) |
-| **exploiter** : commander, exposer en HTTPS, sauvegarder, restaurer | [docs/EXPLOITATION.md](docs/EXPLOITATION.md) |
-| **comprendre comment c'est construit** — schémas, service par service, réglages, sécurité | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| comprendre **comment il répond**, tour par tour | [docs/parcours-de-l-agent.md](docs/parcours-de-l-agent.md) |
-| connaître le **moteur** : ce dont le système dépend, et ce qui casse sans | [docs/MOTEUR.md](docs/MOTEUR.md) |
-| les **chiffres du jour de livraison**, campagne par campagne | [docs/releve-de-livraison.md](docs/releve-de-livraison.md) |
-| savoir **ce qui reste à faire**, ancré `fichier:ligne` | [docs/axes-amelioration.md](docs/axes-amelioration.md) |
-| lancer une **campagne de mesure** ou un script | [scripts/README.md](scripts/README.md) |
-| savoir **pourquoi c'est comme ça** — les journaux de chantier | [docs/historique/README.md](docs/historique/README.md) |
-
-## Démarrage
-
-**Pour installer le service**, ce n'est pas ici : c'est
-**[docs/INSTALLATION.md](docs/INSTALLATION.md)**, qui part d'une machine nue et
-n'exige que Docker. Ce qui suit est le démarrage d'un poste de **développement**.
-
-Prérequis : [uv](https://docs.astral.sh/uv/) (Python 3.12 géré automatiquement),
-**Docker** (bac à sable et tests d'intégration), et un serveur LLM à endpoint
-OpenAI-compatible pour l'usage réel — `DAA_LLM_BASE_URL` suffit à en désigner un,
-pourvu qu'il serve `/v1/chat/completions` avec le *tool calling*.
-
-```bash
-uv sync                                              # environnement + dépendances
-docker build -t data-analyst-agent-sandbox:0.1 src/data_analyst_agent/sandbox/image/
-uv run pytest                                        # suite de tests (couverture ≥ 85 %)
-uv run python scripts/manage_users.py create alice   # un compte (aucun n'existe au départ)
-uv run uvicorn data_analyst_agent.api.app:app        # API + chat sur http://localhost:8000
+```mermaid
+flowchart TD
+    U["Utilisateur"] --> API["API et page de chat"]
+    API --> SYS
+    subgraph AG["Agents, animés par le LLM on-premise"]
+        SYS["Agent système<br/>sources, capacités, mémoire du fil"] --> PLAN["Planificateur<br/>quelle capacité, quelle source"]
+        PLAN --> RET["Récupération<br/>SQL"]
+        PLAN --> ANA["Analyse<br/>Python et graphiques"]
+        PLAN --> INF["Prédiction<br/>modèle ML"]
+    end
+    RET --> SRC[("Sources<br/>Postgres, DuckDB, CSV, Excel")]
+    ANA --> BAC["Bac à sable Docker<br/>sans réseau"]
+    BAC --> SRC
+    INF --> REG[("Registre des modèles")]
+    RET --> CTL["Contrôles des chiffres"]
+    ANA --> CTL
+    CTL --> REP["Réponse<br/>texte, tableau, graphique"]
+    INF --> REP
+    SYS --> REP
+    REP --> API
 ```
 
-Quatre choses à savoir avant la première question :
+## Documentation
 
-- **l'image du bac à sable se construit à la main, une fois** (2ᵉ commande). Rien
-  dans le chemin applicatif ne la construit : sans elle, une analyse échoue au
-  `docker run` ;
-- **l'application est authentifiée.** Ni inscription ouverte, ni compte par défaut.
-  En local, l'accès se fait en http : le cookie de session étant `Secure` par
-  défaut, il faut poser `DAA_SESSION_COOKIE_SECURE=false` dans le `.env` ;
-- **la source `titanic` du catalogue livré demande un Postgres** lancé et semé —
-  `uv run python scripts/seed_titanic_postgres.py`, défauts alignés sur
-  `.env.example`. La source `iris` ne demande rien ;
-- sous Windows, les tests qui exigent Docker se lancent depuis WSL ; sans Docker
-  ils sont sautés. Les tests `-m live` (LLM requis) et `-m ui` (navigateur, après
-  `uv run playwright install chromium`) sont exclus par défaut.
-
-Tout se règle par variables d'environnement `DAA_*` (ou un `.env`). Les 51 réglages
-sont groupés par domaine dans
-**[ARCHITECTURE §7](docs/ARCHITECTURE.md#7-configuration-daa_)**.
-
-## Qualité
-
-```bash
-uv run ruff format           # formatage
-uv run ruff check --fix      # lint
-uv run pre-commit install    # hooks git (une seule fois)
-```
-
-## Deux branches, et elles ne convergeront pas
-
-**`main`** est le socle produit, **authentifié**. **`Maxizoo`** est une démonstration
-client, **sans authentification — et c'est un choix de périmètre**, pas un oubli.
-
-Ne pas porter `auth/` de l'une vers l'autre ; ne pas déployer `Maxizoo` sur une
-adresse publique durable ni y brancher de données réelles. Tout le reste vaut pour
-les deux et doit être reporté. Le détail, et ce qui l'a décidé :
-[ARCHITECTURE §5](docs/ARCHITECTURE.md#5-sécurité--récapitulatif-des-garde-fous).
+- [Livraison](docs/LIVRAISON.md)
+- [Démonstration](docs/DEMONSTRATION.md)
+- [Guide utilisateur](docs/GUIDE-UTILISATEUR.md)
+- [Ajouter une source](docs/AJOUTER-UNE-SOURCE.md)
+- [Rédiger un dictionnaire de source](docs/rediger-un-dictionnaire-de-source.md)
+- [Installation](docs/INSTALLATION.md)
+- [Exploitation](docs/EXPLOITATION.md)
+- [Développement](docs/DEVELOPPEMENT.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Moteur](docs/MOTEUR.md)
+- [Relevé de livraison](docs/releve-de-livraison.md)
+- [Campagnes de mesure](scripts/README.md)
+- [Historique](docs/historique/README.md)
 
 ## Structure
 
 ```
-src/data_analyst_agent/   # le package
-├── orchestrator/         # graphe, plan et ses règles, budget de contexte, mémoire des fils
-├── agents/               # ① retrieval  ② analysis  ③ inference
-├── auth/                 # comptes argon2id, sessions côté serveur, anti-force brute
-├── prompts/              # les 7 prompts système, hors du code (.txt)
-├── sandbox/              # client durci + image/ (Dockerfile, bridge Jupyter)
-└── api/                  # app.py (HTTP seul) + templates/ (chat, connexion)
-deploy/                   # image de l'app, compose, unité systemd, daactl, sauvegarde, TLS
-docs/                     # la documentation — voir la table ci-dessus
-├── historique/           #   les journaux de chantier
-models/                   # artefacts ML jouets + registry.yaml
-sources/                  # catalogue des sources + datasets vendorisés
-scripts/                  # comptes, migration, semis, campagnes de mesure, bancs
-notebooks/                # entraînement des modèles jouets (jupytext .md + .ipynb)
-tests/                    # unit / integration / e2e golden / helpers / fakes / catalogues
-var/                      # NON versionné : comptes, sessions, conversations (0o700)
+src/data_analyst_agent/
+├── orchestrator/   le graphe, le plan, la mémoire des conversations
+├── agents/         récupération, analyse, prédiction
+├── auth/           comptes, sessions
+├── prompts/        les prompts système
+├── sandbox/        le bac à sable et son image
+└── api/            l'API et la page de chat
+deploy/             l'installation en service
+docs/               la documentation
+sources/            les catalogues de sources livrés
+models/             les modèles de prédiction et leur registre
+scripts/            comptes, semis des sources, campagnes de mesure
+tests/              la suite de tests
 ```
-
-L'arborescence détaillée, fichier par fichier, est dans
-[docs/CADRAGE.md §10](docs/CADRAGE.md).
 
 ## Licences
 
