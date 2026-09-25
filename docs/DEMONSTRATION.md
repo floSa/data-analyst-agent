@@ -1,5 +1,7 @@
 # Démonstration de data-analyst-agent
 
+Ce document présente, à travers une démonstration en treize questions posées au service installé, ce que data-analyst-agent sait faire.
+
 ## Ce que fait l'agent
 
 | # | Capacité | Question posée |
