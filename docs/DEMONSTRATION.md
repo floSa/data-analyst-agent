@@ -1,118 +1,147 @@
-# Ce que l'application sait faire, en images
+# Démonstration : une matinée avec l'agent
 
-Chaque image de cette page est une capture du **service installé**.
-Prise le 25 septembre 2026, en HTTPS, sur `acbe37e`, avec un compte ordinaire.
-Rien n'est retouché : la question est celle qui a été tapée, la réponse celle
-qui a été rendue.
+Camille dirige le service commercial des **Cycles du Ponant**, un fabricant de
+vélos. Ce matin, Camille ouvre l'agent pour la première fois.
 
-Le catalogue en service est celui des **Cycles du Ponant**, un fabricant de
-vélos (voir [sources-metier.md](sources-metier.md)).
-Chaque réponse porte un chiffre que l'on peut vérifier de tête, donné sous
-l'image.
+Ce qui suit est **une seule conversation**, du premier message au dernier.
+Chaque échange montre une capacité de l'agent.
+Les captures viennent du service installé, prises le 25 septembre 2026 : la
+question est celle qui a été tapée, la réponse celle qui a été rendue, sans
+retouche.
 
-Pour se servir de l'application pas à pas : [GUIDE-UTILISATEUR.md](GUIDE-UTILISATEUR.md).
-Pour ce qu'elle ne sait pas faire : [LIVRAISON.md §3](LIVRAISON.md#3-les-limites-connues).
+Pour se servir de l'agent pas à pas : [Guide utilisateur](GUIDE-UTILISATEUR.md).
+Pour ce qu'il ne sait pas faire : [Livraison, §3](LIVRAISON.md#3-les-limites-connues).
 
-## 1. Se connecter
+---
+
+## 0. Se connecter
 
 ![La page de connexion](captures/00-connexion.png)
 
-Un identifiant et un mot de passe.
-Les comptes sont créés par l'exploitant (voir [EXPLOITATION.md](EXPLOITATION.md)).
+Un identifiant, un mot de passe. Les comptes sont créés par l'exploitant.
 
-## 2. Choisir sa source, en parlant
+## 1. Faire connaissance
 
-![La page de chat, une source choisie](captures/01-vue-d-ensemble.png)
+![Que sais-tu faire ?](captures/01-bonjour.png)
 
-Il n'y a pas de menu : on dit sur quoi on travaille.
-L'agent lie la source à la conversation et dit ce qu'elle contient : ses tables,
-ses lignes, la période qu'elle couvre.
-Les conversations restent à gauche, et se rouvrent.
+Camille commence par demander à l'agent ce qu'il sait faire.
 
-## 3. Compter
+**Ce que ça montre :** l'agent décrit ses capacités réelles : interroger une
+source, analyser et tracer, prédire.
 
-![Combien de commandes en 2025](captures/02-comptage.png)
+## 2. Découvrir les sources
 
-Source : `ventes`. Attendu : **180**.
-Le dictionnaire de la source dit qu'un comptage ne filtre pas sur le statut.
-L'agent l'applique, et le dit.
+![Sur quelles sources pouvons-nous travailler ?](captures/02-sources.png)
 
-## 4. Additionner, en respectant les règles de la source
+**Ce que ça montre :** l'agent liste les sources déclarées, et leur type.
+Il n'en invente aucune.
 
-![Le chiffre d'affaires 2025](captures/03-chiffre-d-affaires.png)
+## 3. Choisir sa source, en le disant
 
-Source : `ventes`. Attendu : **1 496 743,00 €**.
-Le piège : 16 commandes annulées pèsent 139 350 €. Une somme naïve rend
-1 636 093 €.
-L'agent écarte les annulées, parce que le dictionnaire l'exige pour toute somme
-en euros, et il le dit.
+![J'aimerais travailler sur les ventes](captures/03-choisir.png)
 
-## 5. Classer
+Camille n'a pas de menu à ouvrir : il suffit de dire sur quoi travailler.
 
-![Le meilleur client](captures/04-classement.png)
+**Ce que ça montre :** l'agent garde la source pour toute la conversation, et
+annonce ce qu'elle contient : 4 tables, 180 commandes, l'année 2025.
 
-Source : `ventes`. Attendu : **Vélocité Bordeaux, 170 149 €**.
-Un classement en euros suit la même règle : seules les commandes facturées
-comptent.
+## 4. Comprendre la source
 
-## 6. Tracer un graphique
+![Tu peux me la décrire ?](captures/04-decrire.png)
 
-![Le chiffre d'affaires par canal](captures/05-graphique.png)
+**Ce que ça montre :** chaque table, chaque colonne, son type, ses clés, et les
+liens entre les tables. Les valeurs possibles d'une colonne sont données quand
+elles sont peu nombreuses.
 
-Source : `ventes`. Attendu : **magasin 862 229 €, en ligne 331 499 €,
-grossiste 303 015 €**.
-Le graphique est calculé dans un bac à sable isolé du réseau.
-La réponse redonne les chiffres du graphique, et ce qu'en dit le dictionnaire.
+## 5. Compter
 
-## 7. Demander ce qu'une donnée veut dire
+![Combien de commandes en 2025 ?](captures/05-compter.png)
 
-![Le sens du statut ANN](captures/06-question-de-sens.png)
+**Attendu : 180.**
 
-Source : `ventes`. Attendu : **annulée avant expédition**.
-Une question de sens reçoit un sens, pris dans le dictionnaire, et pas un
-tableau de valeurs.
+**Ce que ça montre :** l'agent écrit le SQL, l'exécute, et suit le dictionnaire
+de la source : un comptage de commandes ne filtre pas sur leur statut.
 
-## 8. Croiser deux sources
+## 6. Additionner, sans tomber dans le piège
 
-![Le fabriqué et le vendu, au total](captures/07-croisement.png)
+![Quel chiffre d'affaires en 2025 ?](captures/06-additionner.png)
 
-Sources : `production` et `ventes`. Attendu : **4 413 unités fabriquées,
-1 828 vendues**.
-La question ne nomme aucune source : l'agent trouve lui-même les deux, les monte
-ensemble, et les relie par le code produit.
-Les 1 828 unités vendues écartent les commandes annulées (2 006 sans le filtre).
+**Attendu : 1 496 743,00 €.** Une somme naïve rendrait 1 636 093 €.
 
-## 9. Changer de source en cours de route
+**Ce que ça montre :** 16 commandes ont été annulées et n'ont jamais été
+facturées. Le dictionnaire exige de les écarter de toute somme en euros.
+L'agent le fait, et le dit.
 
-![Passer sur production](captures/08-choisir-en-parlant.png)
+## 7. Joindre plusieurs tables
 
-![Une question sur la nouvelle source](captures/09-bascule-et-question.png)
+![Quel produit s'est le plus vendu ?](captures/07-joindre.png)
 
-Source : `production`. Attendu : **M-009, 16 arrêts**.
-On change de source comme on l'a choisie : en le disant.
-La question suivante porte sur la nouvelle source.
+**Attendu : ACC-03, le porte-bagages Cargo léger, 264 unités.**
 
-## 10. Prédire
+**Ce que ça montre :** la réponse traverse trois tables (produits, lignes de
+commande, commandes). Camille n'a rien eu à savoir de leur structure.
 
-![Une prédiction de survie](captures/10-prediction.png)
+## 8. Tracer un graphique
 
-Source : `titanic`, modèle déclaré au registre. Attendu : **n'a pas survécu**.
-L'agent extrait les caractéristiques de la phrase et interroge le modèle.
-Il rend la classe prédite et sa probabilité.
+![Un graphique du chiffre d'affaires par canal](captures/08-graphique.png)
 
-## 11. Demander ce qui est disponible
+**Attendu : magasin 862 229 €, en ligne 331 499 €, grossiste 303 015 €.**
 
-![L'inventaire des sources](captures/11-inventaire.png)
+**Ce que ça montre :** l'agent écrit du Python et l'exécute dans un bac à sable
+isolé du réseau. La réponse redonne les chiffres du graphique.
 
-L'agent répond avec les sources réellement déclarées.
-Il n'en invente pas.
+## 9. Modifier le graphique
 
-## Refaire ces captures
+![Refais-le sans le canal grossiste](captures/09-modifier.png)
 
-Les captures se refont contre le service, avec un compte ordinaire et un
-navigateur sans écran.
-Chaque question est posée une fois, et la capture prise quand la réponse est
-arrivée.
-Si un chiffre sort différent de celui écrit sous l'image, ce n'est pas l'image
-qu'il faut changer : c'est une régression à mesurer (voir
-[releve-de-livraison.md](releve-de-livraison.md)).
+Camille ne veut comparer que deux canaux.
+
+**Ce que ça montre :** « refais-le » suffit. L'agent sait de quel graphique il
+s'agit, et le refait avec la modification demandée.
+
+## 10. Demander ce qu'une donnée veut dire
+
+![Que veut dire le statut ANN ?](captures/10-sens.png)
+
+**Attendu : annulée avant expédition.**
+
+**Ce que ça montre :** le sens vient du dictionnaire de la source, et l'agent y
+ajoute le décompte : 16 commandes.
+
+## 11. Croiser deux sources
+
+![Est-ce qu'on vend plus que ce qu'on produit ?](captures/11-croiser.png)
+
+**Attendu : 4 413 unités fabriquées, 1 828 vendues.**
+
+**Ce que ça montre :** la question porte à la fois sur les ventes et sur la
+fabrication. L'agent ajoute lui-même la source `production`, relie les deux par
+le code produit, et écarte les commandes annulées des ventes.
+
+## 12. Changer de source en cours de route
+
+![Passons sur production](captures/12-changer-de-source.png)
+
+**Attendu : M-009, 16 arrêts.**
+
+**Ce que ça montre :** on change de source comme on l'a choisie, en le disant.
+L'agent annonce la bascule, puis répond sur la nouvelle source.
+
+## 13. Prédire
+
+![Aurait-il survécu ?](captures/13-predire.png)
+
+**Attendu : n'a pas survécu.**
+
+**Ce que ça montre :** l'agent lit les caractéristiques dans la phrase et
+interroge un modèle de machine learning déclaré. Il rend la prédiction et sa
+probabilité, 91,1 %.
+
+---
+
+## Refaire cette démonstration
+
+Poser les mêmes questions, dans cet ordre, dans une nouvelle conversation.
+Si un chiffre diffère de celui annoncé ci-dessus, ce n'est pas la page qu'il
+faut corriger : c'est une régression à mesurer
+([Relevé de livraison](releve-de-livraison.md)).
