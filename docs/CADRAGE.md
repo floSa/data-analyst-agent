@@ -181,7 +181,7 @@ data-analyst-agent/
 ├── src/data_analyst_agent/
 │   ├── config.py                 # Settings (pydantic-settings), préfixe DAA_
 │   ├── llm.py                    # LLM mutualisé, endpoint OpenAI-compatible
-│   ├── prompts/                  # les 4 prompts système, hors du code (.txt)
+│   ├── prompts/                  # les 7 prompts système, hors du code (.txt)
 │   ├── orchestrator/
 │   │   ├── plan.py               # modèle Plan + agent à sortie structurée
 │   │   ├── graph.py              # graphe LangGraph, nœuds gardés, règles du plan
