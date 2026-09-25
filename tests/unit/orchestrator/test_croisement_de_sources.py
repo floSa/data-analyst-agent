@@ -741,23 +741,53 @@ def test_la_source_du_fil_est_relue_quand_le_plan_ne_fait_que_l_echoer(tmp_path:
     assert "seconde lecture sans la source du fil" in rendu["trace"][0].detail
 
 
-def test_une_seconde_lecture_sans_perimetre_laisse_le_premier_plan(tmp_path: Path):
-    """L'autre bord : la relecture ne PEUT que croiser, jamais changer d'avis.
+def test_une_relecture_qui_repose_la_source_du_fil_ne_change_rien(tmp_path: Path):
+    """L'autre bord : la relecture ne PEUT qu'AJOUTER, jamais changer d'avis.
 
     Un tour ordinaire sur un fil lié — « combien on a vendu ce mois-ci ? » —
-    paie la relecture et garde son plan. C'est ce qui rend le chemin sûr : ce
-    qui se troque est un périmètre manquant, jamais une source contre une autre.
+    paie la relecture et garde son plan. La relecture ne voit pas la phrase du
+    fil, et elle désigne pourtant la même source : il n'y a pas de seconde
+    source, donc rien à ajouter.
+
+    Mesuré sur le moteur, fil lié à `ventes`, 5 tirages : « Quel chiffre
+    d'affaires avons-nous réalisé en 2025 ? » relit `ventes` 5 fois sur 5, et
+    le tour rend 1 496 743 € sur `ventes` seule.
     """
     llm = ScriptedLLM().script(
         PLANNER,
         [
             plan_response(Plan(capability="query", source="ventes")),
-            plan_response(Plan(capability="query", source="production")),
+            plan_response(Plan(capability="query", source="ventes")),
         ],
     )
     orchestrateur = _orchestrateur_sur(llm, tmp_path)
 
     rendu = orchestrateur._plan_node(_etat("combien on a vendu ?", source_in="ventes"))
+
+    assert rendu["plan"].source == "ventes"
+    assert "seconde lecture" not in rendu["trace"][0].detail
+
+
+def test_une_relecture_qui_ne_designe_rien_n_invente_aucune_source(tmp_path: Path):
+    """Une question sur rien de ce que le catalogue porte n'ouvre aucun périmètre.
+
+    C'est le garde-fou du montage, et il est mesuré et non argumenté : fil lié
+    à `ventes`, « Combien de salariés avons-nous ? », 5 tirages. La première
+    lecture échoe le fil (`source='ventes'`) ; la relecture, délivrée de la
+    phrase, ne désigne RIEN (`source=''`) 5 fois sur 5. Le modèle n'invente pas
+    de source à une question que le catalogue ne porte pas, et le tour reste
+    sur `ventes` — où il répond qu'il n'y trouve aucun salarié.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="ventes")),
+            plan_response(Plan(capability="query", source="")),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat("combien de salariés avons-nous ?", source_in="ventes"))
 
     assert rendu["plan"].source == "ventes"
     assert "seconde lecture" not in rendu["trace"][0].detail
@@ -822,12 +852,18 @@ def test_une_source_AUTRE_que_celle_du_fil_est_relue_elle_aussi(tmp_path: Path):
     assert "seconde lecture sans la source du fil" in rendu["trace"][0].detail
 
 
-def test_une_source_autre_sans_perimetre_a_la_relecture_garde_le_premier_plan(tmp_path: Path):
-    """Le garde-fou, sur ce bord aussi : la relecture ne peut qu'AJOUTER.
+def test_une_source_autre_seule_a_la_relecture_enrichit_le_perimetre_du_fil(tmp_path: Path):
+    """Le relevé du 2026-09-25 : une question qui ne porte QUE sur l'autre source.
 
-    Un tour qui nomme une source autre que celle du fil paie la relecture ;
-    si elle ne désigne pas de périmètre, le premier plan reste et la source du
-    fil est reposée comme avant. Rien ne se troque contre rien.
+    Fil lié à `ventes`, « Combien d'arrêts machine avons-nous eus en 2025 ? » :
+    les deux lectures désignent `production`, 5 tirages sur 5 — celle qui a vu
+    la phrase du fil comme celle qui ne l'a pas vue. La relecture n'en nommait
+    qu'une, elle était jetée faute de périmètre, et
+    `_regle_source_de_la_conversation` reposait `ventes` : « je n'ai pas
+    interrogé la source pour cette question ».
+
+    Le périmètre du tour est désormais le fil PLUS elle. Pas un remplacement :
+    un enrichissement — et le tour rend ses 70 arrêts.
     """
     llm = ScriptedLLM().script(
         PLANNER,
@@ -838,7 +874,86 @@ def test_une_source_autre_sans_perimetre_a_la_relecture_garde_le_premier_plan(tm
     )
     orchestrateur = _orchestrateur_sur(llm, tmp_path)
 
-    rendu = orchestrateur._plan_node(_etat("combien on a vendu ?", source_in="ventes"))
+    rendu = orchestrateur._plan_node(
+        _etat("combien d'arrêts machine avons-nous eus en 2025 ?", source_in="ventes")
+    )
+
+    assert rendu["plan"].source == "ventes, production"
+    assert "seconde lecture sans la source du fil" in rendu["trace"][0].detail
+
+
+def test_une_source_que_l_utilisateur_nomme_bascule_au_lieu_de_s_ajouter(tmp_path: Path):
+    """Ce qui est dangereux n'est pas de changer de source, c'est de le faire en silence.
+
+    Mesuré sur `scripts/mesure_choix_de_source.py` : « et dans iris, combien de
+    lignes ? », posé sur un fil lié à `titanic`, montait le couple
+    `titanic, iris`. La réponse restait juste, mais la conversation restait liée
+    à `titanic` et la bascule n'était plus annoncée.
+
+    Quelqu'un qui écrit un nom a tranché. C'est une bascule, elle est annoncée,
+    et `_regle_source_de_la_conversation` la traite déjà.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="production")),
+            plan_response(Plan(capability="query", source="production")),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(
+        _etat("et dans production, combien de lignes ?", source_in="ventes")
+    )
+
+    assert rendu["plan"].source == "production"
+    assert rendu["source_out"] == "production"
+    assert "production" in rendu["avis_de_source"]
+
+
+def test_le_perimetre_enrichi_ne_change_pas_la_source_liee_au_fil(tmp_path: Path):
+    """Pour CE tour, et rien de plus : la conversation reste liée à `ventes`.
+
+    Le périmètre s'écrit empaqueté dans `plan.source`, qui n'est le nom d'aucune
+    source déclarée. `_lier_la_source` ne retient qu'un nom du catalogue : elle
+    rend la source d'avant, sans bascule et sans avis. Le tour suivant repart
+    de `ventes`.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="production")),
+            plan_response(Plan(capability="query", source="production")),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(
+        _etat("combien d'arrêts machine avons-nous eus en 2025 ?", source_in="ventes")
+    )
+
+    assert rendu["source_out"] == "ventes"
+    assert rendu["avis_de_source"] == ""
+
+
+def test_un_message_qui_ne_dit_que_des_noms_de_sources_n_enrichit_rien(tmp_path: Path):
+    """Le décompte du périmètre est le même partout, et il s'applique ici aussi.
+
+    « ventes ou production ? », posé sur un fil lié à `ventes`, nomme deux
+    sources et ne demande rien dessus. Le couple monté repasse par
+    `_perimetre_croise`, qui exige que le MESSAGE dise autre chose que des noms :
+    il n'en ressort pas, et le tour se déroule comme avant.
+    """
+    llm = ScriptedLLM().script(
+        PLANNER,
+        [
+            plan_response(Plan(capability="query", source="production")),
+            plan_response(Plan(capability="query", source="production")),
+        ],
+    )
+    orchestrateur = _orchestrateur_sur(llm, tmp_path)
+
+    rendu = orchestrateur._plan_node(_etat("ventes ou production ?", source_in="ventes"))
 
     assert rendu["plan"].source == "ventes"
     assert "seconde lecture" not in rendu["trace"][0].detail

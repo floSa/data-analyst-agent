@@ -1870,3 +1870,146 @@ C65 pour n'avoir regardé aucune donnée.
 - **La relecture coûte un appel LLM de plus** sur les tours d'un fil lié où le
   plan nomme une source autre que celle du fil. Le coût était déjà payé sur
   ceux qui l'échoent ; il s'étend à ce cas-là, et pas au-delà.
+
+## Une question sur l'autre source seule, sur un fil lié (C67)
+
+Un fil lié à `ventes`. « Combien d'arrêts machine avons-nous eus en 2025 ? » —
+oracle 70 — reçoit « Je n'ai pas interrogé la source pour cette question, je ne
+peux donc rien en affirmer ». « Combien d'ordres de fabrication ont été lancés
+en 2025 ? » — oracle 140 — reçoit « Je n'ai toujours pas accès à la table
+`production` ». Sur le MÊME fil, « Combien d'unités de VEL-04 avons-nous
+fabriquées, et combien en avons-nous vendues ? » rend 727 et 125.
+
+Ce n'est donc pas « un fil lié ne sort jamais de sa source » : c'est une
+question qui ne porte QUE sur l'autre source qui n'en sort pas. C66 avait
+réparé la moitié perdue d'un périmètre ; il restait le cas où le tour n'en
+demande aucune moitié du fil.
+
+### Étape 1 — la sortie du planificateur, tirage par tirage
+
+Avant toute réparation. Moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`), catalogue
+`sources/metier/catalogue.yaml`, fil lié à `ventes`, 5 tirages par question. Le
+plan est capturé AVANT que les règles le mutent, la relecture est relevée telle
+qu'elle sort, et le plan est relu après les règles.
+
+| question | plan AVANT les règles | seconde lecture | plan APRÈS | ce qui décide |
+|---|---|---|---|---|
+| « Combien d'arrêts machine avons-nous eus en 2025 ? » | `query`, `source='production'`, `sources=[]` — **5/5** | `query`, `source='production'` — **5/5** | `query` sur `ventes` | la relecture ne désigne qu'UNE source : `_perimetre_croise` rend `[]`, elle est **jetée**, puis `_regle_source_de_la_conversation` repose `ventes` |
+| « Combien d'ordres de fabrication ont été lancés en 2025 ? » | `query`, `source='production'`, `sources=[]` — **5/5** | `query`, `source='production'` — **5/5** | `query` sur `ventes` | idem |
+| « Combien d'unités de VEL-04 avons-nous fabriquées, et combien en avons-nous vendues ? » | `query`, `source='ventes'`, `sources=[]` — **5/5** | `query`, `source='production, ventes'` — **5/5** | `query` sur `ventes, production` | la relecture désigne un périmètre : elle est **gardée**, et le tour rend 727 / 125 |
+
+Cinq tirages sur cinq dans les trois cas : le relevé est déterministe.
+
+**Les deux témoins ont été relevés dans la même condition**, et ce sont eux qui
+ont dicté la forme de la réparation :
+
+| question | plan AVANT les règles | seconde lecture | ce que ça dit |
+|---|---|---|---|
+| « Quel chiffre d'affaires avons-nous réalisé en 2025 ? » | `query`, `source='ventes'` — **5/5** | `query`, `source='ventes'` — **5/5** | la relecture relit la source du fil : il n'y a pas de seconde source |
+| « Combien de salariés avons-nous ? » | `query`, `source='ventes'` — **5/5** | `query`, `source=''` — **5/5** | délivré de la phrase du fil, le modèle n'invente AUCUNE source à une question que le catalogue ne porte pas |
+
+### La cause, telle que mesurée
+
+Le planificateur voit `production`, et il le dit — dès la première lecture,
+malgré la phrase de `_contexte_de_source` qui lui demande de prendre `ventes`.
+La seconde lecture, qui ne voit pas cette phrase, le redit. L'information
+n'était pas manquante : elle était **jetée**.
+
+Ce qui la jetait est la condition 4 de `_relire_sans_la_source_du_fil` : la
+relecture n'était gardée que si elle désignait au moins DEUX sources. Une
+question qui ne porte que sur `production` n'en rend qu'une, la relecture était
+refusée, et `_regle_source_de_la_conversation` reposait `ventes` par-dessus. Le
+tour interrogeait alors le carnet de commandes pour y chercher des arrêts
+machine, et répondait qu'il n'en trouvait pas.
+
+### La réparation
+
+Une propriété, et une seule : **une relecture qui désigne une source AUTRE que
+celle du fil n'est plus jetée — le périmètre du tour devient le fil PLUS elle**
+(`_le_fil_plus_la_source_relue`). Pas un remplacement : un enrichissement. Le
+couple monté repasse par `_perimetre_croise`, qui est le même décompte
+qu'ailleurs, et il n'est retenu que s'il en ressort.
+
+Deux conditions le bornent, et les deux sont mesurées ci-dessus : une relecture
+qui repose la source du fil n'ajoute rien, et une relecture qui ne désigne rien
+n'ajoute rien non plus. Une troisième a été payée sur une campagne : **une
+source que l'UTILISATEUR nomme ferme ce montage**. Sans elle, « et dans iris,
+combien de lignes ? », posé sur un fil lié à `titanic`, montait le couple
+`titanic, iris` — la réponse restait juste (150 lignes), mais la conversation
+restait liée à `titanic` et la bascule n'était plus ANNONCÉE. Ce qui est
+dangereux n'est pas de changer de source, c'est d'en changer en silence.
+Quelqu'un qui écrit un nom a tranché : `_regle_source_de_la_conversation`
+traite déjà cette bascule, et on lit la désignation avec la fonction qu'elle
+emploie (`introspection.source_nommee`).
+
+**Pour CE tour, et rien de plus.** Le périmètre s'écrit empaqueté dans
+`plan.source`, qui n'est le nom d'aucune source déclarée : `_lier_la_source` ne
+retient qu'un nom du catalogue, la source liée à la conversation reste `ventes`,
+et le tour suivant en repart. Aucune phrase d'annonce n'est ajoutée à la
+réponse : l'utilisateur voit les sources sur lesquelles elle s'appuie par la
+ligne « Ce qu'en dit le dictionnaire de `…` » et par la trace, qui porte
+`query sur ventes, production — seconde lecture sans la source du fil`.
+
+**Aucun prompt n'a bougé** : ni un fichier de `prompts/`, ni une fiche d'outil,
+ni la docstring de `Plan`. Aucune empreinte SHA-256 ne change.
+
+### L'avant/après
+
+Fil lié à `ventes`, 5 tirages par question, valeurs rendues contre les oracles.
+Moteur `http://localhost:8100/v1` (`google/gemma-4-E4B-it-qat-w4a16-ct`),
+catalogue `sources/metier/catalogue.yaml`.
+
+| question | oracle | avant | après |
+|---|---|---|---|
+| « Combien d'arrêts machine avons-nous eus en 2025 ? » | 70 | **0/5** — « je n'ai pas interrogé la source » | **5/5** — 70 |
+| « Combien d'ordres de fabrication ont été lancés en 2025 ? » | 140 | **0/5** — « je n'ai toujours pas accès à la table `production` » | **5/5** — 140 |
+| « Combien d'unités de VEL-04 … fabriquées, et combien … vendues ? » | 727 / 125 | 5/5 | **5/5** — 727 / 125 |
+| « Combien de salariés avons-nous ? » | aucune source de plus | 5/5 — `query` sur `ventes` | **5/5** — `query` sur `ventes`, aucune source montée en plus |
+
+### Les campagnes
+
+Toutes séquentielles, jamais deux de front. Catalogue lu en tête de chacune :
+`sources/metier/catalogue.yaml`, moteur `http://localhost:8100/v1`
+(`google/gemma-4-E4B-it-qat-w4a16-ct`) — sauf les deux qui lisent leur propre
+catalogue, nommé dans la ligne.
+
+| campagne | repère | ce tour |
+|---|---|---|
+| les 3 questions du relevé + « combien de salariés », 5 tirages | 0/5, 0/5, 5/5, 5/5 | **20/20** |
+| croisement complet, 1 tirage | 13/17 | **15/20** — les 17 d'avant : **12/17** ; les 3 questions ajoutées par C67 : **3/3** |
+| `scripts/mesure_questions_metier.py`, 1 tirage | 12/12 | **12/12** |
+| `scripts/mesure_choix_de_source.py` — catalogue `sources/catalogue.yaml` (titanic, iris) | 6/6 | **6/6** — le verrou tient sur `titanic`, la bascule vers `iris` est annoncée |
+| `scripts/mesure_ambiguite_de_source.py`, 1 essai — catalogues `tests/catalogues/ambiguite/*.yaml` | 1/1 et 1/1 | **1/1 et 1/1** — proposition dans les deux ordres |
+| `scripts/mesure_sources_nommees.py`, 1 tirage | 60/60 à 3 tirages | **20/20** |
+| `uv run pytest -p no:randomly` | 1 623 verts | **1 627 verts** (4 tests de plus) |
+| `ruff check`, `ruff format --check` | verts | **verts** |
+
+Trois questions sont entrées au banc du croisement : `arrets-2025-fil-lie`,
+`ordres-2025-fil-lie` et le témoin `temoin-hors-du-catalogue`. Le repère passe
+donc de 17 à 20 questions, et la colonne « les 17 d'avant » reste comparable.
+
+Les quatre témoins du croisement sont verts : `temoin-une-seule-source`
+(1 496 743 € sur `ventes` seule), `temoin-question-de-sens`,
+`temoin-faire-choisir` qui fait toujours choisir, et le nouveau
+`temoin-hors-du-catalogue`, qui reste sur `ventes` sans monter quoi que ce soit
+de plus.
+
+### Ce qui reste
+
+- **`vend-plus-quon-produit` est tombé à 0/3, et ce n'est pas C67.** Les deux
+  variantes — fil vierge et fil lié — rendent 0/3 sur ce tour. Le même banc,
+  aux mêmes réglages, sur `f78a97e` sans la réparation : **0/3 lui aussi**. Le
+  périmètre est monté dans les deux cas (`ventes_lignes_commande` et
+  `production_ordres_fabrication` sont dans la réponse) ; ce qui manque est le
+  calcul, que le modèle remplace par la description de ce qu'il faudrait faire.
+  C'est une instabilité de la question, antérieure à ce tour.
+- **`fabrique-vendu-stock` garde son 131**, et **`vendus-sans-fabriquer` ne
+  regarde aucune donnée** : inchangés depuis C65.
+- **`vel01-fabrique-vendu` rouge sur son tirage** : déjà rouge à C65 et C66.
+- **Rien n'est persisté d'un tour à l'autre.** Le périmètre enrichi vaut pour le
+  tour, et la source liée à la conversation ne bouge pas. Faut-il qu'un fil
+  puisse se lier à DEUX sources ? C'est une décision du propriétaire, et elle
+  n'a pas été prise ici.
+- **La relecture ne coûte aucun appel de plus qu'à C66.** Elle était déjà
+  ouverte sur ces tours-là ; ce qui change est ce qu'on fait de sa réponse.

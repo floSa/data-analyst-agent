@@ -83,6 +83,12 @@ class Question:
     # et les sources proposées. C'est le témoin qu'on refuse de croiser quand
     # rien n'est demandé sur les données.
     faire_choisir: bool = False
+    # Le plan du tour ne doit désigner qu'UNE source. C'est ce qui distingue
+    # « n'a pas su répondre » de « a monté une source que personne n'a
+    # demandée » : les deux rendent la même phrase à l'utilisateur, et seul le
+    # périmètre du plan les sépare. Lu dans la trace, qui porte déjà le détail
+    # `query sur ventes, production`.
+    sans_croisement: bool = False
     attendu: str = ""
     montre: str = ""
 
@@ -297,6 +303,40 @@ QUESTIONS: tuple[Question, ...] = (
         attendu="les 8 vélos, VEL-01 689/123 et VEL-04 727/125 en tête",
         montre="LE RELEVÉ DU PILOTE — une comparaison, et l'inventaire pour réponse",
     ),
+    # ---- LE RELEVÉ DU PILOTE DU 2026-09-25, SUR UN FIL LIÉ ----------------
+    #
+    # Deux questions qui ne portent QUE sur `production`, posées sur un fil lié
+    # à `ventes`. Elles ne croisent rien : c'est le périmètre du TOUR qui doit
+    # s'enrichir, faute de quoi la source du fil est reposée par-dessus celle
+    # que le planificateur avait vue, et la réponse est « je n'ai pas interrogé
+    # la source ». Elles gardent `_le_fil_plus_la_source_relue`.
+    Question(
+        cle="arrets-2025-fil-lie",
+        message="Combien d'arrêts machine avons-nous eus en 2025 ?",
+        fil="ventes",
+        nombres=(70,),
+        attendu="70 arrêts machine",
+        montre="LE RELEVÉ DU PILOTE — une question qui ne porte que sur l'autre source",
+    ),
+    Question(
+        cle="ordres-2025-fil-lie",
+        message="Combien d'ordres de fabrication ont été lancés en 2025 ?",
+        fil="ventes",
+        nombres=(140,),
+        attendu="140 ordres de fabrication",
+        montre="LE RELEVÉ DU PILOTE — la seconde, sur le fil qu'il a mesuré",
+    ),
+    Question(
+        cle="temoin-hors-du-catalogue",
+        message="Combien de salariés avons-nous ?",
+        fil="ventes",
+        # Aucun chiffre attendu : le catalogue ne porte aucun salarié, et la
+        # bonne réponse est de le dire. Ce qui est mesuré est le PÉRIMÈTRE.
+        sans_croisement=True,
+        faits=(("salarié", "salariés", "effectif", "employé"),),
+        attendu="aucune source de plus montée, et le tour le dit",
+        montre="TÉMOIN — une question sur rien de ce que le catalogue porte",
+    ),
     # ---- LES TROIS TÉMOINS -----------------------------------------------
     Question(
         cle="temoin-une-seule-source",
@@ -349,6 +389,7 @@ def juger(
     texte: str,
     tableau: str,
     noeuds: list[str],
+    plan: str = "",
 ) -> tuple[str, str]:
     """Le verdict, sur ce que l'utilisateur VOIT — la phrase ET le tableau.
 
@@ -369,6 +410,8 @@ def juger(
             return "échec", "a produit un tableau au lieu de faire choisir"
     if question.fonde and not ({"retrieval", "analysis"} & set(noeuds)):
         return "échec", f"aucune donnée regardée ({' → '.join(noeuds)})"
+    if question.sans_croisement and "," in plan:
+        return "échec", f"périmètre élargi sans qu'on le demande ({plan})"
     # Tolérance de 0,5 : elle absorbe l'arrondi d'affichage sans jamais
     # confondre deux oracles — les deux chiffres de chaque piège sont séparés
     # par des ordres de grandeur, pas par une décimale.
@@ -400,7 +443,8 @@ def poser(orchestrateur: Orchestrator, question: Question, fil: str, tirage: int
     texte = f"{reponse.answer}\n{tableau}"
     valeurs = nombres(texte)
     noeuds = [s.node for s in reponse.trace]
-    verdict, pourquoi = juger(question, reponse, valeurs, texte, tableau, noeuds)
+    plan = next((s.detail for s in reponse.trace if s.node == "plan"), "")
+    verdict, pourquoi = juger(question, reponse, valeurs, texte, tableau, noeuds, plan)
     return Releve(
         question=question,
         tirage=tirage,
