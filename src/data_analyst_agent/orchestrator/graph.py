@@ -1772,11 +1772,8 @@ class Orchestrator:
            qui en porte un, a nommé au plus la moitié d'un périmètre : c'est
            cette propriété qui ouvre la relecture, et elle ne regarde pas
            lequel ;
-        4. la seconde lecture désigne un périmètre — ou, à défaut, une source
-           AUTRE que celle du fil, et le périmètre du tour devient alors le fil
-           PLUS elle (``_le_fil_plus_la_source_relue``). Sinon on garde le
-           premier plan, et le tour se déroule comme si cette méthode
-           n'existait pas.
+        4. la seconde lecture désigne un périmètre. Sinon on garde le premier
+           plan, et le tour se déroule comme si cette méthode n'existait pas.
 
         **Une source IMPOSÉE par l'appelant la ferme**, comme elle ferme
         ``_le_plancher_cede_au_perimetre`` : ``source=`` est un paramètre
@@ -1793,89 +1790,7 @@ class Orchestrator:
             return None
         prompt, _ = self._peser_le_prompt({**state, "source_in": None})
         second = self._demander_un_plan(prompt, state, dict(mesures))
-        if second is None:
-            return None
-        if self._perimetre_croise(second, ctx):
-            return second
-        return self._le_fil_plus_la_source_relue(second, ctx)
-
-    def _le_fil_plus_la_source_relue(self, second: Plan, ctx: PlanContext) -> Plan | None:
-        """Le fil PLUS la source que la relecture désigne — ``None`` s'il n'y a rien à ajouter.
-
-        **Le défaut, mesuré le 2026-09-25**, catalogue métier, fil lié à
-        `ventes`, 5 tirages par question, la sortie du planificateur relevée
-        AVANT toute règle puis la relecture, puis le plan après les règles :
-
-            « Combien d'arrêts machine avons-nous
-              eus en 2025 ? »            query source='production'   5/5
-                          relecture      query source='production'   5/5
-                          après règles   query source='ventes'       5/5
-            « Combien d'ordres de fabrication
-              ont été lancés en 2025 ? » query source='production'   5/5
-                          relecture      query source='production'   5/5
-                          après règles   query source='ventes'       5/5
-
-        Les deux questions ne portent que sur `production`, et les deux
-        lectures le disent — celle qui a vu la phrase du fil comme celle qui ne
-        l'a pas vue. La relecture n'en nommait qu'UNE, ``_perimetre_croise``
-        rendait ``[]``, elle était jetée, et
-        ``_regle_source_de_la_conversation`` reposait `ventes` par-dessus. La
-        réponse servie était « je n'ai pas interrogé la source » et « je n'ai
-        toujours pas accès à la table `production` », 5 fois sur 5.
-
-        **Ce qu'on garde de la relecture n'est pas son plan, c'est le nom
-        qu'elle désigne.** La source du fil n'est pas remplacée : elle est
-        REJOINTE. Un fil lié à `ventes` dont le tour parle de l'atelier
-        travaille sur les deux, et la question est servie entière plutôt que
-        sur la moitié qui ne la porte pas.
-
-        **Pour CE tour, et rien de plus.** Le périmètre s'écrit dans
-        ``plan.source`` sous la forme empaquetée, qui n'est le nom d'aucune
-        source déclarée : ``_lier_la_source`` ne retient qu'un nom du
-        catalogue, la source liée à la conversation reste celle d'avant, et le
-        tour suivant repart de `ventes`.
-
-        **Deux conditions, et ce sont elles qui n'ajoutent rien là où il n'y a
-        rien à ajouter.** Mêmes réglages, mêmes 5 tirages :
-
-            « Quel chiffre d'affaires avons-nous
-              réalisé en 2025 ? »        relecture  source='ventes'  5/5
-            « Combien de salariés
-              avons-nous ? »             relecture  source=''        5/5
-
-        La première relit la source du fil : il n'y a pas de seconde source, et
-        le tour rend 1 496 743 € sur `ventes` seule. La seconde ne désigne
-        RIEN — le catalogue ne porte aucun salarié, et le modèle, délivré de la
-        phrase du fil, ne lui invente pas de source. Une relecture qui ne nomme
-        qu'un nom déjà lu, ou aucun, laisse le tour se dérouler comme si cette
-        méthode n'existait pas.
-
-        **Le décompte du périmètre reste celui de ``_perimetre_croise``.** Le
-        couple monté y repasse, et il n'est retenu que s'il en ressort : c'est
-        le même décompte qu'ailleurs, et non un second qui divergerait du
-        premier. C'est aussi lui qui refuse de croiser quand le message ne dit
-        rien de plus que des noms de sources.
-
-        **Une source que l'UTILISATEUR nomme ferme ce montage**, et cette
-        condition a été payée : sans elle, « et dans iris, combien de lignes ? »
-        posé sur un fil lié à `titanic` montait le couple `titanic, iris`. La
-        réponse restait juste — 150 lignes —, mais la conversation restait liée
-        à `titanic` et la bascule n'était plus ANNONCÉE. Or ce qui est dangereux
-        n'est pas de changer de source, c'est d'en changer en silence
-        (``_lier_la_source``). Quelqu'un qui écrit un nom a tranché : c'est une
-        bascule, pas un périmètre, et ``_regle_source_de_la_conversation`` la
-        traite déjà. On lit la désignation avec la fonction qu'elle emploie
-        (``introspection.source_nommee``), pas avec un second décompte.
-        """
-        if introspection.source_nommee(ctx.question, ctx.catalogue_declare):
-            return None
-        designees = introspection.sources_nommees(
-            ", ".join([*second.sources, second.source or ""]), ctx.catalogue_declare
-        )
-        if len(designees) != 1 or designees[0].name == ctx.source_de_travail:
-            return None
-        second.source = f"{ctx.source_de_travail}, {designees[0].name}"
-        if not self._perimetre_croise(second, ctx):
+        if second is None or not self._perimetre_croise(second, ctx):
             return None
         return second
 
