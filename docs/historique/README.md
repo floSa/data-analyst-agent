@@ -17,6 +17,9 @@ Pour se servir du produit, l'entrée est [LIVRAISON.md](../LIVRAISON.md).
 | Document | La question à laquelle il répond |
 |---|---|
 | [concurrence.md](concurrence.md) | que tient le produit quand plusieurs personnes parlent en même temps ? |
+| [dictionnaire-redige-pour-un-humain.md](dictionnaire-redige-pour-un-humain.md) | pourquoi le texte d'un dictionnaire décide-t-il des chiffres, plus que le prompt ? |
+| [verifications-d-exploitation.md](verifications-d-exploitation.md) | qu'a-t-on vérifié sur la machine en service, et avec quel résultat ? |
+| [mise-au-point-de-l-installation.md](mise-au-point-de-l-installation.md) | quels défauts la procédure d'installation a-t-elle révélés, suivie depuis une machine vierge ? |
 | [spike-vanna.md](spike-vanna.md) | fallait-il prendre une brique de texte-vers-SQL du commerce plutôt que le socle maison ? |
 
 ## Restés dans `docs/`, parce que le code les cite
