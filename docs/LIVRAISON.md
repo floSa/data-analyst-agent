@@ -33,8 +33,9 @@ localement : **rien ne sort de la machine**.
 Chaque compte est cloisonné : hormis `/health`, aucune route n'est atteignable
 sans session, et personne ne voit les conversations d'un autre.
 
-Le détail est dans [README.md](../README.md) et
-[docs/ARCHITECTURE.md](ARCHITECTURE.md).
+Pour s'en servir : [GUIDE-UTILISATEUR.md](GUIDE-UTILISATEUR.md).
+Pour y brancher une source : [AJOUTER-UNE-SOURCE.md](AJOUTER-UNE-SOURCE.md).
+Pour le détail technique : [docs/ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -281,10 +282,13 @@ Le détail et les mesures sont dans
 
 | Si vous voulez… | Lisez |
 |---|---|
+| **vous en servir** : poser des questions dans la page de chat | [GUIDE-UTILISATEUR.md](GUIDE-UTILISATEUR.md) |
+| **brancher vos données** : déclarer une source, la vérifier | [AJOUTER-UNE-SOURCE.md](AJOUTER-UNE-SOURCE.md) |
 | installer le service sur une machine nue | [INSTALLATION.md](INSTALLATION.md) |
 | commander, exposer, sauvegarder, restaurer | [EXPLOITATION.md](EXPLOITATION.md) |
 | comprendre comment c'est construit | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | comprendre **comment il répond**, tour par tour | [parcours-de-l-agent.md](parcours-de-l-agent.md) |
-| déclarer vos propres sources | [rediger-un-dictionnaire-de-source.md](rediger-un-dictionnaire-de-source.md) |
+| écrire le **dictionnaire** d'une source | [rediger-un-dictionnaire-de-source.md](rediger-un-dictionnaire-de-source.md) |
+| savoir **pourquoi c'est comme ça** — les journaux de chantier | [historique/README.md](historique/README.md) |
 | savoir ce qui reste à faire, ancré dans le code | [axes-amelioration.md](axes-amelioration.md) |
 | les chiffres du jour de livraison | [releve-de-livraison.md](releve-de-livraison.md) |

@@ -96,8 +96,8 @@ Ces trois scénarios servent de **tests end-to-end de référence** (cf. §12).
 > (l'application ne parle que `/v1/chat/completions`, `DAA_LLM_BASE_URL` suffit à
 > désigner le serveur — [ARCHITECTURE §4.3](ARCHITECTURE.md#43-llmpy--configpy--llm-mutualisé-et-réglages),
 > [MOTEUR.md](MOTEUR.md)), et la licence du modèle servi est **déclarée par le modèle
-> lui-même**, donc à revérifier à chaque changement (voir le tableau des licences du
-> [README](../README.md#licences--composants)).
+> lui-même**, donc à revérifier à chaque changement (voir le tableau des licences,
+> [ARCHITECTURE §9](ARCHITECTURE.md#9-licences--composants)).
 
 ## 6. La sandbox (capacité ② et exécution de code)
 
@@ -168,7 +168,7 @@ externalisés, mémoire de conversation et scripts d'exploitation compris.
 data-analyst-agent/
 ├── pyproject.toml                # uv + deps + config ruff/pytest/coverage
 ├── uv.lock
-├── README.md                     # démarrage, routes, mémoire, DEUX BRANCHES
+├── README.md                     # le produit en bref, le démarrage, « je veux… → je lis… »
 ├── .env.example                  # modèle de configuration (dont les DAA_PG_*)
 ├── users.example.yaml            # forme du magasin de comptes (le vrai n'est pas versionné)
 ├── docs/

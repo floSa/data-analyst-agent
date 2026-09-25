@@ -205,7 +205,7 @@ taille du corps (`DAA_API_MAX_BODY_BYTES`).
 | `GET` | `/me` | oui | le compte de la session en cours (`{"login": …}`) |
 | `POST` | `/chat` | oui | question → `ChatAnswer` complet (réponse, artefacts, plan, trace, `pending`). Longueur bornée (`DAA_CHAT_MESSAGE_MAX_CHARS`) et débit limité par compte (`DAA_CHAT_RATE_LIMIT_*`) |
 | `GET` | `/` | oui | page de chat (rendu des PNG base64 et des tables JSON, zéro asset externe) |
-| `GET` | `/sources` | oui | le catalogue déclaré, **augmenté de ce qu'on lit dans chaque source** (tables, lignes, période) — alimente le menu de la page de chat (§4.11) |
+| `GET` | `/sources` | oui | le catalogue déclaré, **augmenté de ce qu'on lit dans chaque source** (tables, lignes, période) — cf. §4.11 |
 | `POST` | `/conversations` | oui | ouvre un fil vide, pour choisir sa source avant la première question |
 | `PUT` | `/conversations/{id}/source` | oui | fixe la source de travail du fil sans avoir à la taper ; seule une source **déclarée** est acceptée (§4.11) |
 | `GET` | `/conversations` | oui | **ses** résumés (id, titre, horodatages, nb de messages), du plus récent au plus ancien |
@@ -237,6 +237,36 @@ une valeur refusée. Une digression solde le contexte.
 
 **Persistance des conversations** (barre latérale) : le fil est écrit sur disque, il
 survit donc au rechargement de la page comme au redémarrage du serveur.
+
+**Tout est rangé par utilisateur, et c'est ce rangement qui cloisonne** : une route
+ne peut pas oublier un filtre qui n'existe pas, elle n'a jamais eu qu'une racine sous
+les yeux. Les verrous suivent — ils sont posés à côté de la ressource qu'ils
+sérialisent — ce qui cloisonne aussi la contention entre comptes. Les dossiers sont
+créés en `0o700`.
+
+```
+$DAA_WORKSPACE_DIR/
+└── <utilisateur>/            # login normalisé, encodé pour le système de fichiers
+    ├── .locks/               # verrous de CET utilisateur
+    └── <conversation_id>/
+        ├── transcript.json   # le fil : messages, titre, propriétaire, prédiction en attente
+        ├── manifest.json     # le magasin d'artefacts : nom, nature, description, origine
+        ├── context.json      # le tour précédent (pour résoudre un ajustement)
+        ├── resultat_*.csv    # les tableaux eux-mêmes
+        ├── graphique_*.py    # le code des analyses qui ont rendu une image
+        └── analyse_*.py      # le code des analyses sans image
+```
+
+Les deux segments variables passent par le même encodage : tout octet hors
+`[0-9A-Za-z_-]` devient `~XX`. Il est réversible, donc **sans collision** — deux
+logins qui ne diffèrent que par la ponctuation ne peuvent pas se retrouver dans le
+même dossier — et il ne peut produire ni `/` ni `.`, donc ni `..` ni chemin absolu.
+
+Un `workspace_dir` où les conversations sont posées **à la racine** date d'avant ce
+rangement : l'application ne les y cherche plus, et
+`scripts/migrate_workspace_owner.py` les range sans rien réécrire d'autre que leur
+propriétaire (mode d'emploi dans
+[EXPLOITATION](EXPLOITATION.md#ranger-les-conversations-par-propriétaire)).
 
 Le titre est tiré du premier message. Une conversation est un **dossier unique**
 (`workspace_dir/<utilisateur>/<id>/`) : `transcript.json` y voisine le manifeste et
@@ -1002,12 +1032,16 @@ base. Sur la base DuckDB de 1,66 M de lignes et dix tables, il tient en **83,5 m
 plus sont le fil démon qui tient le délai, et c'est tout ce que coûte la borne. Elle
 n'a donc pas été ajoutée pour du temps CPU ; elle l'a été pour la source qui **ne
 répond pas**, seul cas où l'absence de plafond se paie réellement.
-- `GET /sources` rend ce catalogue augmenté, et la page de chat en fait un
-  **indicateur permanent** au-dessus du fil, avec un menu pour changer de source sans
-  la taper. Le changement passe par `PUT /conversations/{id}/source` et s'inscrit dans
-  la transcription comme un message de l'agent — relire un fil dont les réponses
-  changent de données sans que rien ne le dise serait exactement ce que la bascule
-  annoncée évite. Seule une source **déclarée** y est acceptée.
+- `GET /sources` rend ce catalogue augmenté, et `PUT /conversations/{id}/source`
+  fixe la source du fil sans avoir à la taper. Seule une source **déclarée** y est
+  acceptée, et le changement s'inscrit dans la transcription comme un message de
+  l'agent — relire un fil dont les réponses changent de données sans que rien ne le
+  dise serait exactement ce que la bascule annoncée évite.
+  **La page de chat, elle, n'appelle ni l'une ni l'autre** : un indicateur permanent
+  puis un menu de sources ont été montés au-dessus du fil, puis retirés tous les deux.
+  Ils posaient à l'écran une question que le dialogue pose mieux — on demande
+  « quelles sources as-tu ? » et on lie en nommant (`api/templates/chat.html`). Les
+  deux routes restent servies pour un client qui n'est pas cette page.
 
 **Compatibilité, sans migration.** Une transcription écrite avant ce champ le reçoit à
 sa valeur par défaut — aucune source liée — et le fil continue de fonctionner comme
@@ -1154,6 +1188,39 @@ d'avant.
 
 ## 5. Sécurité — récapitulatif des garde-fous
 
+### Deux branches durables, aux exigences opposées
+
+**À lire avant de « corriger » quoi que ce soit sur l'une ou l'autre.** Ce dépôt
+porte deux branches qui ne convergeront pas, et qui n'ont pas le même cahier des
+charges :
+
+| Branche | Ce qu'elle est | Authentification |
+|---|---|---|
+| **`main`** | le **socle produit** : la base sur laquelle plusieurs cas d'usage clients seront bâtis | **exigée** — hormis `/health`, aucune route n'est atteignable sans session, et chaque compte est cloisonné dans son dossier |
+| **`Maxizoo`** | une **démonstration client**, qu'on ouvre à quelqu'un en lui envoyant un lien | **absente, et c'est un choix** — pas un retard, pas un oubli |
+
+Une démonstration derrière un écran de connexion n'est plus une démonstration : il
+faudrait créer un compte pour chaque personne à qui on la montre, et le premier
+geste demandé à un prospect serait de taper un mot de passe. L'absence
+d'authentification sur `Maxizoo` est donc **une décision de périmètre**, tenable
+parce que la branche ne sert que des données de démonstration et ne vit que le temps
+d'une présentation.
+
+Concrètement :
+
+- **ne pas porter l'authentification de `main` vers `Maxizoo`.** Si un durcissement
+  de `main` touche `auth/`, il ne remonte pas — c'est le seul écart attendu entre
+  les deux branches ;
+- **ne pas déployer `Maxizoo` sur une adresse publique durable** ni y brancher de
+  données réelles : c'est là, et seulement là, que l'absence de compte devient un
+  vrai problème ;
+- tout le reste — correctifs de sécurité SQL, plafonds de contexte, libération des
+  ressources, découpages — vaut pour les deux et doit être reporté.
+
+Le récapitulatif qui suit décrit `main`. Sur `Maxizoo`, en retirer le point 1.
+
+### Les garde-fous
+
 1. **Identité** : hormis `GET /health`, aucune route n'est atteignable sans session
    (§4.1) ; les fils sont rangés par utilisateur, et celui d'un autre compte répond
    `404`. Mots de passe en argon2id, sessions côté serveur, anti-force brute
@@ -1188,7 +1255,7 @@ d'avant.
    matérialisée coupée par son plafond le **dit** (§4.4, §4.5).
 
 > **Ce récapitulatif vaut pour `main`. La branche `Maxizoo` n'est pas authentifiée,
-> et c'est voulu** — voir « Deux branches durables » dans le [README](../README.md).
+> et c'est voulu** — voir « Deux branches durables » en tête de cette section.
 > Ne pas y « rétablir » l'authentification sans avoir lu ce passage.
 
 ## 6. Stratégie de tests
@@ -1443,3 +1510,32 @@ mesuré coûterait plus de complexité que de sûreté. À rouvrir si l'échelle
   `Transfer-Encoding: chunked` passe le middleware.
 - La trace renvoie encore le détail technique au porteur d'une session valide (le
   masquage porte sur la réponse rendue, pas sur la trace).
+
+---
+
+## 9. Licences & composants
+
+Contrainte de départ (§1) : **licences permissives uniquement**. Le tableau dit ce
+qui est réellement embarqué, et où l'annonce s'arrête.
+
+| Composant | Rôle | Licence |
+|---|---|---|
+| DuckDB | Moteur SQL analytique | MIT |
+| FastAPI | API | MIT |
+| uvicorn | Serveur ASGI | BSD-3-Clause |
+| LangGraph | Orchestration de l'agent | MIT |
+| Pydantic / pydantic-ai | Typage & agent LLM | MIT |
+| pydantic-settings | Lecture des réglages `DAA_*` et du `.env` | MIT |
+| SQLAlchemy | Accès Postgres | MIT |
+| sqlglot | Analyse du SQL produit : portées, sommes, jointures, colonnes exposées | MIT |
+| pg8000 | Driver PostgreSQL | BSD-3-Clause |
+| pandas | Manipulation de données | BSD-3-Clause |
+| scikit-learn | Modèles de prédiction | BSD-3-Clause |
+| joblib | Sérialisation des modèles | BSD-3-Clause |
+| openpyxl | Lecture des classeurs Excel | MIT |
+| PyYAML | Catalogue de sources, registre de modèles, comptes | MIT |
+| argon2-cffi | Empreintes de mots de passe (argon2id) | MIT |
+| python-multipart | Lecture du formulaire de connexion | Apache-2.0 |
+| vLLM | Serveur du LLM mutualisé, local — le moteur en service ; tout serveur au même endpoint OpenAI-compatible le remplace | Apache-2.0 |
+| `google/gemma-4-E4B-it-qat-w4a16-ct` | Modèle servi par l'instance en place | **non vérifiée ici, et non lisible depuis l'application.** vLLM n'expose aucune déclaration de licence du modèle : elle se lit sur la fiche du modèle chez son éditeur, et doit y être relue à chaque changement de modèle servi |
+| **Ce projet** | Code applicatif | MIT annoncé, **mais aucun fichier `LICENSE` n'est présent** et `pyproject.toml` ne déclare rien : l'annonce est donc sans portée juridique en l'état (cf. [axes-amelioration](axes-amelioration.md)) |
