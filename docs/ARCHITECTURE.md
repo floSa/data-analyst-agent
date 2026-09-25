@@ -329,22 +329,17 @@ qu'AJOUTER ce que la première lecture avait fait tomber :
 
 | Relecture | Ce qu'elle retire de la question | Ce qu'on garde |
 |---|---|---|
-| `_relire_sans_la_source_du_fil` | la phrase qui rappelle la source de travail — elle est au singulier, et un tour qui croise deux sources en ressort avec une seule | le **nom** de la seconde source, pas le plan relu |
+| `_relire_sans_la_source_du_fil` | la phrase qui rappelle la source de travail — elle est au singulier, et un tour qui croise deux sources en ressort avec une seule | le plan relu, **et seulement s'il désigne un périmètre** ; sinon le premier plan est gardé tel quel |
 | `_relire_faute_de_source_designee` | rien ; elle ajoute au prompt le **constat** que la première lecture n'a désigné aucune source | le périmètre énuméré dans `sources` |
 | `_relire_sans_la_clause_dabsence` | la clause d'absence (« sans famille à bord »), qui faisait perdre au modèle des features qu'il extrayait sans faillir | les features retrouvées |
 
-**Un fil ne s'enrichit que d'une source RELIÉE.** La première relecture ne monte
-le couple « source du fil + source relue » que si une **clé traverse** les deux,
-prouvée dans les données par le même décompte que `croisement.relier_les_sources`.
-Sans clé, le tour **bascule** sur la source relue seule, et la bascule est
-annoncée à l'utilisateur : rien ne relie des passagers à des fleurs, et un
-périmètre « iris, titanic » rendait un chiffre juste sur un périmètre qui n'a
-aucun sens. La preuve est **gardée en cache pour la vie du processus** (0,1 à
-0,4 s par paire) ; un échec de LECTURE, lui, n'est jamais mis en cache — mais il
-fait basculer le tour en cours comme une absence de clé.
-
-**Le périmètre enrichi vaut pour CE tour.** La source de travail de la
-conversation, elle, ne change que par une bascule annoncée (§4.11).
+**Une relecture n'ENRICHIT pas le périmètre du fil.** Si la seconde lecture ne
+désigne qu'une source — fût-ce l'autre moitié de ce que la question porte — le
+premier plan est gardé, et `_regle_source_de_la_conversation` repose la source
+du fil par-dessus. Une conversation liée à `ventes` à qui l'on demande les
+arrêts machine reçoit donc « je n'ai pas accès ». Ajouter la source relue au fil
+a été tenté (C67) et **retiré** : voir §8 et
+[LIVRAISON §4](LIVRAISON.md#4-les-prochaines-étapes).
 
 **Ce que le planificateur n'a pas le droit de faire, et qui n'est pas une règle.**
 Pour une feature à valeurs autorisées, son prompt lui impose deux temps :
@@ -1242,8 +1237,7 @@ ils sont livrés avec le produit, et ce sont eux que portent les campagnes
   (l'aveu d'un artefact désigné et jamais produit),
   `scripts/mesure_ambiguite_de_source.py`, `scripts/mesure_releve_des_sources.py`,
   `scripts/mesure_croisement_de_sources.py` (les questions qui croisent DEUX
-  sources déclarées, sur le catalogue métier — le banc qui porte aussi les
-  oracles de bascule et de périmètre, §4.2),
+  sources déclarées, sur le catalogue métier, §4.2),
   `scripts/mesure_questions_metier.py` (les douze questions d'un fabricant de
   vélos, [sources-metier.md](sources-metier.md)),
   `scripts/mesure_parcours_de_demonstration.py` (les seize tours du parcours de
@@ -1370,6 +1364,25 @@ La liste **lisible par qui reçoit le produit**, avec les limites mesurées sur 
 comportement de l'agent, est dans [LIVRAISON.md §3](LIVRAISON.md#3-les-limites-connues).
 Ce qui suit est la vue technique.
 
+- **Enrichir le périmètre d'une conversation liée — à reprendre en premier.**
+  Un fil lié à `ventes` à qui l'on demande « Combien d'arrêts machine avons-nous
+  eus en 2025 ? » reçoit « je n'ai pas accès » : les deux lectures du
+  planificateur désignent `production`, la relecture n'en nomme qu'une, elle est
+  jetée faute de périmètre, et `_regle_source_de_la_conversation` repose `ventes`
+  par-dessus (oracle 70). La réparation a été écrite, mesurée et **retirée** —
+  `_le_fil_plus_la_source_relue`, C67, retirée à C72. **La cause du retrait est
+  mesurée** : sur le catalogue de démonstration, elle montait un croisement pour
+  des questions qui n'en demandent pas, le croisement était tronqué à 10 000
+  lignes par source, et les sommes sortaient fausses — 663 504,99 kWh servis au
+  lieu de 1 757 519,23. Le parcours de démonstration en formulation courte
+  tombait de 16/16 à 11/16, et le classement sans lexique de 3/3 à 0/3 sur F04,
+  F06 et F09.
+  **Deux conditions avant de la remettre** : ne monter un périmètre que si la
+  question porte effectivement sur les DEUX sources — le reconnaître dans le
+  plan, pas dans la phrase —, et mesurer
+  `scripts/mesure_parcours_de_demonstration.py` sur `sources/demonstration/`,
+  trois formulations, avant de conclure. C67 n'avait été mesurée que sur le
+  catalogue métier.
 - **Le CONTEXTE conversationnel est limité à UN tour** — le magasin d'artefacts,
   lui, porte aussi loin que le fil (§4.12), et c'est la distinction à tenir :
   `ConversationContext` est reconstruit à chaque `record_turn`, il n'accumule pas. Ce qui remonte au modèle, c'est le

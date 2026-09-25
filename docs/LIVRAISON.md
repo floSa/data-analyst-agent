@@ -59,9 +59,11 @@ Ce qui suit dit ce qui est mesuré, où, et par quelle commande — pas le score
 Toutes les campagnes se lancent **séquentiellement**, jamais deux de front : le
 moteur est unique, et deux mesures en parallèle ne mesurent plus rien.
 
-Le dernier relevé écrit dans le dépôt avant la livraison est celui de **C68**
+Le dernier relevé écrit dans le dépôt avant la livraison est celui de **C66**
 ([croisement-de-sources.md](croisement-de-sources.md)), à la
-tête `f9c8cbb`. Il porte sur le catalogue métier et le catalogue par défaut.
+tête `f78a97e`. Il porte sur le catalogue métier et le catalogue par défaut.
+Les deux commits suivants, C67 et C68, ont été **retirés** le jour de la
+livraison : voir [releve-de-livraison.md](releve-de-livraison.md) et §4.
 
 **Ce qui est éprouvé sur la machine en service** — HTTPS de bout en bout,
 anti-force brute par adresse derrière le mandataire, arrêt et relance de la
@@ -96,9 +98,9 @@ porte est nommé.
   les cinq campagnes qui passent par l'analyse, et n'est pas faite.
   ([croisement-de-sources.md, C59](croisement-de-sources.md))
 - **Une question sur trois sources à la fois perd le filtre des annulées.**
-  `fabrique-vendu-stock` rend 131 là où l'oracle dit 125.
-  La preuve de clé se lit sur une **paire** ; trois sources n'y passent pas.
-  ([croisement-de-sources.md, C68](croisement-de-sources.md))
+  `fabrique-vendu-stock` rend 131 là où l'oracle dit 125 : le filtre est perdu
+  sur la troisième source.
+  ([croisement-de-sources.md, C66](croisement-de-sources.md))
 - **Le contrôle du SQL se tait sur une somme écrite hors d'un `WITH`.**
   Une table que le module ne reconnaît pas dans le schéma — le nom d'un `WITH`
   en est une — le fait rendre « je ne sais pas » plutôt qu'un avis.
@@ -113,24 +115,21 @@ porte est nommé.
   inventaire : le planificateur rend une source vide, et le croisement n'est
   jamais atteint. Sur un fil déjà lié à une source, les mêmes questions
   passent.
-  ([croisement-de-sources.md, C68](croisement-de-sources.md))
+  ([croisement-de-sources.md, C66](croisement-de-sources.md))
 - **`choix-entre-deux-sources` est bistable.** « titanic ou iris ? » tombe
   rouge une passe sur deux, sans rien changer d'autre.
   ([surface-conversationnelle.md §26.4](surface-conversationnelle.md))
 
 ### Ce que la mémoire ne porte pas
 
-- **Le périmètre enrichi vaut pour le tour, pas pour la conversation.**
-  Un fil lié à `ventes` qui répond sur `ventes, production` reste lié à
-  `ventes` seule au tour suivant.
-- **La preuve qu'une clé relie deux sources est gardée en cache pour la vie du
-  processus.** Une source dont les données changent en cours de session
-  garderait son verdict.
-- **Une source illisible au moment de la preuve fait basculer au lieu
-  d'enrichir.** L'échec de lecture n'est pas mis en cache, mais le tour en
-  cours est servi sur l'autre source seule — la bascule est annoncée, donc
-  visible, mais ce n'est pas ce qui était demandé.
-  ([`orchestrator/graph.py`, `_une_cle_relie`](../src/data_analyst_agent/orchestrator/graph.py))
+- **Une conversation liée à une source ne répond pas sur une autre, même
+  quand la question la désigne.** Sur un fil lié à `ventes`, « Combien d'arrêts
+  machine avons-nous eus en 2025 ? » reçoit « je n'ai pas accès » : la réponse
+  attendue est 70, et `production` la porte. Le planificateur voit bien
+  `production` ; la source du fil est reposée par-dessus.
+  C'est la limite qu'une réparation avait levée (C67) et que son retrait
+  restaure — voir §4, première étape.
+  ([`orchestrator/graph.py`, `_relire_sans_la_source_du_fil`](../src/data_analyst_agent/orchestrator/graph.py))
 - **Le contexte conversationnel ne retient qu'UN tour.** « et pour les
   femmes ? » marche ; deux tours en arrière est oublié. Le magasin d'artefacts,
   lui, porte aussi loin que le fil.
@@ -188,15 +187,42 @@ va y toucher.
 
 Classées par ce qu'elles apportent à **l'utilisateur**, pas par difficulté.
 
-### 1. Rendre les chiffres justes là où ils sont encore faux
+### 1. Enrichir le périmètre d'une conversation liée
+
+C'est la première, parce que c'est la seule où l'utilisateur voit l'agent
+refuser une réponse qu'il a sous la main.
+
+Sur un fil lié à `ventes`, « Combien d'arrêts machine avons-nous eus en 2025 ? »
+reçoit « je n'ai pas accès ». La réponse est 70, et `production` la porte.
+
+**Cela a été écrit, mesuré et retiré le jour de la livraison** (C67 et C68,
+retirées à C72), et la cause du retrait est la condition à remplir avant de
+recommencer. Sur le catalogue de démonstration, l'enrichissement montait un
+croisement pour des questions qui n'en demandent aucun ; le croisement est
+tronqué à 10 000 lignes par source, et les sommes sortaient donc fausses —
+**663 504,99 kWh servis au lieu de 1 757 519,23**, sans qu'un mot de la réponse
+ne le dise. Le parcours de démonstration en formulation courte tombait de 16/16
+à 11/16, et le classement sans lexique de 3/3 à 0/3.
+
+Deux conditions avant de la remettre :
+
+- **ne croiser que si la question porte sur les DEUX sources.** L'enrichissement
+  retiré montait le périmètre dès que la relecture nommait une autre source, sans
+  vérifier que la question demandait les deux.
+- **mesurer le parcours de démonstration** (`scripts/mesure_parcours_de_demonstration.py`
+  sur `sources/demonstration/`, trois formulations) avant de conclure. C67
+  n'avait été mesurée que sur le catalogue métier : c'est ce trou-là qui a laissé
+  passer les sommes fausses.
+
+### 2. Rendre les chiffres justes là où ils sont encore faux
 
 C'est la seule famille où l'utilisateur reçoit une réponse **fausse et
 plausible**, donc invisible.
 
 - Faire imprimer **toutes** les lignes demandées, et non un extrait
   (règle 2 de `prompts/analysis.txt`, plus les cinq campagnes dues).
-- Porter la preuve de clé au-delà d'une paire, pour fermer le cas à trois
-  sources.
+- Fermer le cas à trois sources, où le filtre des annulées est perdu sur la
+  troisième.
 - Lire les sommes qu'un `WITH` porte, pour retirer le dernier silence du
   contrôle SQL.
 - **Refuser une grandeur qui n'existe pas au lieu de lui substituer une
@@ -204,7 +230,7 @@ plausible**, donc invisible.
   lit dans le schéma, pas dans la question — comme celles qui gardent déjà le
   palmarès et les sommes.
 
-### 2. Donner à l'utilisateur ce qu'il a produit
+### 3. Donner à l'utilisateur ce qu'il a produit
 
 Il voit ses tableaux et ses figures, il ne peut pas les emporter.
 
@@ -214,7 +240,7 @@ Il voit ses tableaux et ses figures, il ne peut pas les emporter.
   d'un tableau, en JSON : elle ne rend ni le fichier entier, ni l'image. Il
   manque donc une route de fichier, et le bouton qui l'appelle.
 
-### 3. Rendre le produit configurable sans le réinstaller
+### 4. Rendre le produit configurable sans le réinstaller
 
 - **Ajouter une source depuis l'écran**, plutôt que par un fichier YAML et un
   redémarrage.
@@ -222,16 +248,15 @@ Il voit ses tableaux et ses figures, il ne peut pas les emporter.
   restent dans le paquet, et adapter un cas d'usage impose aujourd'hui de
   réinstaller.
 
-### 4. Faire durer une conversation plus d'un tour
+### 5. Faire durer une conversation plus d'un tour
 
-- Porter le **périmètre enrichi** à la conversation, et pas seulement au tour.
 - Élargir le **contexte conversationnel** au-delà du tour précédent, ou le
   compacter plutôt que de l'évincer.
 - **Mémoriser les appels d'outils qui ont abouti**, et les proposer sur les
   questions voisines — la piste décrite en
   [ARCHITECTURE §8](ARCHITECTURE.md#8-limites-connues-et-pistes-v2).
 
-### 5. Mettre l'exploitation au clair
+### 6. Mettre l'exploitation au clair
 
 - **Rejouer le reboot** de la machine sur une fenêtre convenue.
 - **Ouvrir l'accès depuis un poste**, autorité locale installée dans un vrai
@@ -241,7 +266,7 @@ Il voit ses tableaux et ses figures, il ne peut pas les emporter.
 - Ajouter `tabulate` à l'image du bac à sable — un échec banal en moins, sans
   marge gagnée pour autant.
 
-### 6. Tenir la charge, si l'échelle change
+### 7. Tenir la charge, si l'échelle change
 
 Rien de ceci ne se manifeste à l'échelle visée (10-20 utilisateurs). À rouvrir
 si elle change : budget de tokens sur les autres agents que le planificateur,
