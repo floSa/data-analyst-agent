@@ -95,7 +95,7 @@ décrit `main`. Sur `Maxizoo`, en retirer le point 1.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | schémas architectural et fonctionnel, description de chaque service, sécurité, configuration, stratégie de tests |
 | [docs/CADRAGE.md](docs/CADRAGE.md) | cahier des charges : contraintes, décisions, stack, roadmap, arborescence, exigences de tests |
 | [docs/AUDIT-2026-09.md](docs/AUDIT-2026-09.md) | état des lieux mesuré et backlog priorisé (multi-utilisateurs, mémoire, moteur LLM, sécurité, qualité) |
-| [docs/spike-vanna.md](docs/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
+| [docs/historique/spike-vanna.md](docs/historique/spike-vanna.md) | spike text-to-SQL Vanna vs socle maison (verdict : socle maison conservé) |
 | [docs/MOTEUR.md](docs/MOTEUR.md) | le moteur d'inférence : les options dont le système dépend, ce qui casse sans elles, la mémoire, la fenêtre, et les mesures qui l'établissent |
 | [docs/parcours-de-l-agent.md](docs/parcours-de-l-agent.md) | **comprendre comment il répond** : huit conversations, huit diagrammes de séquence, chacun établi sur une trace relevée — nœuds traversés, outils appelés, coût en appels LLM, et les défauts connus |
 | [docs/surface-conversationnelle.md](docs/surface-conversationnelle.md) | ce que l'agent sait répondre **sur lui-même** : la batterie de mesure, les comptes avant/après, le coût en appels LLM, et les décisions déjà mesurées et retirées |

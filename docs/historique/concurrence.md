@@ -4,7 +4,7 @@ Mesures du 2026-09-15, machine de développement (NVIDIA L4 23 034 Mio, 22 cœur
 86 Gio), contre le service en marche : vLLM `0.28.0` sur le port 8100
 (`google/gemma-4-E4B-it-qat-w4a16-ct`, `--max-model-len 32768`,
 `--gpu-memory-utilization 0.55`).
-Banc : [`scripts/mesure_concurrence.py`](../scripts/mesure_concurrence.py).
+Banc : [`scripts/mesure_concurrence.py`](../../scripts/mesure_concurrence.py).
 
 Le produit est multi-utilisateurs depuis les chantiers C4 et C5 — comptes
 argon2id, sessions côté serveur, cloisonnement par dossier — et vLLM a été
@@ -377,10 +377,10 @@ pool garde son intérêt (les connexions restent réutilisées *dans* le thread,
 où c'est sûr). Le nombre de clients est borné par la taille du pool de threads
 de Starlette.
 
-- [`llm.modele_du_thread`](../src/data_analyst_agent/llm.py) : le cache par
+- [`llm.modele_du_thread`](../../src/data_analyst_agent/llm.py) : le cache par
   thread, avec l'empreinte des réglages — un thread qui sert successivement deux
   configurations n'hérite pas de la première ;
-- [`orchestrator/graph.py`](../src/data_analyst_agent/orchestrator/graph.py) :
+- [`orchestrator/graph.py`](../../src/data_analyst_agent/orchestrator/graph.py) :
   `Orchestrator.model` devient une propriété. Un modèle **injecté** reste
   partagé — c'est ce qu'un test demande en le passant, et un modèle scripté
   n'ouvre aucune connexion.
@@ -419,7 +419,7 @@ la mesure qu'on était venu faire.
 ## 5. Le cloisonnement sous charge
 
 C'est la propriété la plus chère du produit, et elle n'avait été éprouvée qu'au
-repos : Alice puis Bob, chacun son tour ([`tests/unit/api/test_cloisonnement.py`](../tests/unit/api/test_cloisonnement.py)).
+repos : Alice puis Bob, chacun son tour ([`tests/unit/api/test_cloisonnement.py`](../../tests/unit/api/test_cloisonnement.py)).
 
 ### 5.1 Le protocole
 
@@ -467,7 +467,7 @@ comptes.
 
 L'audit du banc demande le vrai moteur et un quart d'heure. Le même invariant est
 donc tenu par des tests rapides et déterministes,
-[`tests/unit/api/test_concurrence.py`](../tests/unit/api/test_concurrence.py) :
+[`tests/unit/api/test_concurrence.py`](../../tests/unit/api/test_concurrence.py) :
 quatre utilisateurs, un orchestrateur factice qui dort juste assez pour que les
 requêtes se chevauchent vraiment, et un test **témoin** qui échoue si le
 chevauchement n'a pas eu lieu — sans lui, tous les autres passeraient sans rien
@@ -531,13 +531,13 @@ avaient dépassé cinq minutes en réessais.
 
 ## 7. Ce que le parallélisme du moteur apporte, mesuré
 
-Le parallélisme est la raison d'avoir choisi ce serveur ([MOTEUR.md](MOTEUR.md)).
+Le parallélisme est la raison d'avoir choisi ce serveur ([MOTEUR.md](../MOTEUR.md)).
 Personne ne l'avait chiffré sur le produit : les tableaux ci-dessous le font.
 
 ### 7.1 Sur le produit, à code identique
 
 Même question, même banc, deux tours par utilisateur, un tour de chauffe jeté.
-L'application ne nomme aucun moteur ([`llm.py`](../src/data_analyst_agent/llm.py)) :
+L'application ne nomme aucun moteur ([`llm.py`](../../src/data_analyst_agent/llm.py)) :
 seule l'URL désigne le serveur, et rien d'autre ne change entre les paliers.
 
 | N utilisateurs | p50 | débit |
@@ -580,7 +580,7 @@ laquelle repose le dimensionnement du §2.
 **Ce que ces chiffres ne disent pas.** Ils valent pour ce modèle, cette
 quantification et cette carte. Un changement de `--max-model-len` déplace le
 nombre de requêtes que le cache KV tient
-([MOTEUR.md §7.6](MOTEUR.md#76-la-fenêtre-tenable-et-daa_context_model_window)),
+([MOTEUR.md §7.6](../MOTEUR.md#76-la-fenêtre-tenable-et-daa_context_model_window)),
 donc le palier où ce débit s'effondre — qui n'est pas atteint ici. À refaire
 après tout redimensionnement du serveur.
 
@@ -592,7 +592,7 @@ après tout redimensionnement du serveur.
   process. Deux conséquences connues et non mesurées : le sémaphore du bac à
   sable est de portée process, donc le plafond réel devient
   `sandbox_max_sessions × nombre de workers` (c'est écrit dans
-  [`sandbox/client.py`](../src/data_analyst_agent/sandbox/client.py), ce n'est
+  [`sandbox/client.py`](../../src/data_analyst_agent/sandbox/client.py), ce n'est
   pas vérifié) ; et les verrous `flock` valent entre process, ce qui est testé
   unitairement mais pas sous charge.
 - **La durée.** Les paliers durent des minutes, pas des heures. Rien ne dit ce

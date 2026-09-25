@@ -173,8 +173,9 @@ data-analyst-agent/
 │   ├── CADRAGE.md                # ce document (le pourquoi)
 │   ├── ARCHITECTURE.md           # le comment, service par service + réglages (§7)
 │   ├── AUDIT-2026-09.md          # état des lieux et backlog priorisé
-│   ├── MOTEUR.md                   # banc d'essai du tool calling sur vLLM
-│   └── spike-vanna.md            # comparaison text-to-SQL (verdict : socle maison)
+│   ├── MOTEUR.md                 # banc d'essai du tool calling sur vLLM
+│   └── historique/               # les journaux de chantier (cf. son README)
+│       └── spike-vanna.md        # comparaison text-to-SQL (verdict : socle maison)
 ├── src/data_analyst_agent/
 │   ├── config.py                 # Settings (pydantic-settings), préfixe DAA_
 │   ├── llm.py                    # LLM mutualisé, endpoint OpenAI-compatible

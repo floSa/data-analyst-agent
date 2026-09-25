@@ -247,7 +247,7 @@ ses trous connus ; la plupart sont refermés plus bas, et le renvoi le dit.
    aujourd'hui brut, options de lancement comprises (§3.1). C'est la tâche 10
    du backlog.
 4. ~~**La concurrence**, qui est le gain attendu.~~ **Mesurée depuis** —
-   [concurrence.md](concurrence.md). Toutes les mesures de ce document sont
+   [concurrence.md](historique/concurrence.md). Toutes les mesures de ce document sont
    séquentielles : le *continuous batching* n'y est pas tiré. Le plafond est le
    nombre de requêtes concurrentes que le cache KV tient (§3.4), borné en amont
    par le pool de threads de l'application.
@@ -553,7 +553,7 @@ moteur.
 - ~~**L'agent système et ses cinq tools.**~~ **Mesuré depuis** — [§8](#8-lagent-système-et-ses-cinq-tools-le-trou-du-78-refermé).
   Le nombre de tools ne change rien : le modèle appelle, vLLM extrait. Ce que
   ce trou cachait était ailleurs, et n'était pas une affaire de moteur.
-- ~~**La concurrence réelle.**~~ **Mesurée depuis** — [concurrence.md](concurrence.md).
+- ~~**La concurrence réelle.**~~ **Mesurée depuis** — [concurrence.md](historique/concurrence.md).
   Toutes les mesures de CE document sont séquentielles ; les « 4,58 × » sont le
   calcul de vLLM sur la taille de son cache, pas un débit observé.
 - **La qualité des réponses hors épreuves**, et le multimodal : le modèle
@@ -648,7 +648,7 @@ et `temoin-prediction` passe.
   5 comme à 6. Un plafond est un budget disponible, pas un budget dépensé ;
 - **la concurrence**, toujours : ces 40 questions sont posées en série, comme
   toutes les mesures de ce document. Elle est mesurée dans
-  [concurrence.md](concurrence.md).
+  [concurrence.md](historique/concurrence.md).
 
 ### 8.4 Les arguments d'outil typés : ce n'est pas le serveur qui stringifie
 

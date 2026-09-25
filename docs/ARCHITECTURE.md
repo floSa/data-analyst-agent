@@ -1418,7 +1418,7 @@ Ce qui suit est la vue technique.
 - **Mémoire d'usage des tools** : mémoriser les triplets
   *question → (nom du tool, arguments)* qui ont abouti, et les proposer au modèle sur
   les questions voisines. Forme reprise de Vanna 2.0 après relecture de son code
-  (cf. [spike Vanna](spike-vanna.md) §5.1) : elle couvre les trois capacités et pas
+  (cf. [spike Vanna](historique/spike-vanna.md) §5.1) : elle couvre les trois capacités et pas
   seulement le SQL, retient les échecs autant que les réussites, et démarre sans base
   vectorielle (similarité lexicale), l'embedding n'étant qu'une amélioration.
 - **Extension de la sandbox en prod** : prévoir un miroir PyPI local (l'image est

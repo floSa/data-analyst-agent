@@ -27,7 +27,7 @@ Ce résultat tient toujours.
 
 ### 2.1 Le spike est arrivé après la décision
 
-Le cahier des charges [CADRAGE.md](CADRAGE.md) §8 fixait « Text-to-SQL (socle) = tools
+Le cahier des charges [CADRAGE.md](../CADRAGE.md) §8 fixait « Text-to-SQL (socle) = tools
 maison + SQLAlchemy » dès le **2ᵉ commit du dépôt** (`da77571`), et reléguait Vanna au
 rang de « spike comparatif ». Dans l'ordre réel des commits :
 
