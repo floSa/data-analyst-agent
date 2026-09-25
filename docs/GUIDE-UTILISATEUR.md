@@ -10,6 +10,8 @@ Chacun renvoie au relevé qui le porte.
 Ils tournent sur le catalogue en service — les Cycles du Ponant, un fabricant de
 vélos — décrit dans [sources-metier.md](sources-metier.md).
 
+Les mêmes scénarios, en captures d'écran du service : [DEMONSTRATION.md](DEMONSTRATION.md).
+
 Quatre chiffres suffisent à vérifier une réponse de tête :
 
 | | |

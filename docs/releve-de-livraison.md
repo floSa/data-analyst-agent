@@ -396,3 +396,21 @@ montre que le redémarrage, jusqu'à *Finished daa.service*.
   sous son propre dossier de propriétaire.
 - Le moteur — vLLM sur `http://localhost:8100/v1` — n'a pas été touché, et le
   dépôt `llm-service` non plus.
+
+## Complément d'installation, le 25 septembre 2026 après-midi
+
+- **Le catalogue en service n'avait pas été recopié.** `/var/lib/data-analyst-agent/sources/metier/catalogue.yaml`
+  datait du 17 septembre et ne déclarait pas `filtre_des_sommes` : les contrôles
+  des sommes (C60 à C64) étaient muets sur le service.
+- Mesuré avant : « compare la production et les ventes du VEL-04 » → **131**
+  vendus (oracle 125) ; « au total, combien d'unités sont sorties de l'atelier
+  et combien sont parties en commande ? » → **2 006** vendues (oracle 1 828).
+- Fait : l'ancienne copie gardée en `catalogue.yaml.avant-2026-09-25`, le
+  catalogue livré recopié (seul écart : le bloc `filtre_des_sommes`),
+  `daa` redémarré, `/health` à `ok`.
+- Mesuré après : VEL-04 → **727 / 125**, deux fois sur deux ; les deux totaux →
+  **4 413 / 1 828**.
+- La procédure de mise à jour le dit désormais
+  ([EXPLOITATION.md](EXPLOITATION.md#mettre-à-jour)).
+- Les captures de [DEMONSTRATION.md](DEMONSTRATION.md) ont été prises après ce
+  complément.

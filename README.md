@@ -29,6 +29,7 @@ code — il se change en changeant une URL. En service : **vLLM**, servant
 | Si vous voulez… | Lisez |
 |---|---|
 | **savoir ce que le produit fait et ne fait pas** — c'est l'entrée | [docs/LIVRAISON.md](docs/LIVRAISON.md) |
+| **voir ce qu'elle sait faire**, en captures d'écran | [docs/DEMONSTRATION.md](docs/DEMONSTRATION.md) |
 | **vous en servir** : poser des questions dans la page de chat | [docs/GUIDE-UTILISATEUR.md](docs/GUIDE-UTILISATEUR.md) |
 | **brancher vos données** : déclarer une source, la vérifier | [docs/AJOUTER-UNE-SOURCE.md](docs/AJOUTER-UNE-SOURCE.md) |
 | écrire le **dictionnaire** d'une source pour qu'il tienne devant l'agent | [docs/rediger-un-dictionnaire-de-source.md](docs/rediger-un-dictionnaire-de-source.md) |
